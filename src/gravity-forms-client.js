@@ -12,6 +12,7 @@ import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
 import { generateCompoundInputs } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
+import { resourceMutex } from './utils/mutex.js';
 
 export class GravityFormsClient {
   constructor(config) {
@@ -251,26 +252,52 @@ export class GravityFormsClient {
   }
 
   /**
-   * Update existing form
+   * Update existing form (fetch-then-merge, mutex-serialized).
+   *
+   * Acquires a per-form lock to prevent concurrent updates from
+   * overwriting each other in the GET→merge→PUT pattern.
    */
   async updateForm(params) {
     return this.validateAndCall('gf_update_form', params, async (validated) => {
       const { id, ...updates } = validated;
 
-      // First, fetch the existing form to preserve all current data
-      const existingFormResponse = await this.httpClient.get(`/forms/${id}`);
-      const existingForm = existingFormResponse.data;
+      return resourceMutex.withLock(`form:${id}`, async () => {
+        // Fetch existing form to preserve all current data
+        const existingFormResponse = await this.httpClient.get(`/forms/${id}`);
+        const existingForm = existingFormResponse.data;
 
-      // Merge the updates with the existing form data
-      // This ensures we don't lose any fields that weren't included in the update
-      const updatedFormData = {
-        ...existingForm,
-        ...updates
-      };
+        // Merge updates with existing form data
+        const updatedFormData = {
+          ...existingForm,
+          ...updates
+        };
 
-      // Send the complete form data
-      const response = await this.httpClient.put(`/forms/${id}`, updatedFormData);
+        const response = await this.httpClient.put(`/forms/${id}`, updatedFormData);
 
+        return {
+          form: response.data
+        };
+      });
+    });
+  }
+
+  /**
+   * Replace a form's data directly via PUT without re-fetching.
+   *
+   * Used by FieldManager which already has the complete form state
+   * after its own GET + modification. Avoids the double-fetch that
+   * would occur if FieldManager called updateForm().
+   *
+   * Mutex-serialized on the form ID to prevent concurrent field
+   * operations from overwriting each other.
+   *
+   * @param {number} formId - The form ID.
+   * @param {object} formData - The complete form data to PUT.
+   * @returns {Promise<{form: object}>} The updated form.
+   */
+  async replaceForm(formId, formData) {
+    return resourceMutex.withLock(`form:${formId}`, async () => {
+      const response = await this.httpClient.put(`/forms/${formId}`, formData);
       return {
         form: response.data
       };
@@ -383,29 +410,27 @@ export class GravityFormsClient {
   }
 
   /**
-   * Update existing entry
+   * Update existing entry (fetch-then-merge, mutex-serialized).
    */
   async updateEntry(params) {
     return this.validateAndCall('gf_update_entry', params, async (validated) => {
       const { id, ...updates } = validated;
 
-      // First, fetch the existing entry to preserve all current field data
-      const existingEntryResponse = await this.httpClient.get(`/entries/${id}`);
-      const existingEntry = existingEntryResponse.data;
+      return resourceMutex.withLock(`entry:${id}`, async () => {
+        const existingEntryResponse = await this.httpClient.get(`/entries/${id}`);
+        const existingEntry = existingEntryResponse.data;
 
-      // Merge the updates with the existing entry data
-      // This ensures we don't lose any field values that weren't included in the update
-      const updatedEntryData = {
-        ...existingEntry,
-        ...updates
-      };
+        const updatedEntryData = {
+          ...existingEntry,
+          ...updates
+        };
 
-      // Send the complete entry data
-      const response = await this.httpClient.put(`/entries/${id}`, updatedEntryData);
+        const response = await this.httpClient.put(`/entries/${id}`, updatedEntryData);
 
-      return {
-        entry: response.data
-      };
+        return {
+          entry: response.data
+        };
+      });
     });
   }
 
@@ -563,29 +588,27 @@ export class GravityFormsClient {
   }
 
   /**
-   * Update existing feed completely
+   * Update existing feed completely (fetch-then-merge, mutex-serialized).
    */
   async updateFeed(params) {
     return this.validateAndCall('gf_update_feed', params, async (validated) => {
       const { id, ...updates } = validated;
 
-      // First, fetch the existing feed to preserve all current data
-      const existingFeedResponse = await this.httpClient.get(`/feeds/${id}`);
-      const existingFeed = existingFeedResponse.data;
+      return resourceMutex.withLock(`feed:${id}`, async () => {
+        const existingFeedResponse = await this.httpClient.get(`/feeds/${id}`);
+        const existingFeed = existingFeedResponse.data;
 
-      // Merge the updates with the existing feed data
-      // This ensures we don't lose any configuration that wasn't included in the update
-      const updatedFeedData = {
-        ...existingFeed,
-        ...updates
-      };
+        const updatedFeedData = {
+          ...existingFeed,
+          ...updates
+        };
 
-      // Send the complete feed data
-      const response = await this.httpClient.put(`/feeds/${id}`, updatedFeedData);
+        const response = await this.httpClient.put(`/feeds/${id}`, updatedFeedData);
 
-      return {
-        feed: response.data
-      };
+        return {
+          feed: response.data
+        };
+      });
     });
   }
 

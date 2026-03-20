@@ -15,6 +15,7 @@ import compactTests from './compact.test.js';
 import validationTests from './validation.test.js';
 import sanitizeTests from './sanitize.test.js';
 import bugFixesTests from './bug-fixes.test.js';
+import mutexTests from './mutex.test.js';
 
 // Test suites to run
 const testSuites = [
@@ -27,6 +28,7 @@ const testSuites = [
   compactTests,
   validationTests,
   sanitizeTests,
+  mutexTests,
   bugFixesTests
 ];
 

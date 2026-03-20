@@ -52,8 +52,8 @@ export class FieldManager {
     if (!form.fields) form.fields = [];
     form.fields.splice(insertIndex, 0, field);
     
-    // 8. Update entire form via REST API
-    const updatedForm = await this.api.updateForm(form);
+    // 8. Replace form via direct PUT (no re-fetch — we already have the full state)
+    const updatedForm = await this.api.replaceForm(formId, form);
     
     // 9. Return result with validation warnings
     return {
@@ -91,9 +91,9 @@ export class FieldManager {
       ...updates,
       id: originalField.id // Preserve ID
     };
-    
-    // Update form
-    const result = await this.api.updateForm(form);
+
+    // Replace form via direct PUT (no re-fetch — we already have the full state)
+    const result = await this.api.replaceForm(formId, form);
     
     return {
       success: true,
@@ -152,9 +152,9 @@ export class FieldManager {
       this.cleanupDependencies(form, fieldId);
     }
     
-    // Update form
-    await this.api.updateForm(form);
-    
+    // Replace form via direct PUT (no re-fetch — we already have the full state)
+    await this.api.replaceForm(formId, form);
+
     return {
       success: true,
       deleted_field: {
