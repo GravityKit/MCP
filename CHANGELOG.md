@@ -5,6 +5,36 @@ All notable changes to GravityMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-20
+
+### Added
+- Test mode environment resolution: when `GRAVITYMCP_TEST_MODE=true`, the client automatically uses `GRAVITY_FORMS_TEST_*` env vars (base URL, consumer key/secret) instead of live credentials
+- `testConfig.resolveEnv()` method in `config/test-config.js` as the canonical place for environment resolution
+- Init log now shows `(TEST MODE)` indicator when connecting to test site
+- Support for `GRAVITY_FORMS_TEST_BASE_URL` env var (in addition to existing `GRAVITY_FORMS_TEST_URL`)
+
+### Fixed
+- Removed 4 unused variable warnings (`response` in delete methods, `safeHeaders` in request interceptor)
+
+## [1.3.0] - 2026-03-10
+
+### Added
+- Compact mode: `stripEmpty()` recursively removes `null` and `""` values from all responses to reduce token usage
+- Entry meta stripping: plugin-added meta keys (e.g., `gv_revision_*`, `helpscout_conversation_id`) are stripped by default via `stripEntryMeta()`
+- Pass `compact=false` for full raw data
+
+### Fixed
+- Updated axios and MCP SDK to patch security vulnerabilities
+
+## [1.1.0] - 2026-03-10
+
+### Changed
+- Reduced token usage across all tool responses: no pretty-print, no redundant `message` strings, no echo-back of input IDs
+- Updated AGENTS.md and CLAUDE.md for token optimization documentation
+
+### Fixed
+- Granted `contents:write` permission in publish CI workflow
+
 ## [1.0.5] - 2026-02-18
 
 ### Fixed
@@ -72,6 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[1.4.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.4.0
+[1.3.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.3.0
+[1.1.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.1.0
 [1.0.5]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.5
 [1.0.4]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.4
 [1.0.3]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.3
