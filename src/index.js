@@ -427,7 +427,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Add-on Feeds (7 tools)
       {
         name: 'gf_list_feeds',
-        description: 'List feeds. Omits null/empty values by default; pass compact=false for raw data.',
+        description: 'List feeds. Filter by form_id and/or addon slug.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
@@ -451,19 +451,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['id']
         }
       },
-      {
-        name: 'gf_list_form_feeds',
-        description: 'List feeds for a form. Omits null/empty values by default; pass compact=false for raw data.',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            form_id: { type: 'number', description: 'Form ID' },
-            compact: { type: 'boolean', description: 'Strip null/empty values (default true)', default: true }
-          },
-          required: ['form_id']
-        }
-      },
+      // gf_list_form_feeds removed — gf_list_feeds with form_id does the same thing
+      // and also supports addon filtering. Kept listFormFeeds() client method for
+      // backwards compatibility but no longer exposed as a tool.
       {
         name: 'gf_create_feed',
         description: 'Create a feed',
@@ -623,8 +613,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return wrapHandler(() => gravityFormsClient.listFeeds(params), params)();
     case 'gf_get_feed':
       return wrapHandler(() => gravityFormsClient.getFeed(params), params)();
-    case 'gf_list_form_feeds':
-      return wrapHandler(() => gravityFormsClient.listFormFeeds(params), params)();
     case 'gf_create_feed':
       return wrapHandler(() => gravityFormsClient.createFeed(params), params)();
     case 'gf_update_feed':

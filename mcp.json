@@ -5,7 +5,7 @@
   "author": "GravityKit",
   "license": "MIT",
   "capabilities": {
-    "tools": 27,
+    "tools": 26,
     "resources": 0
   },
   "tools": [
@@ -87,11 +87,6 @@
     {
       "name": "gf_get_feed",
       "description": "Get a specific feed by ID",
-      "category": "feeds"
-    },
-    {
-      "name": "gf_list_form_feeds",
-      "description": "Get all feeds for a specific form",
       "category": "feeds"
     },
     {

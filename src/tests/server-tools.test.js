@@ -31,10 +31,9 @@ const EXPECTED_TOOLS = [
   // Notifications (1)
   'gf_send_notifications',
 
-  // Add-on Feeds (7)
+  // Add-on Feeds (6)
   'gf_list_feeds',
   'gf_get_feed',
-  'gf_list_form_feeds',
   'gf_create_feed',
   'gf_update_feed',
   'gf_patch_feed',
@@ -51,7 +50,7 @@ const TOOL_CATEGORIES = {
   entries: ['gf_list_entries', 'gf_get_entry', 'gf_create_entry', 'gf_update_entry', 'gf_delete_entry'],
   submissions: ['gf_submit_form_data', 'gf_validate_submission'],
   notifications: ['gf_send_notifications'],
-  feeds: ['gf_list_feeds', 'gf_get_feed', 'gf_list_form_feeds', 'gf_create_feed', 'gf_update_feed', 'gf_patch_feed', 'gf_delete_feed'],
+  feeds: ['gf_list_feeds', 'gf_get_feed', 'gf_create_feed', 'gf_update_feed', 'gf_patch_feed', 'gf_delete_feed'],
   utilities: ['gf_get_field_filters', 'gf_get_results']
 };
 
@@ -59,8 +58,8 @@ const TOOL_CATEGORIES = {
 // TOOL REGISTRATION TESTS
 // =================================
 
-suite.test('Tool Registration: Should have exactly 23 tools registered', () => {
-  TestAssert.equal(EXPECTED_TOOLS.length, 23, 'Should have 23 tools defined');
+suite.test('Tool Registration: Should have exactly 22 tools registered', () => {
+  TestAssert.equal(EXPECTED_TOOLS.length, 22, 'Should have 22 tools defined');
 
   // Count by category
   let totalTools = 0;
@@ -68,13 +67,13 @@ suite.test('Tool Registration: Should have exactly 23 tools registered', () => {
     totalTools += tools.length;
   });
 
-  TestAssert.equal(totalTools, 23, 'Category tools should sum to 23');
+  TestAssert.equal(totalTools, 22, 'Category tools should sum to 22');
 });
 
 suite.test('Tool Registration: Should have all expected tool names', () => {
   const toolSet = new Set(EXPECTED_TOOLS);
 
-  TestAssert.equal(toolSet.size, 23, 'Should have 23 unique tool names');
+  TestAssert.equal(toolSet.size, 22, 'Should have 22 unique tool names');
 
   // Verify naming convention
   EXPECTED_TOOLS.forEach(tool => {
@@ -88,7 +87,7 @@ suite.test('Tool Registration: Should have correct category distribution', () =>
   TestAssert.equal(TOOL_CATEGORIES.entries.length, 5, 'Entries should have 5 tools (no submit)');
   TestAssert.equal(TOOL_CATEGORIES.submissions.length, 2, 'Submissions should have 2 tools');
   TestAssert.equal(TOOL_CATEGORIES.notifications.length, 1, 'Notifications should have 1 tool');
-  TestAssert.equal(TOOL_CATEGORIES.feeds.length, 7, 'Feeds should have 7 tools');
+  TestAssert.equal(TOOL_CATEGORIES.feeds.length, 6, 'Feeds should have 6 tools');
   TestAssert.equal(TOOL_CATEGORIES.utilities.length, 2, 'Utilities should have 2 tools');
 });
 
@@ -187,7 +186,7 @@ suite.test('Handler Validation: All tools should have handlers', () => {
     handlers[tool] = true; // Would be actual handler function
   });
 
-  TestAssert.equal(Object.keys(handlers).length, 23, 'Should have 23 handlers');
+  TestAssert.equal(Object.keys(handlers).length, 22, 'Should have 22 handlers');
 
   EXPECTED_TOOLS.forEach(tool => {
     TestAssert.isTrue(handlers[tool], `Should have handler for ${tool}`);
@@ -235,8 +234,7 @@ suite.test('Parameter Validation: form_id should be required where needed', () =
     'gf_validate_form',
     'gf_submit_form_data',
     'gf_validate_submission',
-    'gf_list_form_feeds',
-    'gf_create_feed',
+      'gf_create_feed',
     'gf_get_field_filters',
     'gf_get_results'
   ];
@@ -276,7 +274,6 @@ suite.test('Error Handling: All tools should handle missing required params', ()
     'gf_validate_submission': ['form_id'],
     'gf_send_notifications': ['entry_id'],
     'gf_get_feed': ['id'],
-    'gf_list_form_feeds': ['form_id'],
     'gf_create_feed': ['addon_slug', 'form_id', 'meta'],
     'gf_update_feed': ['id'],
     'gf_patch_feed': ['id'],

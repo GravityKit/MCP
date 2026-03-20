@@ -73,8 +73,8 @@ suite.test('Bug #4: mcp.json tool count matches index.js tools', () => {
   // mcp.json tools
   const mcpToolNames = mcpJson.tools.map(t => t.name);
 
-  TestAssert.equal(mcpJson.capabilities.tools, 27, 'mcp.json capabilities.tools should be 27');
-  TestAssert.equal(mcpToolNames.length, 27, 'mcp.json should list 27 tools');
+  TestAssert.equal(mcpJson.capabilities.tools, 26, 'mcp.json capabilities.tools should be 26');
+  TestAssert.equal(mcpToolNames.length, 26, 'mcp.json should list 26 tools');
 });
 
 suite.test('Bug #4: No phantom gf_submit_form tool in mcp.json', () => {
@@ -161,7 +161,7 @@ suite.test('Bug #5: Read-only tools have readOnlyHint: true', () => {
     'gf_list_forms', 'gf_get_form', 'gf_validate_form',
     'gf_list_entries', 'gf_get_entry',
     'gf_validate_submission',
-    'gf_list_feeds', 'gf_get_feed', 'gf_list_form_feeds',
+    'gf_list_feeds', 'gf_get_feed',
     'gf_get_field_filters', 'gf_get_results',
     'gf_list_field_types'
   ];
