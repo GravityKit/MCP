@@ -6,7 +6,7 @@
 export const testConfig = {
   environments: {
     test: {
-      url: process.env.TEST_GF_URL || process.env.GRAVITY_FORMS_TEST_URL || 'http://localhost:10003',
+      url: process.env.TEST_GF_URL || process.env.GRAVITY_FORMS_TEST_URL || process.env.GRAVITY_FORMS_TEST_BASE_URL || 'http://localhost:10003',
       consumer_key: process.env.TEST_GF_CONSUMER_KEY || process.env.GRAVITY_FORMS_TEST_CONSUMER_KEY,
       consumer_secret: process.env.TEST_GF_CONSUMER_SECRET || process.env.GRAVITY_FORMS_TEST_CONSUMER_SECRET,
       wp_user: process.env.TEST_WP_USER || 'admin',
@@ -52,8 +52,47 @@ export const testConfig = {
    * Check if test mode is enabled
    */
   isTestMode() {
-    return process.env.GRAVITYMCP_TEST_MODE === 'true' || 
+    return process.env.GRAVITYMCP_TEST_MODE === 'true' ||
            process.env.NODE_ENV === 'test';
+  },
+
+  /**
+   * Resolve environment config for the active mode.
+   *
+   * When test mode is active, remaps GRAVITY_FORMS_TEST_* env vars to
+   * their primary equivalents (GRAVITY_FORMS_BASE_URL, etc.) so the
+   * GravityFormsClient and AuthManager work unchanged against the test site.
+   *
+   * Returns a shallow clone — never mutates the original config.
+   *
+   * @param {object} config - Raw environment config (typically process.env).
+   * @returns {object} Config with test overrides applied when in test mode.
+   */
+  resolveEnv(config) {
+    const isTest = config.GRAVITYMCP_TEST_MODE === 'true' || config.NODE_ENV === 'test';
+
+    if (!isTest) {
+      return config;
+    }
+
+    const resolved = { ...config };
+
+    const mappings = {
+      GRAVITY_FORMS_TEST_BASE_URL: 'GRAVITY_FORMS_BASE_URL',
+      GRAVITY_FORMS_TEST_URL: 'GRAVITY_FORMS_BASE_URL',
+      GRAVITY_FORMS_TEST_CONSUMER_KEY: 'GRAVITY_FORMS_CONSUMER_KEY',
+      GRAVITY_FORMS_TEST_CONSUMER_SECRET: 'GRAVITY_FORMS_CONSUMER_SECRET',
+      GRAVITY_FORMS_TEST_AUTH_METHOD: 'GRAVITY_FORMS_AUTH_METHOD',
+      GRAVITY_FORMS_TEST_TIMEOUT: 'GRAVITY_FORMS_TIMEOUT',
+    };
+
+    for (const [testKey, primaryKey] of Object.entries(mappings)) {
+      if (resolved[testKey]) {
+        resolved[primaryKey] = resolved[testKey];
+      }
+    }
+
+    return resolved;
   },
   
   /**

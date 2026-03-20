@@ -11,12 +11,13 @@ import { ValidationFactory } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
 import { generateCompoundInputs } from './field-definitions/field-registry.js';
+import { testConfig } from './config/test-config.js';
 
 export class GravityFormsClient {
   constructor(config) {
-    this.config = config;
-    this.authManager = new AuthManager(config);
-    this.baseURL = `${config.GRAVITY_FORMS_BASE_URL}/wp-json/gf/v2`;
+    this.config = testConfig.resolveEnv(config);
+    this.authManager = new AuthManager(this.config);
+    this.baseURL = `${this.config.GRAVITY_FORMS_BASE_URL}/wp-json/gf/v2`;
 
     // Initialize HTTP client with Basic Auth as primary method
     this.httpClient = axios.create({
@@ -52,7 +53,7 @@ export class GravityFormsClient {
         // Log request if debug enabled (with sanitization)
         if (this.config.GRAVITY_FORMS_DEBUG === 'true') {
           const safeUrl = sanitizeUrl(`${this.baseURL}${requestConfig.url}`);
-          const safeHeaders = sanitizeHeaders(requestConfig.headers);
+          sanitizeHeaders(requestConfig.headers);
           console.log(`🌐 ${requestConfig.method?.toUpperCase()} ${safeUrl}`);
           if (requestConfig.data) {
             console.log('  📦 Request data sent (sanitized)');
@@ -97,10 +98,12 @@ export class GravityFormsClient {
                   process.env.GRAVITY_FORMS_TEST_MODE === 'true' ||
                   process.argv.some(arg => arg.includes('test'));
 
-    // Only output initialization messages when not in test mode
+    const isTestMode = this.config.GRAVITYMCP_TEST_MODE === 'true';
+
+    // Only output initialization messages when not in unit test mode
     if (!isTest) {
       logger.info('🚀 Initializing Gravity MCP');
-      logger.info(`📡 Connecting to: ${this.config.GRAVITY_FORMS_BASE_URL}`);
+      logger.info(`📡 Connecting to: ${this.config.GRAVITY_FORMS_BASE_URL}${isTestMode ? ' (TEST MODE)' : ''}`);
     }
 
     // Validate REST API access
@@ -290,7 +293,7 @@ export class GravityFormsClient {
         deleteParams.force = 'true';
       }
 
-      const response = await this.httpClient.delete(`/forms/${id}`, { params: deleteParams });
+      await this.httpClient.delete(`/forms/${id}`, { params: deleteParams });
 
       return {
         deleted: true,
@@ -422,7 +425,7 @@ export class GravityFormsClient {
         deleteParams.force = 'true';
       }
 
-      const response = await this.httpClient.delete(`/entries/${id}`, { params: deleteParams });
+      await this.httpClient.delete(`/entries/${id}`, { params: deleteParams });
 
       return {
         deleted: true,
@@ -610,7 +613,7 @@ export class GravityFormsClient {
 
     return this.validateAndCall('gf_delete_feed', params, async (validated) => {
       const { id } = validated;
-      const response = await this.httpClient.delete(`/feeds/${id}`);
+      await this.httpClient.delete(`/feeds/${id}`);
 
       return {
         deleted: true,
