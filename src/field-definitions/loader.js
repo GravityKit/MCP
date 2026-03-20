@@ -11,6 +11,7 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import logger from '../utils/logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +51,7 @@ export class FieldDefinitionLoader {
       this.isLoaded = true;
       return true;
     } catch (error) {
-      console.error('[FieldLoader] Initialization failed:', error.message);
+      logger.error(`[FieldLoader] Initialization failed: ${error.message}`);
       this.useBasicValidation = true;
       return false;
     }
@@ -80,7 +81,7 @@ export class FieldDefinitionLoader {
 
     for (const path of possiblePaths) {
       if (existsSync(path)) {
-        console.log(`[FieldLoader] Found field definitions at: ${path}`);
+        logger.info(`[FieldLoader] Found field definitions at: ${path}`);
         return path;
       }
     }
@@ -115,7 +116,7 @@ export class FieldDefinitionLoader {
 
       throw new Error('Could not find loadable field definitions');
     } catch (error) {
-      console.error('[FieldLoader] Failed to load definitions:', error);
+      logger.error(`[FieldLoader] Failed to load definitions: ${error}`);
       throw error;
     }
   }
@@ -135,9 +136,9 @@ export class FieldDefinitionLoader {
         }
       }
       
-      console.log(`[FieldLoader] Loaded ${this.definitions.size} compiled field definitions`);
+      logger.info(`[FieldLoader] Loaded ${this.definitions.size} compiled field definitions`);
     } catch (error) {
-      console.error('[FieldLoader] Error loading compiled definitions:', error);
+      logger.error(`[FieldLoader] Error loading compiled definitions: ${error}`);
       throw error;
     }
   }
@@ -161,9 +162,9 @@ export class FieldDefinitionLoader {
         }
       }
 
-      console.log(`[FieldLoader] Loaded ${this.definitions.size} TypeScript field definitions`);
+      logger.info(`[FieldLoader] Loaded ${this.definitions.size} TypeScript field definitions`);
     } catch (error) {
-      console.error('[FieldLoader] Error loading TypeScript definitions:', error);
+      logger.error(`[FieldLoader] Error loading TypeScript definitions: ${error}`);
       throw error;
     }
   }
@@ -177,7 +178,7 @@ export class FieldDefinitionLoader {
       const typesFile = join(fieldPath, `${fieldType}.types.ts`);
       
       if (!existsSync(typesFile)) {
-        console.warn(`[FieldLoader] No types file found for ${fieldType}`);
+        logger.warn(`[FieldLoader] No types file found for ${fieldType}`);
         return null;
       }
 
@@ -200,7 +201,7 @@ export class FieldDefinitionLoader {
         fieldType
       };
     } catch (error) {
-      console.error(`[FieldLoader] Error parsing ${fieldType}:`, error);
+      logger.error(`[FieldLoader] Error parsing ${fieldType}: ${error}`);
       return null;
     }
   }
@@ -248,7 +249,7 @@ export class FieldDefinitionLoader {
   /**
    * Extract storage pattern from TypeScript content
    */
-  extractStoragePattern(content, fieldType) {
+  extractStoragePattern(content, _fieldType) {
     const storage = {
       type: 'string',
       sqlType: 'LONGTEXT',
@@ -438,7 +439,7 @@ export class FieldDefinitionLoader {
    */
   getFieldDefinition(type) {
     if (!this.isLoaded && !this.useBasicValidation) {
-      console.warn('[FieldLoader] Definitions not loaded yet');
+      logger.warn('[FieldLoader] Definitions not loaded yet');
       return null;
     }
     return this.definitions.get(type);

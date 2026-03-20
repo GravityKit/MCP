@@ -3,6 +3,8 @@
  * Enables safe testing without affecting production data
  */
 
+import logger from '../utils/logger.js';
+
 export const testConfig = {
   environments: {
     test: {
@@ -117,7 +119,7 @@ export const testConfig = {
       
       // Check authentication
       if (config.consumer_key.length < 10 || config.consumer_secret.length < 10) {
-        console.warn('Consumer key or secret seems too short. Verify your credentials.');
+        logger.warn('Consumer key or secret seems too short. Verify your credentials.');
       }
       
       return {
@@ -235,7 +237,7 @@ export class TestFormManager {
     const cleanupConfig = this.config.getCleanupConfig();
     
     if (!cleanupConfig.enabled) {
-      console.log('Test form cleanup is disabled');
+      logger.info('Test form cleanup is disabled');
       return { succeeded: 0, failed: 0, total: 0 };
     }
     

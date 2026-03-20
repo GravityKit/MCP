@@ -337,9 +337,12 @@ runner.test('stripEntryMetaFromResponse: passes through non-entry responses', ()
   TestAssert.equal(result.forms[0].id, 1, 'non-entry response unchanged');
 });
 
-// Run tests
-runner.run().then(results => {
-  process.exit(results.failed > 0 ? 1 : 0);
-});
+// Run tests when executed directly
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
+if (isMain) {
+  runner.run().then(results => {
+    process.exit(results.failed > 0 ? 1 : 0);
+  });
+}
 
 export default runner;

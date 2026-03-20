@@ -1,11 +1,11 @@
 {
   "name": "gravitymcp",
-  "version": "1.0.0",
+  "version": "1.4.0",
   "description": "MCP server for Gravity Forms",
   "author": "GravityKit",
   "license": "MIT",
   "capabilities": {
-    "tools": 24,
+    "tools": 27,
     "resources": 0
   },
   "tools": [
@@ -63,11 +63,6 @@
       "name": "gf_delete_entry",
       "description": "Delete or trash an entry",
       "category": "entries"
-    },
-    {
-      "name": "gf_submit_form",
-      "description": "Submit a form with complete processing",
-      "category": "submissions"
     },
     {
       "name": "gf_submit_form_data",
@@ -128,6 +123,26 @@
       "name": "gf_get_results",
       "description": "Get Quiz, Poll, or Survey results",
       "category": "results"
+    },
+    {
+      "name": "gf_add_field",
+      "description": "Add a field to a form",
+      "category": "field_operations"
+    },
+    {
+      "name": "gf_update_field",
+      "description": "Update a field in a form",
+      "category": "field_operations"
+    },
+    {
+      "name": "gf_delete_field",
+      "description": "Delete a field (checks dependencies)",
+      "category": "field_operations"
+    },
+    {
+      "name": "gf_list_field_types",
+      "description": "List available field types",
+      "category": "field_operations"
     }
   ],
   "authentication": {
@@ -144,7 +159,7 @@
   "environment": {
     "required": [
       "GRAVITY_FORMS_CONSUMER_KEY",
-      "GRAVITY_FORMS_CONSUMER_SECRET", 
+      "GRAVITY_FORMS_CONSUMER_SECRET",
       "GRAVITY_FORMS_BASE_URL"
     ],
     "optional": [

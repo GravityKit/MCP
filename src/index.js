@@ -123,7 +123,7 @@ function wrapHandler(handler, params = {}) {
       };
     } catch (error) {
       const safeDetails = error.details ? sanitize(error.details) : undefined;
-      console.error(`Tool error: ${error.message}`);
+      logger.error(`Tool error: ${error.message}`);
       return createErrorResponse(error.message, safeDetails);
     }
   };
@@ -140,6 +140,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_list_forms',
         description: 'List all forms. Omits null/empty values by default; pass compact=false for raw data.',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -155,6 +156,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_get_form',
         description: 'Get a form by ID. Omits null/empty values by default; pass compact=false for raw data.',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -167,6 +169,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_create_form',
         description: 'Create a new form',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -188,6 +191,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_update_form',
         description: 'Update a form',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -210,6 +214,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_delete_form',
         description: 'Delete a form (requires ALLOW_DELETE=true)',
+        annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -222,6 +227,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_validate_form',
         description: 'Validate form data',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -232,10 +238,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
 
-      // Entries Management (6 tools)
+      // Entries Management (5 tools)
       {
         name: 'gf_list_entries',
         description: 'List/search entries. Strips null/empty values and plugin entry meta by default; pass compact=false for full raw data.',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -307,6 +314,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_get_entry',
         description: 'Get an entry by ID. Strips null/empty values and plugin entry meta by default; pass compact=false for full raw data.',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -319,6 +327,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_create_entry',
         description: 'Create an entry',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -338,6 +347,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_update_entry',
         description: 'Update an entry',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -355,6 +365,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_delete_entry',
         description: 'Delete an entry (requires ALLOW_DELETE=true)',
+        annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -369,6 +380,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_submit_form_data',
         description: 'Submit form data (triggers notifications, confirmations, payment)',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -382,6 +394,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_validate_submission',
         description: 'Validate submission without processing',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -396,6 +409,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_send_notifications',
         description: 'Send notifications for entry',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -414,6 +428,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_list_feeds',
         description: 'List feeds. Omits null/empty values by default; pass compact=false for raw data.',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -426,6 +441,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_get_feed',
         description: 'Get a feed by ID. Omits null/empty values by default; pass compact=false for raw data.',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -438,6 +454,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_list_form_feeds',
         description: 'List feeds for a form. Omits null/empty values by default; pass compact=false for raw data.',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -450,6 +467,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_create_feed',
         description: 'Create a feed',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -464,6 +482,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_update_feed',
         description: 'Update a feed (full replace)',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -477,6 +496,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_patch_feed',
         description: 'Patch a feed (partial update)',
+        annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -489,7 +509,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gf_delete_feed',
-        description: 'Delete a feed',
+        description: 'Delete a feed (requires ALLOW_DELETE=true)',
+        annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -503,6 +524,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_get_field_filters',
         description: 'Get field filters for form',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -516,6 +538,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'gf_get_results',
         description: 'Get quiz/poll/survey results',
+        annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
@@ -687,6 +710,6 @@ process.on('SIGTERM', async () => {
 
 // Start the server
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  logger.error(`Fatal error: ${error}`);
   process.exit(1);
 });

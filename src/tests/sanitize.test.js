@@ -258,5 +258,12 @@ suite.test('Should handle case variations of sensitive keys', () => {
   TestAssert.equal(result.Password, 'cap****rd');
 });
 
-// Run the tests
-suite.run();
+// Run tests when executed directly
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
+if (isMain) {
+  suite.run().then(results => {
+    process.exit(results.failed > 0 ? 1 : 0);
+  });
+}
+
+export default suite;

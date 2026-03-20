@@ -201,9 +201,9 @@ export const fieldRegistry = {
       type: 'compound',
       format: 'dotNotation',
       subInputs: {
-        '3': 'prefix',
-        '2': 'first',
-        '4': 'middle', 
+        '2': 'prefix',
+        '3': 'first',
+        '4': 'middle',
         '6': 'last',
         '8': 'suffix'
       }

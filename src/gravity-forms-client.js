@@ -54,9 +54,9 @@ export class GravityFormsClient {
         if (this.config.GRAVITY_FORMS_DEBUG === 'true') {
           const safeUrl = sanitizeUrl(`${this.baseURL}${requestConfig.url}`);
           sanitizeHeaders(requestConfig.headers);
-          console.log(`🌐 ${requestConfig.method?.toUpperCase()} ${safeUrl}`);
+          logger.info(`🌐 ${requestConfig.method?.toUpperCase()} ${safeUrl}`);
           if (requestConfig.data) {
-            console.log('  📦 Request data sent (sanitized)');
+            logger.info('  📦 Request data sent (sanitized)');
           }
         }
 
@@ -121,7 +121,7 @@ export class GravityFormsClient {
       logger.info(`🗑️ Delete Operations: ${this.allowDelete ? 'ENABLED ⚠️' : 'DISABLED ✅'}`);
 
       if (!validation.fullAccess) {
-        console.warn(`⚠️ Limited API access: ${validation.coverage}`);
+        logger.warn(`⚠️ Limited API access: ${validation.coverage}`);
       }
     }
 

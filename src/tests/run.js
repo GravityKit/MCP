@@ -12,6 +12,9 @@ import feedsTests from './feeds.test.js';
 import submissionsTests from './submissions.test.js';
 import serverToolsTests from './server-tools.test.js';
 import compactTests from './compact.test.js';
+import validationTests from './validation.test.js';
+import sanitizeTests from './sanitize.test.js';
+import bugFixesTests from './bug-fixes.test.js';
 
 // Test suites to run
 const testSuites = [
@@ -21,7 +24,10 @@ const testSuites = [
   feedsTests,
   submissionsTests,
   serverToolsTests,
-  compactTests
+  compactTests,
+  validationTests,
+  sanitizeTests,
+  bugFixesTests
 ];
 
 // Test statistics

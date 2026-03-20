@@ -490,9 +490,13 @@ suite.test('Failure Mode: Should handle database errors', async () => {
   );
 });
 
-// Run tests
+// Run tests when executed directly
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ""));
+if (isMain) {
 suite.run().then(results => {
   process.exit(results.failed > 0 ? 1 : 0);
 });
+
+}
 
 export default suite;

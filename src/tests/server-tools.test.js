@@ -379,9 +379,13 @@ suite.test('Descriptions: Delete tools should mention permission requirement', (
   TestAssert.includes(deleteDescriptions['gf_delete_entry'], 'ALLOW_DELETE');
 });
 
-// Run tests
+// Run tests when executed directly
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ""));
+if (isMain) {
 suite.run().then(results => {
   process.exit(results.failed > 0 ? 1 : 0);
 });
+
+}
 
 export default suite;

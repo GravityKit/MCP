@@ -254,7 +254,7 @@ export class AuthManager {
                       process.env.GRAVITY_FORMS_TEST_MODE === 'true' ||
                       process.argv.some(arg => arg.includes('test'));
         if (!isTest) {
-          console.warn('⚠️  Basic Authentication requires HTTPS. Falling back to OAuth 1.0a');
+          logger.warn('⚠️  Basic Authentication requires HTTPS. Falling back to OAuth 1.0a');
         }
         this.authHandler = new OAuth1Handler(
           GRAVITY_FORMS_CONSUMER_KEY,

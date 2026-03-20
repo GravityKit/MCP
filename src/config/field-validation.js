@@ -11,11 +11,12 @@ import {
   isCompoundField,
   isArrayField,
   fieldStoresData,
-  getStorageFormat,
+
   detectFieldVariant,
   validateFieldConfig,
   getCompoundFieldInputs
 } from '../field-definitions/field-registry.js';
+import logger from '../utils/logger.js';
 
 /**
  * Field-aware validator class
@@ -83,9 +84,9 @@ export class FieldAwareValidator {
       const isTest = process.env.NODE_ENV === 'test' || process.argv.some(arg => arg.includes('test'));
 
       if (isTest) {
-        console.log(`✅ Handling unknown field type '${field.type}' gracefully`);
+        logger.info(`Handling unknown field type '${field.type}' gracefully`);
       } else {
-        console.warn(`[FieldValidator] Unknown field type '${field.type}' at ${path}`);
+        logger.warn(`[FieldValidator] Unknown field type '${field.type}' at ${path}`);
       }
 
       // Allow unknown types but mark them
@@ -124,7 +125,7 @@ export class FieldAwareValidator {
 
     // Validate required field setting
     if (field.isRequired && !definition.supportsRequired) {
-      console.warn(`${path}: Field type '${field.type}' does not support required validation`);
+      logger.warn(`${path}: Field type '${field.type}' does not support required validation`);
       validatedField.isRequired = false;
     }
 
@@ -146,6 +147,10 @@ export class FieldAwareValidator {
       storesData: definition.storesData !== false,
       storageFormat: definition.storage ? definition.storage.format : 'single'
     };
+
+    // Strip internal metadata before returning
+    delete validatedField._variant;
+    delete validatedField._meta;
 
     return {
       isValid: true,
@@ -294,7 +299,7 @@ export class FieldAwareValidator {
   /**
    * Get field value from entry data
    */
-  static getFieldValue(entryData, field, definition) {
+  static getFieldValue(entryData, field, _definition) {
     // Handle compound fields
     if (isCompoundField(field.type)) {
       const subInputs = getCompoundFieldInputs(field.type);
@@ -328,7 +333,7 @@ export class FieldAwareValidator {
   /**
    * Validate required field
    */
-  static validateRequired(value, field, definition) {
+  static validateRequired(value, field, _definition) {
     if (!field.isRequired) {
       return { isValid: true };
     }
@@ -356,7 +361,7 @@ export class FieldAwareValidator {
   /**
    * Validate field type specific rules
    */
-  static validateFieldType(value, field, definition) {
+  static validateFieldType(value, field, _definition) {
     if (!value) {
       return { isValid: true }; // Empty values handled by required validation
     }
@@ -497,7 +502,7 @@ export class FieldAwareValidator {
   /**
    * Extract submission value from input data
    */
-  static extractSubmissionValue(submissionData, field, definition) {
+  static extractSubmissionValue(submissionData, field, _definition) {
     // Handle compound fields
     if (isCompoundField(field.type)) {
       const subInputs = getCompoundFieldInputs(field.type);
@@ -535,7 +540,7 @@ export class FieldAwareValidator {
   /**
    * Process field value based on type and variant
    */
-  static processFieldValue(value, field, definition) {
+  static processFieldValue(value, field, _definition) {
     if (value === null || value === undefined) {
       return '';
     }

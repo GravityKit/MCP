@@ -3,6 +3,8 @@
  * Handles append, prepend, after, before, index, and page-specific positioning
  */
 
+import logger from '../utils/logger.js';
+
 export class PositionEngine {
   /**
    * Calculate the insertion index for a new field
@@ -57,7 +59,7 @@ export class PositionEngine {
     // Validate page number
     const totalPages = pageBoundaries.length + 1;
     if (pageNumber < 1 || pageNumber > totalPages) {
-      console.warn(`Page ${pageNumber} out of range (1-${totalPages}), defaulting to last page`);
+      logger.warn(`Page ${pageNumber} out of range (1-${totalPages}), defaulting to last page`);
       return fields.length;
     }
     
@@ -166,7 +168,7 @@ export class PositionEngine {
   /**
    * Determine which page a field belongs to
    */
-  getFieldPage(field, allFields, pagination = null) {
+  getFieldPage(field, allFields, _pagination = null) {
     const fieldIndex = allFields.indexOf(field);
     if (fieldIndex === -1) return null;
     
@@ -197,7 +199,7 @@ export class PositionEngine {
       return afterIndex + 1;
     } else {
       // Reference field not found, append to end
-      console.warn(`Reference field ${referenceFieldId} not found, appending to end`);
+      logger.warn(`Reference field ${referenceFieldId} not found, appending to end`);
       return fields.length;
     }
   }
@@ -218,7 +220,7 @@ export class PositionEngine {
       return beforeIndex;
     } else {
       // Reference field not found, append to end
-      console.warn(`Reference field ${referenceFieldId} not found, appending to end`);
+      logger.warn(`Reference field ${referenceFieldId} not found, appending to end`);
       return fields.length;
     }
   }

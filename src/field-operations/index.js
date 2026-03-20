@@ -51,89 +51,62 @@ export const fieldOperationHandlers = {
    * Add field to form
    */
   async gf_add_field(params, { fieldManager }) {
-    const { form_id, field_type, properties = {}, position = {}, test_mode = false } = params;
+    const { form_id, field_type, properties = {}, position = {} } = params;
 
-    try {
-      const result = await fieldManager.addField(
-        form_id,
-        field_type,
-        properties,
-        position
-      );
+    const result = await fieldManager.addField(
+      form_id,
+      field_type,
+      properties,
+      position
+    );
 
-      return {
-        success: true,
-        ...result
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-        form_id,
-        field_type
-      };
-    }
+    return {
+      success: true,
+      ...result
+    };
   },
 
   /**
    * Update field properties
    */
   async gf_update_field(params, { fieldManager }) {
-    const { form_id, field_id, properties, force = false, test_mode = false } = params;
+    const { form_id, field_id, properties, force = false } = params;
 
-    try {
-      const result = await fieldManager.updateField(
-        form_id,
-        field_id,
-        properties
-      );
+    const result = await fieldManager.updateField(
+      form_id,
+      field_id,
+      properties
+    );
 
-      // Check for breaking changes if not forced
-      if (!force && result.warnings?.dependencies?.length > 0) {
-        return {
-          success: false,
-          error: 'Field has dependencies that may be affected',
-          ...result,
-          suggestion: 'Use force=true to update anyway'
-        };
-      }
-
-      return {
-        success: true,
-        ...result
-      };
-    } catch (error) {
+    // Check for breaking changes if not forced
+    if (!force && result.warnings?.dependencies?.length > 0) {
       return {
         success: false,
-        error: error.message,
-        form_id,
-        field_id
+        error: 'Field has dependencies that may be affected',
+        ...result,
+        suggestion: 'Use force=true to update anyway'
       };
     }
+
+    return {
+      success: true,
+      ...result
+    };
   },
 
   /**
    * Delete field with dependency checking
    */
   async gf_delete_field(params, { fieldManager }) {
-    const { form_id, field_id, cascade = false, force = false, test_mode = false } = params;
+    const { form_id, field_id, cascade = false, force = false } = params;
 
-    try {
-      const result = await fieldManager.deleteField(
-        form_id,
-        field_id,
-        { cascade, force }
-      );
+    const result = await fieldManager.deleteField(
+      form_id,
+      field_id,
+      { cascade, force }
+    );
 
-      return result;
-    } catch (error) {
-      return {
-        success: false,
-        error: error.message,
-        form_id,
-        field_id
-      };
-    }
+    return result;
   },
 
   /**
@@ -162,7 +135,7 @@ export const fieldOperationHandlers = {
       if (feature) {
         const featureMap = {
           required: 'supportsRequired',
-          conditional: 'supportsConditional',
+          conditional: 'supportsConditionalLogic',
           duplicate: 'supportsDuplicate',
           prepopulate: 'supportsPrepopulate',
           visibility: 'supportsVisibility',
@@ -231,6 +204,7 @@ export const fieldOperationTools = [
   {
     name: 'gf_add_field',
     description: 'Add a field to a form',
+    annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
@@ -277,6 +251,7 @@ export const fieldOperationTools = [
   {
     name: 'gf_update_field',
     description: 'Update a field in a form',
+    annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
@@ -309,6 +284,7 @@ export const fieldOperationTools = [
   {
     name: 'gf_delete_field',
     description: 'Delete a field (checks dependencies)',
+    annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
@@ -342,6 +318,7 @@ export const fieldOperationTools = [
   {
     name: 'gf_list_field_types',
     description: 'List available field types. Returns type/label/category by default; use detail=true for full metadata.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {

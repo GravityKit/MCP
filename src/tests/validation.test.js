@@ -694,9 +694,12 @@ suite.test('Edge Cases: Whitespace in strings', async () => {
   TestAssert.equal(result.form.title, 'Test Form');
 });
 
-// Run tests
-suite.run().then(results => {
-  process.exit(results.failed > 0 ? 1 : 0);
-});
+// Run tests when executed directly
+const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
+if (isMain) {
+  suite.run().then(results => {
+    process.exit(results.failed > 0 ? 1 : 0);
+  });
+}
 
 export default suite;
