@@ -36,12 +36,13 @@ dotenv.config({ path: join(__dirname, '..', '.env') });
 const server = new Server(
   {
     name: 'gravitymcp',
-    version: '1.0.0'
+    version: '1.4.0'
   },
   {
     capabilities: {
       tools: {}
-    }
+    },
+    instructions: 'Gravity Forms MCP server. All responses strip null and empty values by default for minimal token usage. Pass compact=false on any tool to get full raw data. Entry tools also strip plugin-added meta keys; use compact=false to include them.'
   }
 );
 
@@ -139,7 +140,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Forms Management (6 tools)
       {
         name: 'gf_list_forms',
-        description: 'List all forms. Omits null/empty values by default; pass compact=false for raw data.',
+        description: 'List all forms with optional search and pagination.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
@@ -149,19 +150,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               items: { type: 'number' },
               description: 'Form IDs to include'
             },
-            compact: { type: 'boolean', description: 'Strip null/empty values (default true)', default: true }
+            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
           }
         }
       },
       {
         name: 'gf_get_form',
-        description: 'Get a form by ID. Omits null/empty values by default; pass compact=false for raw data.',
+        description: 'Get a form by ID with full field configuration.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'number', description: 'Form ID' },
-            compact: { type: 'boolean', description: 'Strip null/empty values (default true)', default: true }
+            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
           },
           required: ['id']
         }
@@ -241,7 +242,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Entries Management (5 tools)
       {
         name: 'gf_list_entries',
-        description: 'List/search entries. Strips null/empty values and plugin entry meta by default; pass compact=false for full raw data.',
+        description: 'List/search entries with filtering, sorting, and pagination.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
@@ -307,19 +308,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 current_page: { type: 'number' }
               }
             },
-            compact: { type: 'boolean', description: 'Strip null/empty values (default true)', default: true }
+            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
           }
         }
       },
       {
         name: 'gf_get_entry',
-        description: 'Get an entry by ID. Strips null/empty values and plugin entry meta by default; pass compact=false for full raw data.',
+        description: 'Get an entry by ID with field labels.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'number', description: 'Entry ID' },
-            compact: { type: 'boolean', description: 'Strip null/empty values (default true)', default: true }
+            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
           },
           required: ['id']
         }
@@ -434,19 +435,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             addon: { type: 'string', description: 'Addon slug' },
             form_id: { type: 'number', description: 'Form ID' },
-            compact: { type: 'boolean', description: 'Strip null/empty values (default true)', default: true }
+            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
           }
         }
       },
       {
         name: 'gf_get_feed',
-        description: 'Get a feed by ID. Omits null/empty values by default; pass compact=false for raw data.',
+        description: 'Get a feed by ID.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'number', description: 'Feed ID' },
-            compact: { type: 'boolean', description: 'Strip null/empty values (default true)', default: true }
+            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
           },
           required: ['id']
         }
