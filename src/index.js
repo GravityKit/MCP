@@ -36,7 +36,7 @@ dotenv.config({ path: join(__dirname, '..', '.env') });
 const server = new Server(
   {
     name: 'gravitymcp',
-    version: '1.4.0'
+    version: '1.4.1'
   },
   {
     capabilities: {

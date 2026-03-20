@@ -5,6 +5,35 @@ All notable changes to GravityMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-03-20
+
+### Fixed
+- Race condition in concurrent fetch-then-merge updates: added per-resource mutex to serialize mutations on the same form/entry/feed
+- `FieldManager` double-fetch eliminated: new `replaceForm()` does direct PUT without re-fetching (3 HTTP calls → 2 per field op)
+- `console.log` calls in 7 files replaced with `logger.info`/`logger.warn` to prevent JSON-RPC stdout corruption
+- `mcp.json` phantom `gf_submit_form` tool removed, 4 field operation tools added, version synced
+- `_variant`/`_meta` internal metadata stripped from field objects before sending to API
+- Field operation errors now propagate to `wrapHandler` with `isError: true` instead of being silently swallowed
+- Name field sub-input IDs corrected (`.2`=prefix, `.3`=first, matching Gravity Forms)
+- Feature filter `conditional` now maps to correct registry key `supportsConditionalLogic`
+- `gf_delete_feed` description now mentions `ALLOW_DELETE` requirement
+
+### Added
+- `ResourceMutex` utility (`utils/mutex.js`) with `acquire`/`release` and `withLock()` for safe concurrent operations
+- `replaceForm(formId, formData)` client method for direct PUT without re-fetch
+- MCP tool annotations on all 26 tools (`readOnlyHint`, `destructiveHint`, `openWorldHint`)
+- Server-level `instructions` string documenting compact mode (sent once at session start)
+- 31 new tests: 22 bug regression tests + 9 mutex concurrency tests
+
+### Changed
+- Tool descriptions stripped of repeated compact boilerplate (~130 tokens saved per `tools/list` call)
+- `compact` property description shortened to "Return raw uncompacted data"
+
+### Removed
+- Redundant `gf_list_form_feeds` tool (`gf_list_feeds` with `form_id` does the same thing plus addon filtering)
+- Deprecated `crypto` and unused `form-data` npm dependencies
+- False `batch_operations: true` claim from `mcp.json`
+
 ## [1.4.0] - 2026-03-20
 
 ### Added
@@ -102,6 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[1.4.1]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.4.1
 [1.4.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.4.0
 [1.3.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.3.0
 [1.1.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.1.0
