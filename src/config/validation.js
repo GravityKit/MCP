@@ -4,15 +4,14 @@
  */
 
 import { FieldAwareValidator } from './field-validation.js';
-import { validate, ValidationSchema, ValidationError } from './validation-chain.js';
-import { VALIDATION_CONFIG, getEnumValues, getPaginationLimits } from './validation-config.js';
+import { validate, ValidationSchema } from './validation-chain.js';
+import { VALIDATION_CONFIG, getEnumValues } from './validation-config.js';
 import {
   FormsValidator as NewFormsValidator,
   EntriesValidator as NewEntriesValidator,
   FeedsValidator as NewFeedsValidator,
   NotificationsValidator as NewNotificationsValidator,
   SubmissionsValidator as NewSubmissionsValidator,
-  GenericValidators
 } from './validators.js';
 
 /**
@@ -244,6 +243,13 @@ export class BaseValidator {
 
   static validateArray(value, fieldName = 'value') {
     if (value !== undefined && !Array.isArray(value)) {
+      // MCP clients may serialize arrays as JSON strings — parse them
+      if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (_) { /* not valid JSON, fall through */ }
+      }
       throw new Error(`${fieldName} must be an array`);
     }
     return value || [];
@@ -450,11 +456,11 @@ export class ValidationFactory {
       case 'entries':
         return EntriesValidator;
       case 'submissions':
-        return SubmissionsValidator;
+        return NewSubmissionsValidator;
       case 'feeds':
-        return FeedsValidator;
+        return NewFeedsValidator;
       case 'notifications':
-        return NotificationsValidator;
+        return NewNotificationsValidator;
       default:
         return BaseValidator;
     }
