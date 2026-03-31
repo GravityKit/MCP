@@ -397,11 +397,110 @@ export class GravityFormsClient {
   }
 
   /**
+   * Normalize array values in entry data to match Gravity Forms storage patterns.
+   *
+   * Different field types store multi-value data differently:
+   *   - Checkbox (incl. image choice checkbox): dot-notation sub-inputs ("5.1": "val")
+   *   - Multiselect: JSON-encoded string ("[\"a\",\"b\"]")
+   *   - Radio, dropdown, image choice radio/dropdown: single value (no arrays)
+   *   - Consent: special sub-inputs (not choice-based, left untouched)
+   *
+   * When entry data contains array values, this method fetches the form to
+   * identify the field type and applies the correct storage format.
+   *
+   * For checkbox fields, values are matched against choice.value first, then
+   * choice.text as fallback. This ensures the correct sub-input ID is used even
+   * when IDs have gaps from deleted choices.
+   *
+   * @param {object} entryData - Entry data, possibly containing array values.
+   * @param {number} formId - The form ID to fetch field definitions from.
+   * @returns {Promise<object>} Entry data with arrays normalized per field type.
+   */
+  async _normalizeArrayValues(entryData, formId) {
+    const arrayKeys = Object.keys(entryData).filter(k => Array.isArray(entryData[k]));
+    if (arrayKeys.length === 0) return entryData;
+
+    const formResponse = await this.httpClient.get(`/forms/${formId}`);
+    const fields = formResponse.data.fields || [];
+
+    const expanded = { ...entryData };
+
+    // Single-value field types: radio/dropdown take first element from arrays
+    const singleValueTypes = new Set(['radio', 'select']);
+
+    // Field types where arrays should not be normalized:
+    // - list: REST API handles array serialization natively
+    // - chainedselect: has inputs+choices but is compound (each sub-input = one dropdown),
+    //   not multi-select. Nested choices are a tree, not flat checkbox choices.
+    const passthroughTypes = new Set(['list', 'chainedselect']);
+
+    for (const key of arrayKeys) {
+      const fieldId = parseInt(key, 10);
+      if (isNaN(fieldId)) continue;
+
+      const field = fields.find(f => f.id === fieldId);
+      if (!field) continue;
+
+      const fieldType = field.inputType || field.type;
+
+      // List and other passthrough types: REST API handles arrays natively
+      if (passthroughTypes.has(field.type)) continue;
+
+      // Checkbox-type fields: expand to dot-notation sub-inputs
+      // Detection: has both inputs[] and choices[] (works for checkbox, quiz,
+      // poll, survey, option, post_category, post_custom_field with inputType=checkbox)
+      if (field.inputs && field.choices) {
+        const values = expanded[key];
+        delete expanded[key];
+
+        // Clear all visible sub-inputs for this field
+        for (const input of field.inputs) {
+          if (input.isHidden) continue;
+          expanded[String(input.id)] = '';
+        }
+
+        // Build visible-input list (hidden inputs like "Select All" shift indices)
+        const visibleInputs = field.inputs.filter(input => !input.isHidden);
+
+        // Match each value to a choice and assign to the correct sub-input.
+        // GF HTML-encodes choice text (& → &amp;, etc.), so also compare
+        // against decoded text for natural-language input from AI agents.
+        const decodeHtml = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+        for (const val of values) {
+          const choiceIndex = field.choices.findIndex(
+            c => c.value === val || c.text === val || decodeHtml(c.text) === val
+          );
+
+          if (choiceIndex !== -1 && visibleInputs[choiceIndex]) {
+            expanded[String(visibleInputs[choiceIndex].id)] = field.choices[choiceIndex].value;
+          }
+        }
+        continue;
+      }
+
+      // Fields with choices but no inputs: either single-value or multi-value
+      if (field.choices) {
+        if (singleValueTypes.has(fieldType)) {
+          // Radio/dropdown: take first element
+          expanded[key] = expanded[key][0] || '';
+        } else {
+          // Multiselect, entry_tags, or any other multi-value field:
+          // REST API v2 accepts comma-separated strings for multi-value fields
+          expanded[key] = expanded[key].join(',');
+        }
+      }
+    }
+
+    return expanded;
+  }
+
+  /**
    * Create new entry with validation
    */
   async createEntry(params) {
     return this.validateAndCall('gf_create_entry', params, async (validated) => {
-      const response = await this.httpClient.post('/entries', validated);
+      const expanded = await this._normalizeArrayValues(validated, validated.form_id);
+      const response = await this.httpClient.post('/entries', expanded);
 
       return {
         entry: response.data
@@ -420,9 +519,12 @@ export class GravityFormsClient {
         const existingEntryResponse = await this.httpClient.get(`/entries/${id}`);
         const existingEntry = existingEntryResponse.data;
 
+        // Expand checkbox arrays before merging so stale sub-inputs are cleared
+        const expandedUpdates = await this._normalizeArrayValues(updates, existingEntry.form_id);
+
         const updatedEntryData = {
           ...existingEntry,
-          ...updates
+          ...expandedUpdates
         };
 
         const response = await this.httpClient.put(`/entries/${id}`, updatedEntryData);
