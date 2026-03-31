@@ -164,12 +164,15 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'array',
-      format: 'json',
-      itemFormat: 'input_{fieldId}_{index}'
+      type: 'compound',
+      format: 'dotNotation',
+      // Each choice maps to a sub-input: fieldId.1, fieldId.2, etc.
+      // Checked = choice value, unchecked = empty string.
+      // Sub-input IDs have gaps when choices are deleted (never reused).
     },
     hasChoices: true,
-    isArray: true
+    isCompound: true,
+    isArray: true  // FieldAwareValidator uses this to extract/process multi-value data
   },
 
   multiselect: {
@@ -179,15 +182,19 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'array',
-      format: 'json'
+      type: 'string',
+      format: 'commaSeparated',
+      // GFAPI stores as JSON string in DB; REST API v2 accepts/returns
+      // comma-separated values. Values containing commas are a known
+      // GF REST API limitation — they get split incorrectly.
     },
     variants: {
       default: { label: 'Default', settings: {} },
       enhanced: { label: 'Enhanced UI', settings: { enableEnhancedUI: true } }
     },
     hasChoices: true,
-    isArray: true
+    isMultiValue: true,
+    isArray: true  // FieldAwareValidator uses this to extract/process multi-value data
   },
 
   // Advanced Fields
@@ -297,12 +304,16 @@ export const fieldRegistry = {
     supportsConditionalLogic: true,
     storage: {
       type: 'array',
-      format: 'serialized'
+      format: 'serialized',
+      // GFAPI stores as PHP serialized string in DB.
+      // REST API v2 transparently converts to/from JSON arrays.
+      // Single-col: array of strings ["a","b","c"]
+      // Multi-col: array of objects [{"Col1":"val","Col2":"val"},...]
     },
     isArray: true,
     variants: {
-      single: { label: 'Single Column', settings: { enableColumns: false } },
-      multi: { label: 'Multiple Columns', settings: { enableColumns: true } }
+      single: { label: 'Single Column', settings: { enableColumns: false }, storage: { items: 'string' } },
+      multi: { label: 'Multiple Columns', settings: { enableColumns: true }, storage: { items: 'object' } }
     }
   },
 
@@ -403,12 +414,21 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'string',
-      format: 'single'
+      type: 'varies',
+      format: 'inputType-dependent',
+      // select/radio: single string "Name:ID"
+      // checkbox: dot-notation sub-inputs "Name:ID" per sub-input
+      //   NOTE: displayAllCategories=true generates inputs/choices dynamically
+      //   at render time — they are NOT stored in form meta. REST API returns
+      //   no inputs/choices for these fields.
+      // multiselect: comma-separated string of "Name:ID" values
     },
+    hasChoices: true,
     variants: {
-      dropdown: { label: 'Dropdown', settings: { displayAllCategories: false } },
-      checkboxes: { label: 'Checkboxes', settings: { displayAllCategories: true } }
+      dropdown: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
+      radio: { label: 'Radio', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
+      checkboxes: { label: 'Checkboxes', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
+      multiselect: { label: 'Multi Select', settings: { inputType: 'multiselect' }, storage: { type: 'string', format: 'commaSeparated' } }
     }
   },
 
@@ -443,8 +463,20 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'string',
-      format: 'single'
+      type: 'varies',
+      format: 'inputType-dependent',
+      // Inherits storage from its inputType: text, textarea, select, radio,
+      // checkbox, multiselect, hidden, date, time, phone, number, website,
+      // email, fileupload, list. Checkbox → dot-notation, multiselect → comma-separated.
+    },
+    variants: {
+      text: { label: 'Text', settings: { inputType: 'text' }, storage: { type: 'string', format: 'single' } },
+      textarea: { label: 'Textarea', settings: { inputType: 'textarea' }, storage: { type: 'string', format: 'single' } },
+      select: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
+      radio: { label: 'Radio', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
+      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
+      multiselect: { label: 'Multi Select', settings: { inputType: 'multiselect' }, storage: { type: 'string', format: 'commaSeparated' } },
+      hidden: { label: 'Hidden', settings: { inputType: 'hidden' }, storage: { type: 'string', format: 'single' } }
     }
   },
 
@@ -456,16 +488,22 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'string',
-      format: 'single'
+      type: 'varies',
+      format: 'inputType-dependent',
+      // singleproduct/calculation/price/hiddenproduct: compound dot-notation
+      //   (.1=name, .2=price, .3=quantity) — has inputs, NO choices
+      // select/radio: single "value|price" string — has choices, NO inputs
+      // checkbox: dot-notation sub-inputs "value|price" — has inputs + choices
     },
+    hasChoices: true,
     variants: {
-      singleproduct: { label: 'Single Product', settings: { inputType: 'singleproduct' } },
-      dropdown: { label: 'Dropdown', settings: { inputType: 'select' } },
-      radio: { label: 'Radio Buttons', settings: { inputType: 'radio' } },
-      calculation: { label: 'Calculation', settings: { inputType: 'calculation' } },
-      price: { label: 'User Defined Price', settings: { inputType: 'price' } },
-      hiddenproduct: { label: 'Hidden', settings: { inputType: 'hiddenproduct' } }
+      singleproduct: { label: 'Single Product', settings: { inputType: 'singleproduct' }, storage: { type: 'compound', format: 'dotNotation' } },
+      dropdown: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
+      radio: { label: 'Radio Buttons', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
+      checkbox: { label: 'Checkboxes', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
+      calculation: { label: 'Calculation', settings: { inputType: 'calculation' }, storage: { type: 'compound', format: 'dotNotation' } },
+      price: { label: 'User Defined Price', settings: { inputType: 'price' }, storage: { type: 'compound', format: 'dotNotation' } },
+      hiddenproduct: { label: 'Hidden', settings: { inputType: 'hiddenproduct' }, storage: { type: 'compound', format: 'dotNotation' } }
     }
   },
 
@@ -488,13 +526,16 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'string',
-      format: 'single'
+      type: 'varies',
+      format: 'inputType-dependent',
+      // select/radio: single "value|price" string
+      // checkbox: dot-notation sub-inputs "value|price"
     },
+    hasChoices: true,
     variants: {
-      dropdown: { label: 'Dropdown', settings: { inputType: 'select' } },
-      checkboxes: { label: 'Checkboxes', settings: { inputType: 'checkbox' } },
-      radio: { label: 'Radio Buttons', settings: { inputType: 'radio' } }
+      dropdown: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
+      checkboxes: { label: 'Checkboxes', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
+      radio: { label: 'Radio Buttons', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } }
     }
   },
 
@@ -561,7 +602,8 @@ export const fieldRegistry = {
       format: 'dotNotation',
       subInputs: {
         '1': 'checked',
-        '2': 'text'
+        '2': 'text',
+        '3': 'revision'
       }
     },
     isCompound: true
@@ -601,18 +643,20 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'string',
-      format: 'single'
+      type: 'varies',
+      format: 'inputType-dependent',
+      // select/radio: single "gquizNN" string
+      // checkbox: dot-notation sub-inputs with "gquizNN" values
     },
     hasChoices: true,
     variants: {
-      dropdown: { label: 'Dropdown', settings: { inputType: 'select' } },
-      radio: { label: 'Radio', settings: { inputType: 'radio' } },
-      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' } }
+      dropdown: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
+      radio: { label: 'Radio', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
+      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } }
     }
   },
 
-  // Poll Fields  
+  // Poll Fields
   poll: {
     type: 'poll',
     label: 'Poll',
@@ -620,18 +664,50 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'string',
-      format: 'single'
+      type: 'varies',
+      format: 'inputType-dependent',
+      // select/radio: single "gpollN" string
+      // checkbox: dot-notation sub-inputs with "gpollN" values
     },
     hasChoices: true,
     variants: {
-      dropdown: { label: 'Dropdown', settings: { inputType: 'select' } },
-      radio: { label: 'Radio', settings: { inputType: 'radio' } },
-      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' } }
+      dropdown: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
+      radio: { label: 'Radio', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
+      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } }
     }
   },
 
   // Survey Fields
+  // The actual GF field type is 'survey' with inputType controlling behavior.
+  // The REST API returns type='survey' with inputType='checkbox'/'radio'/'select'/'likert'/'rank'/'rating'/'text'/'textarea'.
+  survey: {
+    type: 'survey',
+    label: 'Survey',
+    category: 'survey',
+    supportsRequired: true,
+    supportsConditionalLogic: true,
+    storage: {
+      type: 'varies',
+      format: 'inputType-dependent',
+      // radio/select/text/textarea/rating/rank: single string value
+      // checkbox: dot-notation sub-inputs with "gsurveyNN" values
+      // likert single-row: single "glikertN" string
+      // likert multi-row: dot-notation sub-inputs with "rowValue:glikertN" values
+    },
+    hasChoices: true,
+    variants: {
+      radio: { label: 'Radio', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
+      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
+      select: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
+      likert: { label: 'Likert', settings: { inputType: 'likert' }, storage: { type: 'varies', format: 'single-or-dotNotation' } },
+      rank: { label: 'Rank', settings: { inputType: 'rank' }, storage: { type: 'string', format: 'single' } },
+      rating: { label: 'Rating', settings: { inputType: 'rating' }, storage: { type: 'string', format: 'single' } },
+      text: { label: 'Text', settings: { inputType: 'text' }, storage: { type: 'string', format: 'single' } },
+      textarea: { label: 'Textarea', settings: { inputType: 'textarea' }, storage: { type: 'string', format: 'single' } }
+    }
+  },
+
+  // Legacy survey entries (kept for backward compat with existing forms using these types)
   survey_likert: {
     type: 'survey_likert',
     label: 'Likert',
@@ -639,11 +715,12 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'compound',
-      format: 'dotNotation'
+      type: 'varies',
+      format: 'single-or-dotNotation',
+      // Single-row: single "glikertN" string (no inputs)
+      // Multi-row: dot-notation sub-inputs with "rowValue:glikertN" per row (has inputs)
     },
-    hasChoices: true,
-    isCompound: true
+    hasChoices: true
   },
 
   survey_rank: {
@@ -709,10 +786,13 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'string',
-      format: 'single'
+      type: 'compound',
+      format: 'dotNotation',
+      // Each dropdown level = one sub-input (fieldId.1, fieldId.2, etc.)
+      // Choices are a nested tree, not flat. Each sub-input holds a single value.
     },
     hasChoices: true,
+    isCompound: true,
     isChained: true
   }
 };
