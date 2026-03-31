@@ -1,9 +1,25 @@
 # Changelog
 
-All notable changes to GravityMCP will be documented in this file.
+All notable changes to GravityKit MCP (formerly GravityMCP) will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.0.0] - 2026-03-31
+
+### Changed
+- **Renamed project from GravityMCP to GravityKit MCP**
+- npm package: `@gravitykit/gravitymcp` → `@gravitykit/mcp`
+- GitHub repo: `GravityKit/GravityMCP` → `GravityKit/MCP`
+- MCP server name: `gravitymcp` → `gravitykit-mcp`
+- CLI binary: `gravitymcp` → `gkmcp`
+- Environment variable: `GRAVITYKIT_MCP_TEST_MODE` (legacy `GRAVITYMCP_TEST_MODE` still supported)
+- User-Agent header updated to `GravityKit MCP/2.0.0`
+
+### Backwards Compatibility
+- The old `@gravitykit/gravitymcp` npm package is published as a bridge that depends on `@gravitykit/mcp` with a deprecation notice — existing installs continue working
+- GitHub auto-redirects old repo URL (`GravityKit/GravityMCP`) to the new one
+- `GRAVITYMCP_TEST_MODE` environment variable still works alongside new `GRAVITYKIT_MCP_TEST_MODE`
 
 ## [1.4.1] - 2026-03-20
 
@@ -131,12 +147,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
-[1.4.1]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.4.1
-[1.4.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.4.0
-[1.3.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.3.0
-[1.1.0]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.1.0
-[1.0.5]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.5
-[1.0.4]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.4
-[1.0.3]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.3
-[1.0.2]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.2
-[1.0.1]: https://github.com/GravityKit/GravityMCP/releases/tag/v1.0.1
+[2.0.0]: https://github.com/GravityKit/MCP/releases/tag/v2.0.0
+[1.4.1]: https://github.com/GravityKit/MCP/releases/tag/v1.4.1
+[1.4.0]: https://github.com/GravityKit/MCP/releases/tag/v1.4.0
+[1.3.0]: https://github.com/GravityKit/MCP/releases/tag/v1.3.0
+[1.1.0]: https://github.com/GravityKit/MCP/releases/tag/v1.1.0
+[1.0.5]: https://github.com/GravityKit/MCP/releases/tag/v1.0.5
+[1.0.4]: https://github.com/GravityKit/MCP/releases/tag/v1.0.4
+[1.0.3]: https://github.com/GravityKit/MCP/releases/tag/v1.0.3
+[1.0.2]: https://github.com/GravityKit/MCP/releases/tag/v1.0.2
+[1.0.1]: https://github.com/GravityKit/MCP/releases/tag/v1.0.1

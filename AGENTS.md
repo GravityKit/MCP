@@ -1,4 +1,4 @@
-# AGENTS.md — GravityMCP
+# AGENTS.md — GravityKit MCP
 
 > MCP server providing 28 tools for full Gravity Forms REST API v2 coverage, enabling AI agents to manage forms, entries, feeds, notifications, and fields programmatically.
 
@@ -13,8 +13,8 @@
 ## Repository Map
 
 ```
-gravitymcp/
-├── package.json              # @gravitykit/gravitymcp, ESM, npm scripts
+MCP/
+├── package.json              # @gravitykit/mcp, ESM, npm scripts
 ├── mcp.json                  # MCP manifest (tool catalog, auth config)
 ├── .env.example              # All env vars documented
 ├── CLAUDE.md                 # Project docs for AI context
@@ -336,7 +336,7 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 11. **`gf_list_field_types` defaults to summary mode.** Returns only `type`, `label`, `category` per field type. Pass `detail=true` for full metadata (supports, storage, validation). Pass `include_variants=true` with `detail=true` for variant data. This prevents accidentally dumping thousands of tokens for all 44 field types. — `field-operations/index.js:142-211`
 
-12. **Test mode resolves env vars at client construction.** When `GRAVITYMCP_TEST_MODE=true`, `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_BASE_URL` → `GRAVITY_FORMS_BASE_URL` (and consumer key/secret). The rest of the client and AuthManager work unchanged. — `config/test-config.js:60-95`, `gravity-forms-client.js:16`
+12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_BASE_URL` → `GRAVITY_FORMS_BASE_URL` (and consumer key/secret). The rest of the client and AuthManager work unchanged. — `config/test-config.js:60-95`, `gravity-forms-client.js:16`
 
 ## Releasing
 
@@ -345,7 +345,7 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 1. **Update `CHANGELOG.md`** — add a new `## [X.Y.Z] - YYYY-MM-DD` section with all changes since the last release. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Fixed, Removed).
 2. **Bump `version` in `package.json`**
 3. **Update version in `CLAUDE.md`** (Project Identity → Package line)
-4. **Add link** at bottom of `CHANGELOG.md`: `[X.Y.Z]: https://github.com/GravityKit/GravityMCP/releases/tag/vX.Y.Z`
+4. **Add link** at bottom of `CHANGELOG.md`: `[X.Y.Z]: https://github.com/GravityKit/MCP/releases/tag/vX.Y.Z`
 5. **Commit**: `git commit -m "chore(release): bump version to X.Y.Z"`
 6. **Tag**: `git tag vX.Y.Z`
 7. **Push**: `git push origin main --tags`

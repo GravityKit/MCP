@@ -25,7 +25,7 @@ export class GravityFormsClient {
       baseURL: this.baseURL,
       timeout: parseInt(config.GRAVITY_FORMS_TIMEOUT) || 30000,
       headers: {
-        'User-Agent': 'Gravity MCP v1.0.0',
+        'User-Agent': 'GravityKit-MCP/2.0.0',
         'Accept': 'application/json'
       },
       // Allow self-signed certificates for local development
@@ -99,11 +99,11 @@ export class GravityFormsClient {
                   process.env.GRAVITY_FORMS_TEST_MODE === 'true' ||
                   process.argv.some(arg => arg.includes('test'));
 
-    const isTestMode = this.config.GRAVITYMCP_TEST_MODE === 'true';
+    const isTestMode = this.config.GRAVITYKIT_MCP_TEST_MODE === 'true' || this.config.GRAVITYMCP_TEST_MODE === 'true';
 
     // Only output initialization messages when not in unit test mode
     if (!isTest) {
-      logger.info('🚀 Initializing Gravity MCP');
+      logger.info('🚀 Initializing GravityKit MCP');
       logger.info(`📡 Connecting to: ${this.config.GRAVITY_FORMS_BASE_URL}${isTestMode ? ' (TEST MODE)' : ''}`);
     }
 

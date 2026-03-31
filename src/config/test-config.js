@@ -54,7 +54,8 @@ export const testConfig = {
    * Check if test mode is enabled
    */
   isTestMode() {
-    return process.env.GRAVITYMCP_TEST_MODE === 'true' ||
+    return process.env.GRAVITYKIT_MCP_TEST_MODE === 'true' ||
+           process.env.GRAVITYMCP_TEST_MODE === 'true' ||
            process.env.NODE_ENV === 'test';
   },
 
@@ -71,7 +72,7 @@ export const testConfig = {
    * @returns {object} Config with test overrides applied when in test mode.
    */
   resolveEnv(config) {
-    const isTest = config.GRAVITYMCP_TEST_MODE === 'true' || config.NODE_ENV === 'test';
+    const isTest = config.GRAVITYKIT_MCP_TEST_MODE === 'true' || config.GRAVITYMCP_TEST_MODE === 'true' || config.NODE_ENV === 'test';
 
     if (!isTest) {
       return config;

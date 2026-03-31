@@ -1,8 +1,8 @@
-# MCP for Gravity Forms
+# GravityKit MCP
 
 A Model Context Protocol (MCP) server for Gravity Forms. Interact with your WordPress forms, feeds, and entries through any MCP-compatible client.
 
-[![npm version](https://img.shields.io/npm/v/@gravitykit/gravitymcp.svg)](https://www.npmjs.com/package/@gravitykit/gravitymcp)
+[![npm version](https://img.shields.io/npm/v/@gravitykit/mcp.svg)](https://www.npmjs.com/package/@gravitykit/mcp)
 
 Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms community.
 
@@ -27,8 +27,8 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/GravityKit/GravityMCP.git
-   cd GravityMCP
+   git clone https://github.com/GravityKit/MCP.git
+   cd MCP
    npm install
    ```
 
@@ -61,9 +61,9 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
    ```json
    {
      "mcpServers": {
-       "gravitymcp": {
+       "gravitykit-mcp": {
          "command": "node",
-         "args": ["/path/to/GravityMCP/src/index.js"],
+         "args": ["/path/to/MCP/src/index.js"],
          "env": {
            "GRAVITY_FORMS_CONSUMER_KEY": "your_key",
            "GRAVITY_FORMS_CONSUMER_SECRET": "your_secret",
@@ -181,7 +181,7 @@ GRAVITY_FORMS_TEST_CONSUMER_SECRET=cs_test_secret
 GRAVITY_FORMS_TEST_BASE_URL=https://staging.yoursite.com
 
 # Enable test mode (optional)
-GRAVITY_MCP_TEST_MODE=true
+GRAVITYKIT_MCP_TEST_MODE=true
 ```
 
 ### Test Environment Features
@@ -196,7 +196,7 @@ When using test configuration:
 
 ```bash
 # Verify test environment configuration
-GRAVITY_MCP_TEST_MODE=true npm run check-env
+GRAVITYKIT_MCP_TEST_MODE=true npm run check-env
 
 # Create test data on test site (requires test credentials)
 npm run setup-test-data
@@ -205,7 +205,7 @@ npm run setup-test-data
 npm test
 
 # Interactive testing with MCP Inspector (test mode)
-GRAVITYMCP_TEST_MODE=true npm run inspect
+GRAVITYKIT_MCP_TEST_MODE=true npm run inspect
 
 # Run specific test suites against test site
 NODE_ENV=test npm run test:forms
@@ -216,7 +216,7 @@ NODE_ENV=test npm run test:submissions
 ### Test Mode Detection
 
 The server automatically uses test configuration when:
-1. `GRAVITYMCP_TEST_MODE=true` is set
+1. `GRAVITYKIT_MCP_TEST_MODE=true` is set (or legacy `GRAVITYMCP_TEST_MODE=true`)
 2. OR `NODE_ENV=test` is set
 3. OR test credentials are configured and test commands are run
 
@@ -293,7 +293,7 @@ GRAVITY_FORMS_DEBUG=true
 
 ## Support
 
-- [GitHub Issues](https://github.com/GravityKit/GravityMCP/issues)
+- [GitHub Issues](https://github.com/GravityKit/MCP/issues)
 - [Gravity Forms Documentation](https://docs.gravityforms.com/rest-api-v2/)
 - [MCP Documentation](https://modelcontextprotocol.io/)
 
@@ -337,7 +337,7 @@ This repository uses GitHub Actions to automatically publish to npm when a new v
 - Enhance error messages and debugging
 
 **For Everyone:**
-- Report bugs or suggest features via [GitHub Issues](https://github.com/GravityKit/GravityMCP/issues)
+- Report bugs or suggest features via [GitHub Issues](https://github.com/GravityKit/MCP/issues)
 - Improve documentation and examples
 - Share your use cases and workflows
 

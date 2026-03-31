@@ -52,11 +52,11 @@ jobs:
             ## Installation
             
             ```bash
-            npm install @gravitykit/gravitymcp@${{ github.ref_name }}
+            npm install @gravitykit/mcp@${{ github.ref_name }}
             ```
-            
+
             ## npm Package
-            
-            View on npm: https://www.npmjs.com/package/@gravitykit/gravitymcp
+
+            View on npm: https://www.npmjs.com/package/@gravitykit/mcp
           draft: false
           prerelease: false

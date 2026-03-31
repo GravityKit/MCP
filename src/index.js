@@ -35,14 +35,14 @@ dotenv.config({ path: join(__dirname, '..', '.env') });
 // Initialize the MCP server
 const server = new Server(
   {
-    name: 'gravitymcp',
-    version: '1.4.1'
+    name: 'gravitykit-mcp',
+    version: '2.0.0'
   },
   {
     capabilities: {
       tools: {}
     },
-    instructions: 'Gravity Forms MCP server. All responses strip null and empty values by default for minimal token usage. Pass compact=false on any tool to get full raw data. Entry tools also strip plugin-added meta keys; use compact=false to include them.'
+    instructions: 'GravityKit MCP server for Gravity Forms. All responses strip null and empty values by default for minimal token usage. Pass compact=false on any tool to get full raw data. Entry tools also strip plugin-added meta keys; use compact=false to include them.'
   }
 );
 
@@ -71,7 +71,7 @@ async function initializeClient() {
       fieldValidator
     );
 
-    logger.info('✅ Gravity MCP initialized successfully');
+    logger.info('✅ GravityKit MCP initialized successfully');
     logger.info('✅ Field operations infrastructure initialized');
     return true;
   } catch (error) {
@@ -679,7 +679,7 @@ async function main() {
     // Connect server to transport
     await server.connect(transport);
 
-    logger.info('🚀 Gravity MCP running on stdio');
+    logger.info('🚀 GravityKit MCP running on stdio');
   } catch (error) {
     logger.error(`Failed to start server: ${error}`);
     process.exit(1);
@@ -688,12 +688,12 @@ async function main() {
 
 // Handle graceful shutdown
 process.on('SIGINT', async () => {
-  logger.info('👋 Shutting down Gravity MCP...');
+  logger.info('👋 Shutting down GravityKit MCP...');
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  logger.info('👋 Shutting down Gravity MCP...');
+  logger.info('👋 Shutting down GravityKit MCP...');
   process.exit(0);
 });
 

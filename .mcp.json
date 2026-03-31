@@ -1,5 +1,5 @@
 {
-  "name": "gravitymcp",
+  "name": "gravitykit-mcp",
   "version": "1.0.0",
   "description": "MCP server for Gravity Forms",
   "command": "node",
@@ -184,8 +184,8 @@
   "metadata": {
     "author": "GravityKit",
     "license": "MIT",
-    "repository": "https://github.com/GravityKit/GravityMCP",
-    "documentation": "https://github.com/GravityKit/GravityMCP#readme",
+    "repository": "https://github.com/GravityKit/MCP",
+    "documentation": "https://github.com/GravityKit/MCP#readme",
     "api_coverage": "100%",
     "total_tools": 24,
     "authentication_methods": ["OAuth 1.0a", "Basic Authentication"],
