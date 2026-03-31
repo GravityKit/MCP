@@ -300,7 +300,18 @@ export class FieldAwareValidator {
    * Get field value from entry data
    */
   static getFieldValue(entryData, field, _definition) {
-    // Handle compound fields
+    // Handle array fields first (checkbox is both isCompound and isArray)
+    if (isArrayField(field.type)) {
+      const arrayValue = [];
+      let index = 1;
+      while (entryData[`${field.id}.${index}`] !== undefined) {
+        arrayValue.push(entryData[`${field.id}.${index}`]);
+        index++;
+      }
+      return arrayValue.length > 0 ? arrayValue : entryData[field.id];
+    }
+
+    // Handle compound fields (name, address, creditcard, consent — NOT checkbox)
     if (isCompoundField(field.type)) {
       const subInputs = getCompoundFieldInputs(field.type);
       if (subInputs) {
@@ -313,17 +324,6 @@ export class FieldAwareValidator {
         }
         return Object.keys(compoundValue).length > 0 ? compoundValue : null;
       }
-    }
-
-    // Handle array fields (checkboxes)
-    if (isArrayField(field.type)) {
-      const arrayValue = [];
-      let index = 1;
-      while (entryData[`${field.id}.${index}`] !== undefined) {
-        arrayValue.push(entryData[`${field.id}.${index}`]);
-        index++;
-      }
-      return arrayValue.length > 0 ? arrayValue : entryData[field.id];
     }
 
     // Handle single value fields
@@ -470,17 +470,9 @@ export class FieldAwareValidator {
       }
 
       // Store based on field type
-      if (isCompoundField(field.type)) {
-        // Store compound fields with dot notation
-        const subInputs = getCompoundFieldInputs(field.type);
-        if (subInputs) {
-          for (const [subId, subName] of Object.entries(subInputs)) {
-            if (inputValue[subName] !== undefined) {
-              processed[`${field.id}.${subId}`] = inputValue[subName];
-            }
-          }
-        }
-      } else if (isArrayField(field.type)) {
+      // Check array fields first: checkbox is both isCompound and isArray,
+      // but uses array-style sequential sub-inputs, not named subInputs.
+      if (isArrayField(field.type)) {
         // Store array fields
         if (Array.isArray(inputValue)) {
           // For checkbox fields, store with sequential numbering
@@ -489,6 +481,16 @@ export class FieldAwareValidator {
           });
         } else {
           processed[field.id] = inputValue;
+        }
+      } else if (isCompoundField(field.type)) {
+        // Store compound fields with dot notation (name, address, creditcard, consent)
+        const subInputs = getCompoundFieldInputs(field.type);
+        if (subInputs) {
+          for (const [subId, subName] of Object.entries(subInputs)) {
+            if (inputValue[subName] !== undefined) {
+              processed[`${field.id}.${subId}`] = inputValue[subName];
+            }
+          }
         }
       } else {
         // Store single value
@@ -503,7 +505,20 @@ export class FieldAwareValidator {
    * Extract submission value from input data
    */
   static extractSubmissionValue(submissionData, field, _definition) {
-    // Handle compound fields
+    // Handle array fields first (checkbox is both isCompound and isArray)
+    if (isArrayField(field.type)) {
+      const values = [];
+      let index = 1;
+
+      while (submissionData[`input_${field.id}_${index}`] !== undefined) {
+        values.push(submissionData[`input_${field.id}_${index}`]);
+        index++;
+      }
+
+      return values.length > 0 ? values : submissionData[`input_${field.id}`];
+    }
+
+    // Handle compound fields (name, address, creditcard, consent)
     if (isCompoundField(field.type)) {
       const subInputs = getCompoundFieldInputs(field.type);
       const value = {};
@@ -518,19 +533,6 @@ export class FieldAwareValidator {
       }
 
       return Object.keys(value).length > 0 ? value : null;
-    }
-
-    // Handle array fields (checkboxes)
-    if (isArrayField(field.type)) {
-      const values = [];
-      let index = 1;
-
-      while (submissionData[`input_${field.id}_${index}`] !== undefined) {
-        values.push(submissionData[`input_${field.id}_${index}`]);
-        index++;
-      }
-
-      return values.length > 0 ? values : submissionData[`input_${field.id}`];
     }
 
     // Handle single value fields
@@ -599,7 +601,9 @@ export class FieldAwareValidator {
         summary.conditionalFields++;
       }
 
-      if (isCompoundField(field.type)) {
+      // Count compound fields (name, address, etc.) but not checkbox
+      // which is isCompound for storage but isArray for processing
+      if (isCompoundField(field.type) && !isArrayField(field.type)) {
         summary.compoundFields++;
       }
 

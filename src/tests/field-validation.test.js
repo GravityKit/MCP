@@ -119,8 +119,11 @@ test('Validates basic form fields', () => {
 
   const validated = FieldAwareValidator.validateFormFields(fields);
   assertEqual(validated.length, 2, 'Should validate 2 fields');
-  assert(validated[0]._meta, 'Should add metadata');
-  assertEqual(validated[0]._variant, 'default', 'Should detect default variant');
+  // _meta and _variant are stripped before returning (internal only)
+  assert(!validated[0]._meta, 'Internal metadata should be stripped');
+  assert(!validated[0]._variant, 'Internal variant should be stripped');
+  assertEqual(validated[0].type, 'text', 'Field type preserved');
+  assertEqual(validated[0].label, 'Name', 'Field label preserved');
 });
 
 test('Rejects invalid field configurations', () => {
