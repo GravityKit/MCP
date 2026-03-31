@@ -7,15 +7,16 @@ import { FieldAwareValidator } from './field-validation.js';
 import { validate, ValidationSchema } from './validation-chain.js';
 import { VALIDATION_CONFIG, getEnumValues } from './validation-config.js';
 import {
-  FormsValidator as NewFormsValidator,
-  EntriesValidator as NewEntriesValidator,
-  FeedsValidator as NewFeedsValidator,
-  NotificationsValidator as NewNotificationsValidator,
-  SubmissionsValidator as NewSubmissionsValidator,
+  FormsValidator as ChainFormsValidator,
+  FeedsValidator as ChainFeedsValidator,
+  NotificationsValidator as ChainNotificationsValidator,
+  SubmissionsValidator as ChainSubmissionsValidator,
 } from './validators.js';
 
 /**
- * Legacy compatibility exports - these map old static methods to new architecture
+ * Base validation utilities. FormsValidator and EntriesValidator below extend this
+ * with domain-specific logic. Feeds, Notifications, and Submissions use the chain-based
+ * validators from validators.js (imported as Chain* above).
  */
 export class BaseValidator {
   static validateRequired(data, requiredFields) {
@@ -271,7 +272,7 @@ export class BaseValidator {
 export class FormsValidator extends BaseValidator {
   static validateListFormsParams(params) {
     // Use the new FormsValidator from validators.js
-    return NewFormsValidator.validateListFormsParams(params);
+    return ChainFormsValidator.validateListFormsParams(params);
   }
 
   static validateFormData(formData, isUpdate = false) {
@@ -441,11 +442,6 @@ export class EntriesValidator extends BaseValidator {
 }
 
 /**
- * Export other validators
- */
-export { NewSubmissionsValidator as SubmissionsValidator, NewFeedsValidator as FeedsValidator, NewNotificationsValidator as NotificationsValidator };
-
-/**
  * Main validation factory
  */
 export class ValidationFactory {
@@ -456,11 +452,11 @@ export class ValidationFactory {
       case 'entries':
         return EntriesValidator;
       case 'submissions':
-        return NewSubmissionsValidator;
+        return ChainSubmissionsValidator;
       case 'feeds':
-        return NewFeedsValidator;
+        return ChainFeedsValidator;
       case 'notifications':
-        return NewNotificationsValidator;
+        return ChainNotificationsValidator;
       default:
         return BaseValidator;
     }
@@ -582,11 +578,11 @@ export class ValidationFactory {
             throw new Error('meta must be an object');
           }
           // Now use the new validator for detailed validation
-          return NewFeedsValidator.validateFeedData(input, true);
+          return ChainFeedsValidator.validateFeedData(input, true);
 
         case 'gf_update_feed':
         case 'gf_patch_feed':
-          return NewFeedsValidator.validateFeedData(input, false);
+          return ChainFeedsValidator.validateFeedData(input, false);
 
         case 'gf_get_feed':
         case 'gf_delete_feed':
@@ -608,7 +604,7 @@ export class ValidationFactory {
           if (!input || !input.entry_id) {
             throw new Error('entry_id is required');
           }
-          return NewNotificationsValidator.validateSendNotificationsParams(input);
+          return ChainNotificationsValidator.validateSendNotificationsParams(input);
 
         case 'gf_get_field_filters':
         case 'gf_get_results':
@@ -669,7 +665,7 @@ export const validateEntryData = (data, isUpdate = false) => {
 
 export const validateFeedData = (data, isCreate = true) => {
   try {
-    return NewFeedsValidator.validateFeedData(data || {}, isCreate);
+    return ChainFeedsValidator.validateFeedData(data || {}, isCreate);
   } catch (error) {
     throw error;
   }
@@ -685,7 +681,7 @@ export const validateSubmissionData = (data) => {
 
 export const validateSendNotificationsParams = (params) => {
   try {
-    return NewNotificationsValidator.validateSendNotificationsParams(params || {});
+    return ChainNotificationsValidator.validateSendNotificationsParams(params || {});
   } catch (error) {
     throw error;
   }
