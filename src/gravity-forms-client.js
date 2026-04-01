@@ -25,7 +25,7 @@ export class GravityFormsClient {
       baseURL: this.baseURL,
       timeout: parseInt(config.GRAVITY_FORMS_TIMEOUT) || 30000,
       headers: {
-        'User-Agent': 'GravityKit-MCP/2.0.0',
+        'User-Agent': 'GravityKit-MCP/2.1.0',
         'Accept': 'application/json'
       },
       // Allow self-signed certificates for local development

@@ -5,6 +5,26 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-03-31
+
+### Fixed
+- Checkbox field values created via MCP now use proper Gravity Forms dot-notation sub-inputs instead of JSON array strings. Values are matched against choices by value then text, with HTML entity decoding for ampersands. Closes #1
+- Multiselect arrays normalized to comma-separated strings (REST API v2 format)
+- Radio/select arrays take first element; list/chainedselect arrays pass through unchanged
+- Hidden inputs (e.g., Select All) skipped during checkbox expansion
+- Update entry correctly clears stale checkbox sub-inputs via fetch-then-merge
+- Field registry: corrected storage definitions for checkbox (compound/dotNotation, not array/json), multiselect (commaSeparated, not json), consent (3 sub-inputs, not 2), chainedselect (compound, not single)
+- Field registry: added variant-specific storage for product, option, post_category, post_custom_field, quiz, poll
+- Field registry: added base `survey` type with all 8 inputType variants; moved hasChoices to variant level so text/textarea variants don't require choices
+- Field validation: fixed compound/array ordering so checkbox hits array branch (not compound) in getFieldValue, processSubmissionData, extractSubmissionValue
+- Validation: removed unused imports, fixed validator name references, added JSON string→array parsing for MCP clients that serialize arrays as strings
+
+### Added
+- `_normalizeArrayValues()` in GravityFormsClient: fetches form schema to match array values to correct sub-input IDs for all choice-based field types
+- 41 array normalization tests covering checkbox, multiselect, radio, select, option, quiz, poll, survey, post_category, post_custom_field, list, entry_tags, HTML entity decoding, and mixed-form scenarios
+- 25 field registry tests verifying storage definitions and variant-specific overrides
+- Compound field fallback: logs warning and stores as single value when subInput mapping is missing
+
 ## [2.0.0] - 2026-03-31
 
 ### Changed
@@ -147,6 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.1.0]: https://github.com/GravityKit/MCP/releases/tag/v2.1.0
 [2.0.0]: https://github.com/GravityKit/MCP/releases/tag/v2.0.0
 [1.4.1]: https://github.com/GravityKit/MCP/releases/tag/v1.4.1
 [1.4.0]: https://github.com/GravityKit/MCP/releases/tag/v1.4.0
