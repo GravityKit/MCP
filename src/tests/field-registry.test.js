@@ -270,7 +270,8 @@ test('survey field type exists with all variants', async (t) => {
     assert.ok(def, 'survey should exist in registry');
     assert.strictEqual(def.type, 'survey');
     assert.strictEqual(def.category, 'survey');
-    assert.strictEqual(def.hasChoices, true);
+    // hasChoices moved to variant level (text/textarea variants don't have choices)
+    assert.strictEqual(def.hasChoices, undefined);
   });
 
   await t.test('survey has all inputType variants', () => {
@@ -296,6 +297,16 @@ test('survey field type exists with all variants', async (t) => {
     const def = getFieldDefinition('survey');
     assert.strictEqual(def.variants.radio.storage.type, 'string');
     assert.strictEqual(def.variants.select.storage.type, 'string');
+  });
+
+  await t.test('survey choice-based variants have hasChoices, text/textarea do not', () => {
+    const def = getFieldDefinition('survey');
+    assert.strictEqual(def.variants.radio.hasChoices, true);
+    assert.strictEqual(def.variants.checkbox.hasChoices, true);
+    assert.strictEqual(def.variants.select.hasChoices, true);
+    assert.strictEqual(def.variants.likert.hasChoices, true);
+    assert.strictEqual(def.variants.text.hasChoices, undefined);
+    assert.strictEqual(def.variants.textarea.hasChoices, undefined);
   });
 
   await t.test('legacy survey_likert/rank/rating still in registry', () => {

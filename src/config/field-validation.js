@@ -491,6 +491,10 @@ export class FieldAwareValidator {
               processed[`${field.id}.${subId}`] = inputValue[subName];
             }
           }
+        } else {
+          // Fallback: no subInput mapping for this compound type
+          logger.warn(`No subInput mapping for compound field type '${field.type}' (field ${field.id}), storing as single value`);
+          processed[field.id] = inputValue;
         }
       } else {
         // Store single value

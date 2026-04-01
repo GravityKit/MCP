@@ -462,6 +462,8 @@ test('Handles unknown field types gracefully', () => {
 
   const validated = FieldAwareValidator.validateFormFields(fields);
   assertEqual(validated.length, 1, 'Should allow unknown field types');
+  // _unknown is intentionally retained (signals downstream code to handle gracefully)
+  // unlike _meta/_variant which are processing-only and stripped before return
   assert(validated[0]._unknown === true, 'Should mark as unknown');
 });
 

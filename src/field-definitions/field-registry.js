@@ -694,14 +694,13 @@ export const fieldRegistry = {
       // likert single-row: single "glikertN" string
       // likert multi-row: dot-notation sub-inputs with "rowValue:glikertN" values
     },
-    hasChoices: true,
     variants: {
-      radio: { label: 'Radio', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
-      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
-      select: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' } },
-      likert: { label: 'Likert', settings: { inputType: 'likert' }, storage: { type: 'varies', format: 'single-or-dotNotation' } },
-      rank: { label: 'Rank', settings: { inputType: 'rank' }, storage: { type: 'string', format: 'single' } },
-      rating: { label: 'Rating', settings: { inputType: 'rating' }, storage: { type: 'string', format: 'single' } },
+      radio: { label: 'Radio', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' }, hasChoices: true },
+      checkbox: { label: 'Checkbox', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' }, hasChoices: true },
+      select: { label: 'Dropdown', settings: { inputType: 'select' }, storage: { type: 'string', format: 'single' }, hasChoices: true },
+      likert: { label: 'Likert', settings: { inputType: 'likert' }, storage: { type: 'varies', format: 'single-or-dotNotation' }, hasChoices: true },
+      rank: { label: 'Rank', settings: { inputType: 'rank' }, storage: { type: 'string', format: 'single' }, hasChoices: true },
+      rating: { label: 'Rating', settings: { inputType: 'rating' }, storage: { type: 'string', format: 'single' }, hasChoices: true },
       text: { label: 'Text', settings: { inputType: 'text' }, storage: { type: 'string', format: 'single' } },
       textarea: { label: 'Textarea', settings: { inputType: 'textarea' }, storage: { type: 'string', format: 'single' } }
     }
@@ -1012,7 +1011,7 @@ export function generateCompoundInputs(field) {
     subInputs.push(
       { id: `${baseId}.1`, label: 'Consent', name: '' },
       { id: `${baseId}.2`, label: 'Text', name: '' },
-      { id: `${baseId}.3`, label: 'Description', name: '' }
+      { id: `${baseId}.3`, label: 'Revision', name: '' }
     );
   }
 
