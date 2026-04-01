@@ -42,7 +42,7 @@ const server = new Server(
     capabilities: {
       tools: {}
     },
-    instructions: 'GravityKit MCP server for Gravity Forms. All responses strip null and empty values by default for minimal token usage. Pass compact=false on any tool to get full raw data. Entry tools also strip plugin-added meta keys; use compact=false to include them.'
+    instructions: 'GravityKit MCP server for Gravity Forms. Checkbox/multiselect arrays auto-normalized: pass ["val1","val2"] and values are matched to correct sub-inputs. Text labels also work. Multiselect limitation: values containing commas get split by GF REST API. Responses strip null/empty by default; pass compact=false for full raw data.'
   }
 );
 
@@ -327,7 +327,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gf_create_entry',
-        description: 'Create an entry',
+        description: 'Create an entry. Checkbox/multiselect arrays auto-normalized.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
@@ -347,7 +347,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gf_update_entry',
-        description: 'Update an entry',
+        description: 'Update an entry. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
