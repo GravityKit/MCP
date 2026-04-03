@@ -338,6 +338,16 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_BASE_URL` → `GRAVITY_FORMS_BASE_URL` (and consumer key/secret). The rest of the client and AuthManager work unchanged. — `config/test-config.js:60-95`, `gravity-forms-client.js:16`
 
+## Versioning
+
+This project uses [Semantic Versioning](https://semver.org/):
+
+- **Major** (X.0.0): Breaking changes to tool schemas, renamed/removed tools, changed response shapes that would break existing callers
+- **Minor** (0.X.0): New tools, new optional parameters, new response fields that don't break existing callers
+- **Patch** (0.0.X): Bug fixes, description rewording, documentation, internal refactors with no API change
+
+Adding `additionalProperties: false` to schemas or adding optional fields to responses (like `edit_url`) are patch-level changes. Adding a new tool is minor. Removing a tool or changing required parameters is major.
+
 ## Releasing
 
 **Every version tag MUST include a CHANGELOG.md update.** Follow this checklist:

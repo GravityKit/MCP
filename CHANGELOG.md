@@ -5,6 +5,18 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-04-03
+
+### Changed
+- **AI-optimized tool descriptions**: All 28 tool descriptions rewritten to explain what each tool does, when to use it vs. alternatives, and what the output contains. Modeled after WordPress Abilities API best practices for AI function-calling tool selection.
+- **Richer field schemas**: `gf_create_form` fields array now documents field object structure (type, label, isRequired, choices, defaultValue, placeholder, description). `gf_list_entries` search filters document key format and operators with defaults.
+- **Strict input validation**: Added `additionalProperties: false` to tool schemas where inputs are fully defined (gf_list_forms, gf_get_form, gf_get_entry, gf_delete_form, gf_delete_entry, gf_send_notifications, all feed tools, gf_get_field_filters, gf_get_results, gf_delete_field, gf_list_field_types). Prevents AI agents from hallucinating extra parameters.
+- **Enum constraints**: `gf_list_field_types` category and feature params now use enum arrays instead of free-text descriptions.
+- **Enhanced server instructions**: Added guidance on when to use gf_submit_form_data vs gf_create_entry, and how to discover field IDs before creating entries.
+
+### Added
+- **Actionable URLs in mutation responses**: `gf_create_form` returns `edit_url` and `entries_url`. `gf_update_form` returns `edit_url`. `gf_create_entry` returns `entry_url`. `gf_submit_form_data` returns `entry_url` on successful submission. Enables AI agents to offer direct navigation links as follow-up actions.
+
 ## [2.1.0] - 2026-03-31
 
 ### Fixed
