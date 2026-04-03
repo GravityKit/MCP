@@ -36,13 +36,13 @@ dotenv.config({ path: join(__dirname, '..', '.env') });
 const server = new Server(
   {
     name: 'gravitykit-mcp',
-    version: '2.1.0'
+    version: '2.1.1'
   },
   {
     capabilities: {
       tools: {}
     },
-    instructions: 'GravityKit MCP server for Gravity Forms. Checkbox/multiselect arrays auto-normalized: pass ["val1","val2"] and values are matched to correct sub-inputs. Text labels also work. Multiselect limitation: values containing commas get split by GF REST API. Responses strip null/empty by default; pass compact=false for full raw data.'
+    instructions: 'GravityKit MCP server for Gravity Forms. Checkbox/multiselect arrays auto-normalized: pass ["val1","val2"] and values are matched to correct sub-inputs. Text labels also work. Multiselect limitation: values containing commas get split by GF REST API. Responses strip null/empty by default; pass compact=false for full raw data. gf_submit_form_data = full pipeline (validation/notifications/feeds); gf_create_entry = raw import. Use gf_get_form to discover field IDs before creating/searching entries.'
   }
 );
 
@@ -140,7 +140,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Forms Management (6 tools)
       {
         name: 'gf_list_forms',
-        description: 'List all forms with optional search and pagination.',
+        description: 'List all forms (title, ID, entry count, active status). Returns summary data — use gf_get_form for full field config.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
@@ -148,60 +148,83 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             include: {
               type: 'array',
               items: { type: 'number' },
-              description: 'Form IDs to include'
+              description: 'Limit to these form IDs'
             },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
-          }
+            compact: { type: 'boolean', description: 'Set false for full raw data', default: true }
+          },
+          additionalProperties: false
         }
       },
       {
         name: 'gf_get_form',
-        description: 'Get a form by ID with full field configuration.',
+        description: 'Get form by ID with all fields, confirmations, notifications, and settings. Use to inspect structure before creating entries or modifying fields.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'number', description: 'Form ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+            compact: { type: 'boolean', description: 'Set false for full raw data', default: true }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
       {
         name: 'gf_create_form',
-        description: 'Create a new form',
+        description: 'Create a form. Fields can be included here or added individually via gf_add_field. Returns new form ID and admin edit URL.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            title: { type: 'string', description: 'Form title' },
-            description: { type: 'string', description: 'Form description' },
+            title: { type: 'string', description: 'Form title (required)' },
+            description: { type: 'string', description: 'Form description shown to users' },
             fields: {
               type: 'array',
-              description: 'Array of field objects',
-              items: { type: 'object' }
+              description: 'Field objects — each needs at minimum {type, label}. Use gf_list_field_types to see available types.',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string', description: "Field type slug (e.g. 'text', 'email', 'select', 'name', 'address')" },
+                  label: { type: 'string', description: 'Field label shown to users' },
+                  isRequired: { type: 'boolean', description: 'Whether the field is required' },
+                  choices: {
+                    type: 'array',
+                    description: 'For select/radio/checkbox — array of {text, value} objects',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        text: { type: 'string' },
+                        value: { type: 'string' }
+                      }
+                    }
+                  },
+                  defaultValue: { type: 'string', description: 'Default field value' },
+                  placeholder: { type: 'string', description: 'Placeholder text' },
+                  description: { type: 'string', description: 'Field help text' }
+                }
+              }
             },
             button: { type: 'object', description: 'Submit button settings' },
             confirmations: { type: 'object', description: 'Confirmation settings' },
             notifications: { type: 'object', description: 'Notification settings' },
-            is_active: { type: 'boolean', description: 'Form active state' }
+            is_active: { type: 'boolean', description: 'Form active state', default: true }
           },
           required: ['title']
         }
       },
       {
         name: 'gf_update_form',
-        description: 'Update a form',
+        description: 'Update a form. Fetch-then-merge: only include properties you want to change. For single-field changes, prefer gf_update_field.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Form ID' },
-            title: { type: 'string', description: 'Form title' },
-            description: { type: 'string', description: 'Form description' },
+            id: { type: 'number', description: 'Form ID to update' },
+            title: { type: 'string', description: 'New form title' },
+            description: { type: 'string', description: 'New form description' },
             fields: {
               type: 'array',
-              description: 'Array of field objects',
+              description: 'Complete fields array — replaces all existing fields. For single-field changes, prefer gf_update_field.',
               items: { type: 'object' }
             },
             button: { type: 'object', description: 'Submit button settings' },
@@ -214,25 +237,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gf_delete_form',
-        description: 'Delete a form (requires ALLOW_DELETE=true)',
+        description: 'Delete a form and all its entries/feeds/notifications. Requires ALLOW_DELETE=true. force=true skips trash.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Form ID' },
-            force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
+            id: { type: 'number', description: 'Form ID to delete' },
+            force: { type: 'boolean', description: 'true = permanent delete, false = move to trash' }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
       {
         name: 'gf_validate_form',
-        description: 'Validate form data',
+        description: 'Validate submission data against a form without creating an entry. Pass form_id plus field values (input_1, input_2, etc.). Same endpoint as gf_validate_submission.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            form_id: { type: 'number', description: 'Form ID' }
+            form_id: { type: 'number', description: 'Form ID to validate against' }
           },
           additionalProperties: true,
           required: ['form_id']
@@ -242,7 +266,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Entries Management (5 tools)
       {
         name: 'gf_list_entries',
-        description: 'List/search entries with filtering, sorting, and pagination.',
+        description: 'Search entries across forms with field_filters, date ranges, status, sorting, and pagination. Returns entries and total count.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
@@ -250,96 +274,108 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             form_ids: {
               type: 'array',
               items: { type: 'number' },
-              description: 'Filter by form IDs'
+              description: 'Form IDs to search across. Omit to search all forms.'
             },
             include: {
               type: 'array',
               items: { type: 'number' },
-              description: 'Entry IDs to include'
+              description: 'Return only these entry IDs'
             },
             exclude: {
               type: 'array',
               items: { type: 'number' },
-              description: 'Entry IDs to exclude'
+              description: 'Exclude these entry IDs'
             },
             status: {
               type: 'string',
               enum: ['active', 'spam', 'trash'],
-              description: 'Entry status'
+              description: 'Filter by entry status. Default: active.'
             },
             search: {
               type: 'object',
+              description: 'Field-based search filters',
               properties: {
                 field_filters: {
                   type: 'array',
+                  description: 'Array of field filter conditions',
                   items: {
                     type: 'object',
                     properties: {
-                      key: { type: 'string' },
-                      value: { type: 'string' },
+                      key: { type: 'string', description: 'Field ID or entry property (e.g. "1", "date_created", "created_by")' },
+                      value: { type: 'string', description: 'Value to match against' },
                       operator: {
                         type: 'string',
-                        enum: ['=', 'IS', 'CONTAINS', 'IS NOT', 'ISNOT', '<>', 'LIKE', 'NOT IN', 'NOTIN', 'IN', '>', '<', '>=', '<=']
+                        enum: ['=', 'IS', 'CONTAINS', 'IS NOT', 'ISNOT', '<>', 'LIKE', 'NOT IN', 'NOTIN', 'IN', '>', '<', '>=', '<='],
+                        description: 'Comparison operator. Default: IS.'
                       }
-                    }
+                    },
+                    required: ['key', 'value'],
+                    additionalProperties: false
                   }
                 },
                 mode: {
                   type: 'string',
                   enum: ['any', 'all'],
-                  description: 'Search mode'
+                  description: 'any = OR, all = AND. Default: all.'
                 }
-              }
+              },
+              additionalProperties: false
             },
             sorting: {
               type: 'object',
+              description: 'Sort configuration',
               properties: {
-                key: { type: 'string' },
+                key: { type: 'string', description: 'Field ID or property to sort by' },
                 direction: {
                   type: 'string',
-                  enum: ['asc', 'desc', 'ASC', 'DESC']
+                  enum: ['asc', 'desc', 'ASC', 'DESC'],
+                  description: 'Sort direction. Default: DESC.'
                 }
-              }
+              },
+              additionalProperties: false
             },
             paging: {
               type: 'object',
+              description: 'Pagination',
               properties: {
-                page_size: { type: 'number' },
-                current_page: { type: 'number' }
-              }
+                page_size: { type: 'number', description: 'Entries per page (max 200)' },
+                current_page: { type: 'number', description: 'Page number (1-based)' }
+              },
+              additionalProperties: false
             },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+            compact: { type: 'boolean', description: 'Set false for full raw data', default: true }
           }
         }
       },
       {
         name: 'gf_get_entry',
-        description: 'Get an entry by ID with field labels.',
+        description: 'Get entry by ID with all field values and metadata. Values keyed by field ID (e.g. "1": "John"). Use gf_get_form to map IDs to labels.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'number', description: 'Entry ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+            compact: { type: 'boolean', description: 'Set false for full raw data', default: true }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
       {
         name: 'gf_create_entry',
-        description: 'Create an entry. Checkbox/multiselect arrays auto-normalized.',
+        description: 'Create a raw entry bypassing validation/notifications/feeds. For full submission pipeline, use gf_submit_form_data instead. Values keyed by field ID. Checkbox/multiselect arrays auto-normalized.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            form_id: { type: 'number', description: 'Form ID' },
-            created_by: { type: 'number', description: 'Creator user ID' },
+            form_id: { type: 'number', description: 'Form ID (required)' },
+            created_by: { type: 'number', description: 'WordPress user ID of creator' },
             status: {
               type: 'string',
               enum: ['active', 'spam', 'trash'],
-              description: 'Entry status'
+              description: 'Entry status. Default: active.'
             },
-            date_created: { type: 'string', description: 'ISO date' }
+            date_created: { type: 'string', description: 'Override creation date (Y-m-d H:i:s)' }
           },
           additionalProperties: true,
           required: ['form_id']
@@ -347,16 +383,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gf_update_entry',
-        description: 'Update an entry. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
+        description: 'Update entry fields. Fetch-then-merge: only include fields to change. Checkbox/multiselect arrays auto-normalized.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Entry ID' },
+            id: { type: 'number', description: 'Entry ID to update' },
             status: {
               type: 'string',
               enum: ['active', 'spam', 'trash'],
-              description: 'Entry status'
+              description: 'Change entry status'
             }
           },
           additionalProperties: true,
@@ -365,28 +401,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gf_delete_entry',
-        description: 'Delete an entry (requires ALLOW_DELETE=true)',
+        description: 'Delete an entry and its notes/meta. Requires ALLOW_DELETE=true. force=true skips trash.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Entry ID' },
-            force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
+            id: { type: 'number', description: 'Entry ID to delete' },
+            force: { type: 'boolean', description: 'true = permanent delete, false = move to trash' }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
 
       // Form Submissions (2 tools)
       {
         name: 'gf_submit_form_data',
-        description: 'Submit form data (triggers notifications, confirmations, payment)',
+        description: 'Submit form through full pipeline: validation, entry creation, notifications, confirmations, feeds/payments. Use gf_create_entry instead for raw data import.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            form_id: { type: 'number', description: 'Form ID' },
-            field_values: { type: 'object', description: 'Field values' }
+            form_id: { type: 'number', description: 'Form ID to submit' },
+            field_values: { type: 'object', description: 'Field values keyed by input name (e.g. "input_1": "John")' }
           },
           additionalProperties: true,
           required: ['form_id']
@@ -394,12 +431,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'gf_validate_submission',
-        description: 'Validate submission without processing',
+        description: 'Dry-run validation before gf_submit_form_data. Returns is_valid and per-field validation messages without creating an entry.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            form_id: { type: 'number', description: 'Form ID' }
+            form_id: { type: 'number', description: 'Form ID to validate against' }
           },
           additionalProperties: true,
           required: ['form_id']
@@ -409,133 +446,139 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // Notifications (1 tool)
       {
         name: 'gf_send_notifications',
-        description: 'Send notifications for entry',
+        description: 'Send notifications for an entry. Sends all active notifications unless notification_ids specified. Use gf_get_form to find notification IDs.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            entry_id: { type: 'number', description: 'Entry ID' },
+            entry_id: { type: 'number', description: 'Entry ID to send notifications for' },
             notification_ids: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Notification IDs to send'
+              description: 'Specific notification IDs. Omit to send all active notifications.'
             }
           },
-          required: ['entry_id']
+          required: ['entry_id'],
+          additionalProperties: false
         }
       },
 
       // Add-on Feeds (7 tools)
       {
         name: 'gf_list_feeds',
-        description: 'List feeds. Filter by form_id and/or addon slug.',
+        description: 'List feeds (add-on integrations like email marketing, CRMs, payments). Filter by form_id and/or addon slug.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            addon: { type: 'string', description: 'Addon slug' },
-            form_id: { type: 'number', description: 'Form ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
-          }
+            addon: { type: 'string', description: "Add-on slug (e.g. 'gravityformsmailchimp', 'gravityformsstripe')" },
+            form_id: { type: 'number', description: 'Filter feeds by form ID' },
+            compact: { type: 'boolean', description: 'Set false for full raw data', default: true }
+          },
+          additionalProperties: false
         }
       },
       {
         name: 'gf_get_feed',
-        description: 'Get a feed by ID.',
+        description: 'Get feed by ID with full config, field mappings, and conditional logic.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'number', description: 'Feed ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+            compact: { type: 'boolean', description: 'Set false for full raw data', default: true }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
-      // gf_list_form_feeds removed — gf_list_feeds with form_id does the same thing
-      // and also supports addon filtering. Kept listFormFeeds() client method for
-      // backwards compatibility but no longer exposed as a tool.
       {
         name: 'gf_create_feed',
-        description: 'Create a feed',
+        description: 'Create a feed for a form. Meta structure is add-on specific — use gf_list_feeds to see existing configs as examples.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            addon_slug: { type: 'string', description: 'Add-on slug' },
-            form_id: { type: 'number', description: 'Form ID' },
-            is_active: { type: 'boolean', description: 'Feed active state' },
-            meta: { type: 'object', description: 'Feed config' }
+            addon_slug: { type: 'string', description: "Add-on slug (e.g. 'gravityformsmailchimp')" },
+            form_id: { type: 'number', description: 'Form ID to attach feed to' },
+            is_active: { type: 'boolean', description: 'Feed active state', default: true },
+            meta: { type: 'object', description: 'Feed configuration (add-on specific)' }
           },
-          required: ['addon_slug', 'form_id', 'meta']
+          required: ['addon_slug', 'form_id', 'meta'],
+          additionalProperties: false
         }
       },
       {
         name: 'gf_update_feed',
-        description: 'Update a feed (full replace)',
+        description: 'Replace feed config entirely. Use gf_patch_feed for partial updates.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Feed ID' },
+            id: { type: 'number', description: 'Feed ID to update' },
             is_active: { type: 'boolean', description: 'Feed active state' },
-            meta: { type: 'object', description: 'Feed config' }
+            meta: { type: 'object', description: 'Complete feed configuration (replaces existing)' }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
       {
         name: 'gf_patch_feed',
-        description: 'Patch a feed (partial update)',
+        description: 'Partial feed update — merges with existing config. Safer than gf_update_feed for individual setting changes.',
         annotations: { idempotentHint: false, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Feed ID' },
+            id: { type: 'number', description: 'Feed ID to patch' },
             is_active: { type: 'boolean', description: 'Feed active state' },
-            meta: { type: 'object', description: 'Feed config' }
+            meta: { type: 'object', description: 'Partial feed config to merge' }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
       {
         name: 'gf_delete_feed',
-        description: 'Delete a feed (requires ALLOW_DELETE=true)',
+        description: 'Delete a feed. Requires ALLOW_DELETE=true.',
         annotations: { destructiveHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Feed ID' }
+            id: { type: 'number', description: 'Feed ID to delete' }
           },
-          required: ['id']
+          required: ['id'],
+          additionalProperties: false
         }
       },
 
       // Field Filters (1 tool)
       {
         name: 'gf_get_field_filters',
-        description: 'Get field filters for form',
+        description: 'Get available search filter options for a form (field IDs, operators, values). Use to build gf_list_entries field_filters.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             form_id: { type: 'number', description: 'Form ID' }
           },
-          required: ['form_id']
+          required: ['form_id'],
+          additionalProperties: false
         }
       },
 
       // Results (1 tool)
       {
         name: 'gf_get_results',
-        description: 'Get quiz/poll/survey results',
+        description: 'Get aggregated quiz/poll/survey results. Requires Quiz, Poll, or Survey add-on fields on the form.',
         annotations: { readOnlyHint: true, openWorldHint: true },
         inputSchema: {
           type: 'object',
           properties: {
             form_id: { type: 'number', description: 'Form ID' }
           },
-          required: ['form_id']
+          required: ['form_id'],
+          additionalProperties: false
         }
       },
 

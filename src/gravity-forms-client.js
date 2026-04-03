@@ -25,7 +25,7 @@ export class GravityFormsClient {
       baseURL: this.baseURL,
       timeout: parseInt(config.GRAVITY_FORMS_TIMEOUT) || 30000,
       headers: {
-        'User-Agent': 'GravityKit-MCP/2.1.0',
+        'User-Agent': 'GravityKit-MCP/2.1.1',
         'Accept': 'application/json'
       },
       // Allow self-signed certificates for local development
@@ -244,9 +244,12 @@ export class GravityFormsClient {
       }
 
       const response = await this.httpClient.post('/forms', validated);
+      const formId = response.data?.id;
 
       return {
-        form: response.data
+        form: response.data,
+        edit_url: formId ? `${this.config.GRAVITY_FORMS_BASE_URL}/wp-admin/admin.php?page=gf_edit_forms&id=${formId}` : undefined,
+        entries_url: formId ? `${this.config.GRAVITY_FORMS_BASE_URL}/wp-admin/admin.php?page=gf_entries&id=${formId}` : undefined
       };
     });
   }
@@ -275,7 +278,8 @@ export class GravityFormsClient {
         const response = await this.httpClient.put(`/forms/${id}`, updatedFormData);
 
         return {
-          form: response.data
+          form: response.data,
+          edit_url: `${this.config.GRAVITY_FORMS_BASE_URL}/wp-admin/admin.php?page=gf_edit_forms&id=${id}`
         };
       });
     });
@@ -501,9 +505,12 @@ export class GravityFormsClient {
     return this.validateAndCall('gf_create_entry', params, async (validated) => {
       const expanded = await this._normalizeArrayValues(validated, validated.form_id);
       const response = await this.httpClient.post('/entries', expanded);
+      const entryId = response.data?.id;
+      const formId = validated.form_id;
 
       return {
-        entry: response.data
+        entry: response.data,
+        entry_url: (entryId && formId) ? `${this.config.GRAVITY_FORMS_BASE_URL}/wp-admin/admin.php?page=gf_entries&view=entry&id=${formId}&lid=${entryId}` : undefined
       };
     });
   }
@@ -575,13 +582,16 @@ export class GravityFormsClient {
 
       const response = await this.httpClient.post(`/forms/${form_id}/submissions`, submissionData);
 
+      const entryId = response.data.entry_id;
+
       return {
         success: response.data.is_valid || false,
-        entry_id: response.data.entry_id,
+        entry_id: entryId,
         confirmation_message: response.data.confirmation_message || '',
         validation_messages: response.data.validation_messages || {},
         resume_token: response.data.resume_token,
-        resume_url: response.data.resume_url
+        resume_url: response.data.resume_url,
+        entry_url: entryId ? `${this.config.GRAVITY_FORMS_BASE_URL}/wp-admin/admin.php?page=gf_entries&view=entry&id=${form_id}&lid=${entryId}` : undefined
       };
     });
   }

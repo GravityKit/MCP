@@ -214,46 +214,42 @@ export const fieldOperationHandlers = {
 export const fieldOperationTools = [
   {
     name: 'gf_add_field',
-    description: 'Add a field to a form',
+    description: 'Add a field to a form. Auto-handles ID generation, compound sub-inputs (name, address), and page-aware positioning. Use gf_list_field_types for available types.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         form_id: {
           type: 'number',
-          description: 'Form ID'
+          description: 'Form ID to add the field to'
         },
         field_type: {
           type: 'string',
-          description: 'Field type (text, email, address, etc.)'
+          description: "Field type slug (e.g. 'text', 'email', 'select', 'name', 'address', 'phone', 'number', 'date', 'checkbox', 'radio', 'hidden', 'html', 'section', 'page')"
         },
         properties: {
           type: 'object',
-          description: 'Field properties',
+          description: 'Field configuration',
           properties: {
-            label: { type: 'string' },
-            description: { type: 'string' },
-            isRequired: { type: 'boolean' },
-            placeholder: { type: 'string' },
-            defaultValue: { type: 'string' },
-            cssClass: { type: 'string' },
+            label: { type: 'string', description: 'Field label shown to users' },
+            description: { type: 'string', description: 'Field help text' },
+            isRequired: { type: 'boolean', description: 'Whether field is required' },
+            placeholder: { type: 'string', description: 'Placeholder text' },
+            defaultValue: { type: 'string', description: 'Default value' },
+            cssClass: { type: 'string', description: 'Custom CSS class' },
             size: { type: 'string', enum: ['small', 'medium', 'large'] },
-            visibility: { type: 'string', enum: ['visible', 'hidden', 'administrative'] }
+            visibility: { type: 'string', enum: ['visible', 'hidden', 'administrative'], description: "Default: 'visible'" }
           }
         },
         position: {
           type: 'object',
-          description: 'Field positioning',
+          description: 'Where to place the field',
           properties: {
-            mode: { type: 'string', enum: ['append', 'prepend', 'after', 'before', 'index'] },
-            reference: { type: 'number', description: 'Reference field ID or index' },
-            page: { type: 'number', description: 'Page number' }
-          }
-        },
-        test_mode: {
-          type: 'boolean',
-          description: 'Test mode',
-          default: false
+            mode: { type: 'string', enum: ['append', 'prepend', 'after', 'before', 'index'], description: "Default: 'append'" },
+            reference: { type: 'number', description: 'Reference field ID (for after/before) or index' },
+            page: { type: 'number', description: 'Page number for multi-page forms' }
+          },
+          additionalProperties: false
         }
       },
       required: ['form_id', 'field_type']
@@ -261,31 +257,26 @@ export const fieldOperationTools = [
   },
   {
     name: 'gf_update_field',
-    description: 'Update a field in a form',
+    description: 'Update field properties. Checks conditional logic/merge tag dependencies — warns unless force=true. Only provided properties change.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         form_id: {
           type: 'number',
-          description: 'Form ID'
+          description: 'Form ID containing the field'
         },
         field_id: {
           type: 'number',
-          description: 'Field ID'
+          description: 'Field ID to update'
         },
         properties: {
           type: 'object',
-          description: 'Properties to update'
+          description: 'Properties to change (e.g. {label, isRequired, choices})'
         },
         force: {
           type: 'boolean',
-          description: 'Force update despite dependencies',
-          default: false
-        },
-        test_mode: {
-          type: 'boolean',
-          description: 'Test mode',
+          description: 'Update even if other fields depend on this one',
           default: false
         }
       },
@@ -294,56 +285,54 @@ export const fieldOperationTools = [
   },
   {
     name: 'gf_delete_field',
-    description: 'Delete a field (checks dependencies)',
+    description: 'Delete a field. Checks dependencies (conditional logic, merge tags, calculations). cascade=true auto-cleans references; force=true skips checks.',
     annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         form_id: {
           type: 'number',
-          description: 'Form ID'
+          description: 'Form ID containing the field'
         },
         field_id: {
           type: 'number',
-          description: 'Field ID'
+          description: 'Field ID to delete'
         },
         cascade: {
           type: 'boolean',
-          description: 'Clean up dependencies',
+          description: 'Auto-remove references to this field from other fields',
           default: false
         },
         force: {
           type: 'boolean',
-          description: 'Force delete',
-          default: false
-        },
-        test_mode: {
-          type: 'boolean',
-          description: 'Test mode',
+          description: 'Delete even if other fields depend on this one',
           default: false
         }
       },
-      required: ['form_id', 'field_id']
+      required: ['form_id', 'field_id'],
+      additionalProperties: false
     }
   },
   {
     name: 'gf_list_field_types',
-    description: 'List available field types. Returns type/label/category by default; use detail=true for full metadata.',
+    description: 'List available field types. Summary by default; detail=true for full metadata (storage, validation, supports). Essential before building forms.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         category: {
           type: 'string',
-          description: 'Filter by category (standard, advanced, pricing, post)'
+          enum: ['standard', 'advanced', 'pricing', 'post'],
+          description: 'Filter by category'
         },
         feature: {
           type: 'string',
-          description: 'Filter by feature (required, conditional, duplicate, prepopulate, visibility)'
+          enum: ['required', 'conditional', 'duplicate', 'prepopulate', 'visibility'],
+          description: 'Filter by supported feature'
         },
         search: {
           type: 'string',
-          description: 'Search field type names/labels'
+          description: 'Search field type names and labels'
         },
         detail: {
           type: 'boolean',
@@ -355,7 +344,8 @@ export const fieldOperationTools = [
           description: 'Include field variants (requires detail=true)',
           default: false
         }
-      }
+      },
+      additionalProperties: false
     }
   }
 ];
