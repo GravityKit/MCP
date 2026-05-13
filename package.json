@@ -24,7 +24,8 @@
     "test:field-validation": "node src/tests/field-validation.test.js",
     "test:tools": "node src/tests/server-tools.test.js",
     "test:compact": "node src/tests/compact.test.js",
-    "test:all": "npm run test:unit && npm run test:auth && npm run test:forms && npm run test:entries && npm run test:feeds && npm run test:submissions && npm run test:validation && npm run test:field-validation && npm run test:tools && npm test",
+    "test:views": "node src/tests/views.test.js",
+    "test:all": "npm run test:unit && npm run test:auth && npm run test:forms && npm run test:entries && npm run test:feeds && npm run test:submissions && npm run test:validation && npm run test:field-validation && npm run test:tools && npm run test:views && npm test",
     "test:coverage": "echo 'Running all tests with coverage analysis' && npm run test:all"
   },
   "keywords": [

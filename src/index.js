@@ -22,6 +22,12 @@ import FieldAwareValidator from './config/field-validation.js';
 import logger from './utils/logger.js';
 import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
+import { GravityViewClient } from './gravityview-client.js';
+import {
+  createViewOperations,
+  viewToolDefinitions,
+  buildViewToolHandlers,
+} from './view-operations/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,7 +48,7 @@ const server = new Server(
     capabilities: {
       tools: {}
     },
-    instructions: 'GravityKit MCP server for Gravity Forms. All responses strip null and empty values by default for minimal token usage. Pass compact=false on any tool to get full raw data. Entry tools also strip plugin-added meta keys; use compact=false to include them.'
+    instructions: 'GravityKit MCP server. Two tool families: gf_* for Gravity Forms (forms, entries, feeds, notifications, fields) and gv_* for GravityView Views.\n\nGravityView authoring flow: 1) gv_create_view to create a draft (defaults to gravityview-layout-builder, supports per-zone template_ids). 2) Use gv_create_grid_row (surface=fields|widgets) to materialise rows in the layout. 3) Use gv_apply_view_config for bulk one-shot writes, or gv_add_view_field / gv_patch_view_field / gv_move_view_field for surgical edits. 4) For Search Bar internal layout, use gv_add_search_field / gv_patch_search_field / gv_remove_search_field — modern keyed-by-position storage (search_fields_section). Existing legacy search_bar widgets auto-migrate to modern on first save through this API.\n\nDiscovery: gv_list_templates, gv_list_widgets, gv_list_grid_row_types, gv_list_widget_zones (header/footer), gv_list_search_zones (search-general/search-advanced), gv_list_available_fields. Schema: gv_get_field_type_schema works for fields, widgets, AND search_field types (search_all, submit, search_mode, etc.) — kind in the response says which.\n\nMove semantics: gv_move_view_field accepts to.before_slot / to.after_slot for ref-relative placement (preferred) and position="start"|"end"|integer for symbolic. Concurrency: pass ifMatch="auto" to use the client-cached version. Compact: responses strip null/empty by default — pass compact=false for raw.\n\nGravity Forms specifics: checkbox/multiselect arrays auto-normalized; multiselect values with commas get split by GF REST API; gf_submit_form_data runs the full pipeline (validation/notifications/feeds), gf_create_entry is raw import.'
   }
 );
 
@@ -50,6 +56,9 @@ const server = new Server(
 let gravityFormsClient = null;
 let fieldOperations = null;
 let fieldValidator = null;
+let gravityViewClient = null;
+let viewOperations = null;
+let viewToolHandlers = null;
 
 /**
  * Initialize Gravity Forms client
@@ -73,6 +82,27 @@ async function initializeClient() {
 
     logger.info('✅ GravityKit MCP initialized successfully');
     logger.info('✅ Field operations infrastructure initialized');
+
+    // GravityView Inspector client — separate WP REST namespace
+    // (`/wp-json/gravityview/v1/*`) so the credentials and base
+    // URL are resolved independently of the GF REST endpoint. The
+    // constructor allows credential fallback to GRAVITY_FORMS_*
+    // env vars so single-WP-install setups don't need to mint
+    // two separate app passwords.
+    try {
+      gravityViewClient = new GravityViewClient(process.env);
+      viewOperations = createViewOperations(gravityViewClient);
+      viewToolHandlers = buildViewToolHandlers(viewOperations);
+      logger.info('✅ GravityView client initialized — gv_* tools available');
+    } catch (gvError) {
+      // Don't fail the whole MCP if GravityView credentials are
+      // missing — gf_* tools still work standalone.
+      logger.warn(`⚠️  GravityView client unavailable: ${gvError.message}`);
+      gravityViewClient = null;
+      viewOperations = null;
+      viewToolHandlers = null;
+    }
+
     return true;
   } catch (error) {
     logger.error(`❌ Failed to initialize: ${error.message}`);
@@ -126,6 +156,40 @@ function wrapHandler(handler, params = {}) {
       const safeDetails = error.details ? sanitize(error.details) : undefined;
       logger.error(`Tool error: ${error.message}`);
       return createErrorResponse(error.message, safeDetails);
+    }
+  };
+}
+
+/**
+ * Variant of wrapHandler for gv_* tools. Differs in two ways:
+ *   - Checks gravityViewClient (not gravityFormsClient).
+ *   - Surfaces the inspector REST envelope (`{ code, message, data }`)
+ *     so the agent sees `gv_rest_invalid_template` etc. instead of a
+ *     generic "Request failed with status code 400". The inspector's
+ *     errors are designed for AI consumption — preserve them.
+ */
+function wrapViewHandler(handler, params = {}) {
+  return async () => {
+    if (!gravityViewClient) {
+      return createErrorResponse('GravityView client not initialized');
+    }
+    try {
+      const result = await handler();
+      const output = params.compact !== false ? stripEmpty(result) : result;
+      return {
+        content: [{ type: 'text', text: JSON.stringify(output) }],
+      };
+    } catch (error) {
+      // Axios errors carry response.data — when the server speaks
+      // the inspector REST envelope, that's the most useful payload.
+      const restBody = error?.response?.data;
+      const status = error?.response?.status;
+      const message = restBody?.message || error.message;
+      const details = restBody
+        ? { status, code: restBody.code, data: restBody.data }
+        : undefined;
+      logger.error(`gv_* tool error: ${message}${status ? ` (HTTP ${status})` : ''}`);
+      return createErrorResponse(message, details);
     }
   };
 }
@@ -540,7 +604,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
 
       // Field Operations (4 tools) - Intelligent field management
-      ...fieldOperationTools
+      ...fieldOperationTools,
+
+      // GravityView Inspector (~20 tools) - View configuration CRUD
+      ...viewToolDefinitions
     ]
   };
 });
@@ -659,7 +726,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await fieldOperationHandlers.gf_list_field_types(params, fieldOperations);
       }, params)();
 
+    // GravityView Inspector — every gv_* tool routes through the
+    // shared handler map. Single dispatch instead of 20 cases keeps
+    // the switch readable and makes adding/removing tools a one-line
+    // change in view-operations/index.js.
     default:
+      if (typeof name === 'string' && name.startsWith('gv_')) {
+        if (!viewToolHandlers || !gravityViewClient) {
+          return createErrorResponse(
+            'GravityView client not initialized. Set GRAVITYVIEW_BASE_URL + GRAVITYVIEW_WP_USERNAME + GRAVITYVIEW_WP_APP_PASSWORD in .env (or reuse GRAVITY_FORMS_BASE_URL / GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET when the same WP install hosts both surfaces).'
+          );
+        }
+        const handler = viewToolHandlers[name];
+        if (!handler) {
+          return createErrorResponse(`Unknown GravityView tool: ${name}`);
+        }
+        return wrapViewHandler(() => handler(params), params)();
+      }
       return createErrorResponse(`Unknown tool: ${name}`);
   }
 });
@@ -670,10 +753,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function main() {
   try {
-    // Initialize client on startup
-    await initializeClient();
-
-    // Create stdio transport
+    // Create stdio transport — client initialization is deferred to first tool call
+    // so the MCP handshake completes instantly (live site validation can take 3+ seconds)
     const transport = new StdioServerTransport();
 
     // Connect server to transport
