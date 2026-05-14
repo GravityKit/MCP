@@ -1,10 +1,10 @@
 # AGENTS.md — GravityKit MCP
 
-> MCP server providing 28 tools for full Gravity Forms REST API v2 coverage, enabling AI agents to manage forms, entries, feeds, notifications, and fields programmatically.
+> MCP server providing 26 tools for full Gravity Forms REST API v2 coverage, enabling AI agents to manage forms, entries, feeds, notifications, and fields programmatically.
 
 ## Quick Start
 
-**What this is:** A Node.js MCP (Model Context Protocol) server that wraps the Gravity Forms REST API v2. It authenticates via Basic Auth (preferred) or OAuth 1.0a and exposes 28 tools for CRUD operations on forms, entries, feeds, notifications, field filters, results, and intelligent field management.
+**What this is:** A Node.js MCP (Model Context Protocol) server that wraps the Gravity Forms REST API v2. It authenticates via Basic Auth (preferred) or OAuth 1.0a and exposes 26 tools for CRUD operations on forms, entries, feeds, notifications, field filters, results, and intelligent field management.
 
 **Main entry point:** `src/index.js`
 **Architecture style:** MCP SDK server with stdio transport, single API client, composable validation
@@ -134,7 +134,7 @@ Responses are optimized for minimal token usage:
 | Entries | `gf_list_entries`, `gf_get_entry`, `gf_create_entry`, `gf_update_entry`, `gf_delete_entry` | `listEntries`, `getEntry`, `createEntry`, `updateEntry`, `deleteEntry` |
 | Submissions | `gf_submit_form_data`, `gf_validate_submission` | `submitFormData`, `validateSubmission` |
 | Notifications | `gf_send_notifications` | `sendNotifications` |
-| Feeds | `gf_list_feeds`, `gf_get_feed`, `gf_list_form_feeds`, `gf_create_feed`, `gf_update_feed`, `gf_patch_feed`, `gf_delete_feed` | `listFeeds`, `getFeed`, `listFormFeeds`, `createFeed`, `updateFeed`, `patchFeed`, `deleteFeed` |
+| Feeds | `gf_list_feeds`, `gf_get_feed`, `gf_create_feed`, `gf_update_feed`, `gf_patch_feed`, `gf_delete_feed` | `listFeeds`, `getFeed`, `createFeed`, `updateFeed`, `patchFeed`, `deleteFeed` |
 | Utilities | `gf_get_field_filters`, `gf_get_results` | `getFieldFilters`, `getResults` |
 | Field Ops | `gf_add_field`, `gf_update_field`, `gf_delete_field`, `gf_list_field_types` | Handled via `fieldOperationHandlers` → `FieldManager` |
 
@@ -291,6 +291,36 @@ GRAVITY_FORMS_CONSUMER_SECRET=cs_... # Same location
 GRAVITY_FORMS_BASE_URL=https://...   # WordPress site URL (no trailing slash)
 ```
 
+Shorthand aliases `GF_CONSUMER_KEY`, `GF_CONSUMER_SECRET`, `GF_URL` are also supported (resolved in `test-config.js`).
+
+### Optional Environment
+
+```
+GRAVITY_FORMS_AUTH_METHOD=basic       # 'basic' (default) or 'oauth'/'oauth1'
+GRAVITY_FORMS_ALLOW_DELETE=false      # Must be 'true' to enable delete operations
+GRAVITY_FORMS_TIMEOUT=30000           # Request timeout in ms
+GRAVITY_FORMS_MAX_RETRIES=3           # Max retry attempts
+GRAVITY_FORMS_DEBUG=false             # Enable debug logging (stderr)
+GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false     # Allow self-signed certs (local dev only)
+```
+
+**Note:** `GRAVITY_FORMS_RETRY_DELAY`, `GRAVITY_FORMS_RATE_LIMIT`, and `GRAVITY_FORMS_RATE_WINDOW` appear in older docs but are NOT implemented in source code.
+
+### Test Environment
+
+```
+GRAVITY_FORMS_TEST_BASE_URL=          # Test site URL
+GRAVITY_FORMS_TEST_CONSUMER_KEY=      # Test site API key
+GRAVITY_FORMS_TEST_CONSUMER_SECRET=   # Test site API secret
+GRAVITY_FORMS_TEST_AUTH_METHOD=       # Override auth method for test site
+GRAVITY_FORMS_TEST_TIMEOUT=           # Override timeout for test site
+GRAVITYKIT_MCP_TEST_MODE=true         # Enable test mode (remaps TEST_* vars)
+```
+
+Shorthand aliases: `TEST_GF_URL`, `TEST_GF_CONSUMER_KEY`, `TEST_GF_CONSUMER_SECRET`, `TEST_WP_USER`, `TEST_WP_PASSWORD`.
+
+Legacy: `GRAVITYMCP_TEST_MODE` and `GRAVITY_FORMS_TEST_URL` are also supported. Test mode also activates when `NODE_ENV=test`.
+
 ### Testing
 
 ```bash
@@ -328,9 +358,9 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 7. **Delete operations are disabled by default.** `GRAVITY_FORMS_ALLOW_DELETE=true` must be explicitly set. Without it, `deleteForm`, `deleteEntry`, and `deleteFeed` throw immediately. This is intentional safety. — `gravity-forms-client.js:88, 292-294`
 
-8. **The `mcp.json` manifest lists 24 tools, but there are actually 28.** The 4 field operation tools (`gf_add_field`, `gf_update_field`, `gf_delete_field`, `gf_list_field_types`) were added after the manifest was written. The `ListToolsRequestSchema` handler in `index.js` is the source of truth. — `mcp.json` vs `src/index.js:517`
+8. **The `mcp.json` manifest may be stale.** The `ListToolsRequestSchema` handler in `index.js` plus `fieldOperationTools` in `field-operations/index.js` are the source of truth (22 + 4 = 26 tools total). — `src/index.js` + `src/field-operations/index.js`
 
-9. **Self-signed certs for local dev.** Set `MCP_ALLOW_SELF_SIGNED_CERTS=true` to bypass certificate validation for local WordPress environments (Laravel Valet, Local WP, etc.). Never enable in production. — `gravity-forms-client.js:31-33`
+9. **Self-signed certs for local dev.** Set `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true` to bypass certificate validation for local WordPress environments (Laravel Valet, Local WP, etc.). Never enable in production. — `gravity-forms-client.js:31-33`
 
 10. **Validation has legacy and new patterns.** The validation system has a `BaseValidator` legacy layer wrapping newer `ValidationChain` and domain-specific validators. Both paths are active. New code should use the chain system in `validation-chain.js`. — `config/validation.js:21-260`
 

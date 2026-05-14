@@ -39,10 +39,22 @@ export class GravityViewClient {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.restNamespace = '/wp-json/gravityview/v1';
 
-    const username = this.config.GRAVITYVIEW_WP_USERNAME || this.config.WP_USERNAME || this.config.GRAVITY_FORMS_CONSUMER_KEY;
-    const password = this.config.GRAVITYVIEW_WP_APP_PASSWORD || this.config.WP_APP_PASSWORD || this.config.GRAVITY_FORMS_CONSUMER_SECRET;
+    // Auth resolution order: canonical GRAVITYVIEW_* (prod-style) →
+    // WORDPRESS_LOCAL_DEV_TEST_* (the local dev.test admin creds; same
+    // values reused by any other MonoKit tool that hits the local
+    // install) → generic WP_USERNAME → GF MCP consumer key fallback.
+    // The descriptive local-dev names exist so this single admin
+    // credential isn't duplicated across every per-product env block.
+    const username = this.config.GRAVITYVIEW_WP_USERNAME
+      || this.config.WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER
+      || this.config.WP_USERNAME
+      || this.config.GRAVITY_FORMS_CONSUMER_KEY;
+    const password = this.config.GRAVITYVIEW_WP_APP_PASSWORD
+      || this.config.WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD
+      || this.config.WP_APP_PASSWORD
+      || this.config.GRAVITY_FORMS_CONSUMER_SECRET;
     if (!username || !password) {
-      throw new Error('GravityView client requires WordPress credentials. Set GRAVITYVIEW_WP_USERNAME + GRAVITYVIEW_WP_APP_PASSWORD (or reuse GRAVITY_FORMS_CONSUMER_KEY/SECRET).');
+      throw new Error('GravityView client requires WordPress credentials. Set GRAVITYVIEW_WP_USERNAME + GRAVITYVIEW_WP_APP_PASSWORD, or WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER + _ADMIN_PASSWORD, or reuse GRAVITY_FORMS_CONSUMER_KEY/SECRET.');
     }
     this.basicAuth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
 
@@ -64,24 +76,26 @@ export class GravityViewClient {
     // callers can opt into automatic If-Match without a manual GET.
     this.versionCache = new Map();
 
-    this.allowDelete = this.config.GRAVITYVIEW_ALLOW_DELETE === 'true' || this.config.GRAVITY_FORMS_ALLOW_DELETE === 'true';
   }
 
   resolveBaseUrl() {
-    return this.config.GRAVITYVIEW_BASE_URL || this.config.GRAVITY_FORMS_BASE_URL || '';
+    return this.config.GRAVITYVIEW_BASE_URL
+      || this.config.WORDPRESS_LOCAL_DEV_TEST_URL
+      || this.config.GRAVITY_FORMS_BASE_URL
+      || '';
   }
 
   /**
-   * Ping the templates endpoint to verify credentials + connectivity.
-   * Cheap (no view id required, server returns the registered template
-   * registry which is small).
+   * Ping the layouts endpoint to verify credentials + connectivity.
+   * Cheap (no view id required, server returns the registered layout
+   * engines which is a short list).
    */
   async testConnection() {
     try {
-      const response = await this.httpClient.get('/templates');
+      const response = await this.httpClient.get('/layouts');
       return {
         success: true,
-        templateCount: Array.isArray(response.data?.templates) ? response.data.templates.length : 0,
+        layoutCount: Array.isArray(response.data?.layouts) ? response.data.layouts.length : 0,
         baseUrl: `${this.baseUrl}${this.restNamespace}`,
       };
     } catch (error) {
@@ -97,8 +111,28 @@ export class GravityViewClient {
   // Discovery (no view id needed)
   // ===================================================================
 
-  async listTemplates() {
-    const { data } = await this.httpClient.get('/templates');
+  async listLayouts() {
+    const { data } = await this.httpClient.get('/layouts');
+    return data;
+  }
+
+  /**
+   * GET /templates/{template_id}/settings-schema — discover every
+   * setting available for a given template. Returns the same flat
+   * `[{slug, type, label, value, options, group}, ...]` shape used
+   * by field-type schemas, so a single client renderer covers both.
+   *
+   * Settings from add-ons that bridge their silo meta keys (e.g.
+   * DataTables under prefix `datatables.*`) appear with dotted
+   * slugs. Writing a dotted-slug key back through PATCH /apply or
+   * /template-settings routes the value to the right meta key
+   * automatically.
+   */
+  async getTemplateSettingsSchema({ template_id } = {}) {
+    if (!template_id || typeof template_id !== 'string') {
+      throw new Error('template_id (string) is required.');
+    }
+    const { data } = await this.httpClient.get(`/templates/${encodeURIComponent(template_id)}/settings-schema`);
     return data;
   }
 
@@ -122,6 +156,23 @@ export class GravityViewClient {
     return data;
   }
 
+  /**
+   * Canonical search-field input slugs. Used by the MCP validator
+   * (and assertSearchInputType pre-flight) to reject typos.
+   *
+   * Now delegates to the gk-gravityview/list-search-input-types
+   * ability — the legacy `/gravityview/v1/search-fields/input-types`
+   * route is gone post-Phase-5.
+   */
+  async listSearchFieldInputTypes() {
+    const { data } = await this.httpClient.request({
+      method:  'GET',
+      baseURL: this.baseUrl,
+      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/list-search-input-types/run',
+    });
+    return data;
+  }
+
   async listForms() {
     const { data } = await this.httpClient.get('/forms');
     return data;
@@ -129,8 +180,19 @@ export class GravityViewClient {
 
   async getFieldTypeSchema({ field_type, template_id, context, input_type, form_id } = {}) {
     if (!field_type) throw new Error('field_type is required.');
-    const params = stripUndefined({ template_id, context, input_type, form_id });
-    const { data } = await this.httpClient.get(`/field-types/${encodeURIComponent(field_type)}/schema`, { params });
+    // Delegate to the gk-gravityview/get-field-type-schema ability.
+    // Bracketed query params are how WP REST rebuilds an object from
+    // a query string — `?input[field_type]=text&input[template_id]=...`.
+    const params = {};
+    for (const [k, v] of Object.entries({ field_type, template_id, context, input_type, form_id })) {
+      if (v !== undefined) params[`input[${k}]`] = v;
+    }
+    const { data } = await this.httpClient.request({
+      method:  'GET',
+      baseURL: this.baseUrl,
+      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/get-field-type-schema/run',
+      params,
+    });
     return data;
   }
 
@@ -153,7 +215,12 @@ export class GravityViewClient {
 
   async listAvailableFields({ id } = {}) {
     requireViewId(id);
-    const { data } = await this.httpClient.get(`/views/${id}/available-fields`);
+    const { data } = await this.httpClient.request({
+      method:  'GET',
+      baseURL: this.baseUrl,
+      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/list-available-fields/run',
+      params:  { 'input[id]': id },
+    });
     return data;
   }
 
@@ -172,15 +239,29 @@ export class GravityViewClient {
     return data;
   }
 
-  async renderViewField({ id, area, slot, settings } = {}) {
+  async renderViewField({ id, area, slot, settings, staged_slot } = {}) {
     requireViewId(id);
     requireAreaSlot(area, slot);
-    // Server accepts both GET and POST — POST when staged settings
-    // overrides need to ride along (without persisting).
-    if (settings && typeof settings === 'object') {
+    // Server accepts both GET and POST.
+    //
+    // POST when the caller needs to ride staged state along WITHOUT
+    // persisting:
+    //   - `settings`     → overrides on an EXISTING saved slot.
+    //   - `staged_slot`  → synthesizes a brand-new (unsaved) slot
+    //                      from `{ field_id, label?, ...settings }`.
+    //                      Required when the URL `slot` doesn't yet
+    //                      exist in storage — without it the server
+    //                      404s on read_slot().
+    if (
+      (settings && typeof settings === 'object') ||
+      (staged_slot && typeof staged_slot === 'object')
+    ) {
+      const body = {};
+      if (settings && typeof settings === 'object') body.settings = settings;
+      if (staged_slot && typeof staged_slot === 'object') body.staged_slot = staged_slot;
       const { data } = await this.httpClient.post(
         `/views/${id}/fields/${encodeArea(area)}/${encodeURIComponent(slot)}/render`,
-        { settings }
+        body
       );
       return data;
     }
@@ -311,10 +392,7 @@ export class GravityViewClient {
   async removeViewField({ id, area, slot, ifMatch } = {}) {
     requireViewId(id);
     requireAreaSlot(area, slot);
-    if (!this.allowDelete) {
-      throw new Error('Deletion disabled. Set GRAVITYVIEW_ALLOW_DELETE=true to allow destructive operations.');
-    }
-    const response = await this.httpClient.delete(
+const response = await this.httpClient.delete(
       `/views/${id}/fields/${encodeArea(area)}/${encodeURIComponent(slot)}`,
       this.ifMatchHeaders(id, ifMatch)
     );
@@ -371,10 +449,7 @@ export class GravityViewClient {
   async deleteGridRow({ id, surface, row_uid, ifMatch } = {}) {
     requireViewId(id);
     if (!row_uid) throw new Error('row_uid is required.');
-    if (!this.allowDelete) {
-      throw new Error('Deletion disabled. Set GRAVITYVIEW_ALLOW_DELETE=true to allow destructive operations.');
-    }
-    // axios.delete requires `data` inside the config to send a body.
+// axios.delete requires `data` inside the config to send a body.
     const config = this.ifMatchHeaders(id, ifMatch) || {};
     if (surface) config.data = { surface };
     const response = await this.httpClient.delete(
@@ -396,6 +471,7 @@ export class GravityViewClient {
     if (!field || typeof field !== 'object' || !field.id) {
       throw new Error('field must be an object with at least an `id` (e.g. "search_all", "submit", or a GF field id).');
     }
+    await this.assertSearchInputType(field.input ?? field.input_type);
     const response = await this.httpClient.post(
       `/views/${id}/search-fields/_slots`,
       stripUndefined({ widget_area, widget_slot, position, field, slot }),
@@ -405,12 +481,49 @@ export class GravityViewClient {
     return response.data;
   }
 
+  /**
+   * Pre-flight check for `field.input` / `settings.input` values
+   * passed to addSearchField / patchSearchField. Fetches the
+   * canonical input-type list once per session and throws a clear
+   * error before the network round trip when the caller supplies
+   * an unknown slug. The server enforces the same allow-list as a
+   * safety net — this just gives the agent a faster, more useful
+   * error message ("Unknown search input 'datepiker' — did you
+   * mean 'date_range'?") than a generic 400.
+   *
+   * @param {string|undefined} input
+   * @returns {Promise<void>}
+   */
+  async assertSearchInputType(input) {
+    const value = String(input ?? '').trim();
+    if (value === '') return; // no input → server defaults; nothing to validate
+    if (!this._searchInputTypes) {
+      try {
+        const data = this._searchInputTypesPromise
+          || (this._searchInputTypesPromise = this.listSearchFieldInputTypes());
+        const resolved = await data;
+        this._searchInputTypes = new Set(Array.isArray(resolved?.input_types) ? resolved.input_types : []);
+      } catch (_) {
+        // Discovery failed (older plugin, network blip) — degrade
+        // to permissive; the server still rejects on write.
+        this._searchInputTypes = null;
+        this._searchInputTypesPromise = null;
+        return;
+      }
+    }
+    if (this._searchInputTypes && this._searchInputTypes.size > 0 && !this._searchInputTypes.has(value)) {
+      const known = [...this._searchInputTypes].sort().join(', ');
+      throw new Error(`Unknown search field input "${value}". Valid types: ${known}.`);
+    }
+  }
+
   async patchSearchField({ id, widget_area, widget_slot, position, search_slot, settings, ifMatch } = {}) {
     requireViewId(id);
     if (!widget_area || !widget_slot) throw new Error('widget_area and widget_slot are required.');
     if (!position) throw new Error('position is required.');
     if (!search_slot) throw new Error('search_slot is required.');
     if (!settings || typeof settings !== 'object') throw new Error('settings must be an object.');
+    await this.assertSearchInputType(settings.input ?? settings.input_type);
     const response = await this.httpClient.patch(
       `/views/${id}/search-fields/${encodeURIComponent(search_slot)}`,
       { widget_area, widget_slot, position, settings },
@@ -425,10 +538,7 @@ export class GravityViewClient {
     if (!widget_area || !widget_slot || !position || !search_slot) {
       throw new Error('widget_area, widget_slot, position, and search_slot are required.');
     }
-    if (!this.allowDelete) {
-      throw new Error('Deletion disabled. Set GRAVITYVIEW_ALLOW_DELETE=true to allow destructive operations.');
-    }
-    const config = this.ifMatchHeaders(id, ifMatch) || {};
+const config = this.ifMatchHeaders(id, ifMatch) || {};
     config.data = { widget_area, widget_slot, position };
     const response = await this.httpClient.delete(
       `/views/${id}/search-fields/${encodeURIComponent(search_slot)}`,
@@ -474,10 +584,7 @@ export class GravityViewClient {
   async removeViewWidget({ id, area, slot, ifMatch } = {}) {
     requireViewId(id);
     requireAreaSlot(area, slot);
-    if (!this.allowDelete) {
-      throw new Error('Deletion disabled. Set GRAVITYVIEW_ALLOW_DELETE=true to allow destructive operations.');
-    }
-    const response = await this.httpClient.delete(
+const response = await this.httpClient.delete(
       `/views/${id}/widgets/${encodeURIComponent(area)}/${encodeURIComponent(slot)}`,
       this.ifMatchHeaders(id, ifMatch)
     );
@@ -527,13 +634,13 @@ function requireAreaSlot(area, slot) {
 }
 
 function encodeArea(area) {
-  // Layout-builder areas embed `::` separators that WP REST routes
-  // tolerate either pre-encoded (%3A%3A) or literal. Use literal to
-  // keep URLs readable; the server's regex covers both forms.
-  return String(area)
-    .split('/')
-    .map((part) => encodeURIComponent(part).replace(/%3A%3A/g, '::'))
-    .join('/');
+  // Layout-builder areas embed `::` separators (which the server's
+  // route regex covers either as `::` or `%3A%3A`) AND `/` glyphs
+  // inside row-type names (`50/50`, `33/33/33`, `25/25/25/25`). The
+  // `/` MUST be percent-encoded — leaving it literal makes WordPress
+  // treat it as a path separator and the route stops matching the
+  // intended segment, fatal-404ing /render and similar endpoints.
+  return encodeURIComponent(String(area)).replace(/%3A%3A/g, '::');
 }
 
 function stripUndefined(obj) {

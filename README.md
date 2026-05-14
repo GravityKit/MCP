@@ -47,7 +47,7 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
    **For local development** (Laravel Valet, MAMP, etc.):
    ```env
    # Add this line if using self-signed certificates
-   MCP_ALLOW_SELF_SIGNED_CERTS=true
+   GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true
    ```
 
 4. **Generate API credentials** in WordPress:
@@ -101,10 +101,9 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 - `gf_submit_form_data`    - Submit forms with full processing
 - `gf_validate_submission` - Validate without submitting
 
-### Add-ons (7 tools)
+### Add-ons (6 tools)
 - `gf_list_feeds`       - List all add-on feeds
 - `gf_get_feed`         - Get specific feed configuration
-- `gf_list_form_feeds`  - List feeds for a specific form
 - `gf_create_feed`      - Create new add-on feeds
 - `gf_update_feed`      - Update existing feeds
 - `gf_patch_feed`       - Partially update feed properties
@@ -156,10 +155,18 @@ await mcp.call('gf_submit_form_data', {
 - `GRAVITY_FORMS_BASE_URL`        - WordPress site URL
 
 ### Optional Settings
+- `GRAVITY_FORMS_AUTH_METHOD=basic`    - Auth method: `basic` (recommended) or `oauth`/`oauth1`
 - `GRAVITY_FORMS_ALLOW_DELETE=false`   - Enable delete operations
 - `GRAVITY_FORMS_TIMEOUT=30000`        - Request timeout (ms)
+- `GRAVITY_FORMS_MAX_RETRIES=3`        - Max retry attempts for failed requests
 - `GRAVITY_FORMS_DEBUG=false`          - Enable debug logging
-- `MCP_ALLOW_SELF_SIGNED_CERTS=false`  - Allow self-signed SSL certificates (local dev only)
+- `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false`  - Allow self-signed SSL certificates (local dev only)
+
+### Authentication Flow
+
+The server uses **Basic Authentication** by default (recommended for Gravity Forms v2). If the site uses HTTP instead of HTTPS, Basic Auth cannot be used and the server **silently falls back to OAuth 1.0a**. Set `GRAVITY_FORMS_AUTH_METHOD=oauth` to force OAuth 1.0a.
+
+Both methods use the same Consumer Key and Consumer Secret generated in WordPress admin under Forms > Settings > REST API.
 
 ## Test Environment Configuration
 
@@ -274,7 +281,7 @@ If you're using a local development environment (Laravel Valet, MAMP, Local WP, 
 
 Add to your `.env` file:
 ```env
-MCP_ALLOW_SELF_SIGNED_CERTS=true
+GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true
 ```
 
 **⚠️ Security Warning**: Only disable SSL certificate verification for local development environments. Never use this setting in production!
@@ -283,7 +290,7 @@ MCP_ALLOW_SELF_SIGNED_CERTS=true
 - Confirm API keys are correct
 - Verify user has appropriate Gravity Forms capabilities
 - Check Forms → Settings → REST API for key status
-- For local development, ensure `MCP_ALLOW_SELF_SIGNED_CERTS=true` is set if using self-signed certificates
+- For local development, ensure `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true` is set if using self-signed certificates
 
 ### Debug Mode
 Enable detailed logging:

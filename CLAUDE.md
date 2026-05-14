@@ -6,7 +6,7 @@ You MUST fully ingest @AGENTS.md first.
 
 - **Package:** `@gravitykit/mcp` v2.1.0
 - **Type:** Node.js MCP server (ESM)
-- **Purpose:** Full Gravity Forms REST API v2 coverage via 28 MCP tools
+- **Purpose:** Full Gravity Forms REST API v2 coverage via 26 MCP tools
 - **Repo:** https://github.com/GravityKit/MCP
 
 ## Key Commands

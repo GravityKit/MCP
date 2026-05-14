@@ -42,9 +42,21 @@ export function createViewOperations(client) {
 export const viewToolDefinitions = [
   // -------------------------------------------------------------- Discovery
   {
-    name: 'gv_list_templates',
-    description: 'List every installed GravityView layout template (id, slug, label, description, logo). Use to discover valid template_id values before creating or switching a View.',
+    name: 'gv_list_layouts',
+    description: 'List the installed GravityView layout engines (Layout Builder, DIY, Table, List, DataTables, Map, …) with id / label / description / logo / has_grid. Use to discover valid template_id values before creating or switching a View. Excludes legacy `preset_*` content presets and inactive add-on placeholders. `has_grid: true` means the layout drives placement via `POST /views/{id}/grid/_rows`; otherwise the layout exposes static areas (see gv_get_view_areas).',
     inputSchema: { type: 'object', properties: { ...COMPACT_ARG } },
+  },
+  {
+    name: 'gv_get_template_settings_schema',
+    description: 'Per-template settings catalogue. Returns the full set of `template_settings` keys a layout supports — `page_size` / `sort_field` for any template, plus layout-specific settings (e.g. `map_zoom`, `map_type`, `map_layers` for the Maps layout; `datatables.responsive`, `datatables.rowgroup_field` for DataTables when the extension is installed). Discovered live via the `gk/gravityview/rest/template-settings/sources` filter so any add-on with its own silo meta key surfaces automatically. Dotted slugs (e.g. `datatables.responsive`) round-trip through PATCH /template-settings + apply.template_settings to the right meta key.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        template_id: { type: 'string', description: 'Layout template id (use gv_list_layouts to discover).' },
+        ...COMPACT_ARG,
+      },
+      required: ['template_id'],
+    },
   },
   {
     name: 'gv_list_widgets',
@@ -73,12 +85,12 @@ export const viewToolDefinitions = [
   },
   {
     name: 'gv_get_field_type_schema',
-    description: 'Get the settings schema for a GravityView field type (e.g. "custom", "entry_link", "text"). No View id required — useful for AI agents authoring a fresh View.',
+    description: 'Get the settings schema for a GravityView field type (e.g. "custom", "entry_link", "text"). No View id required — useful for AI agents authoring a fresh View.\n\nLayout templates can add or remove settings on top of the core field schema (e.g. DIY adds a Container Tag picker, others may add their own settings). Pass `template_id` to fetch the overlay schema the chosen layout exposes; each schema item\'s `slug` is the setting key to use when building apply payloads. Run gv_list_layouts to discover which layouts are installed and inspect their settings_overlay descriptors.',
     inputSchema: {
       type: 'object',
       properties: {
         field_type: { type: 'string', description: 'Field type slug (e.g. "custom", "entry_link"). For form-bound fields (numeric ids), use gv_get_view_field_schemas instead.' },
-        template_id: { type: 'string', description: 'Optional layout template id; affects which settings the schema includes. Defaults to default_list.' },
+        template_id: { type: 'string', description: 'Optional layout template id; affects which settings the schema includes. Defaults to default_list. Different layouts overlay different setting sets — gv_list_layouts surfaces what each layout adds.' },
         context: { type: 'string', enum: ['multiple', 'single', 'edit', 'search'], description: 'Render context. Defaults to multiple.' },
         input_type: { type: 'string', description: 'Optional GF input type (textarea, select, …) for form-bound fields.' },
         form_id: { type: 'integer', description: 'Optional form id for input-type detection.' },
@@ -111,14 +123,15 @@ export const viewToolDefinitions = [
   },
   {
     name: 'gv_render_view_field',
-    description: 'Render a single configured slot to HTML. Pass `settings` to preview an in-flight settings change WITHOUT persisting (server renders in-memory). Use to verify a format/conditional-logic change before committing.',
+    description: 'Render a single slot to HTML. Two staged-preview modes (server renders in-memory, persists nothing): pass `settings` to override an EXISTING saved slot, OR pass `staged_slot: { field_id, label?, ...settings }` together with a freshly-minted `slot` UID to render a brand-new (unsaved) slot the user just dragged into the layout. Without `staged_slot`, an unknown `slot` returns 404.',
     inputSchema: {
       type: 'object',
       properties: {
         id: VIEW_ID,
         area: AREA,
         slot: SLOT,
-        settings: { type: 'object', description: 'Optional staged settings overrides. Persists nothing.' },
+        settings: { type: 'object', description: 'Optional staged settings overrides on a saved slot. Persists nothing.' },
+        staged_slot: { type: 'object', description: 'Optional synthesized slot for unsaved-slot preview: `{ field_id, label?, ...settings }`. Use when the URL `slot` doesn\'t yet exist in storage (e.g. immediately after drag-in, before apply).' },
         ...COMPACT_ARG,
       },
       required: ['id', 'area', 'slot'],
@@ -134,7 +147,7 @@ export const viewToolDefinitions = [
       properties: {
         title: { type: 'string', description: 'View title (post title).' },
         form_id: { type: 'integer', description: 'Source Gravity Forms form id. Use gf_list_forms to discover.' },
-        template_id: { type: 'string', description: 'Layout template for the directory zone (Multiple Entries listing). Defaults to gravityview-layout-builder. Use gv_list_templates for the catalogue.' },
+        template_id: { type: 'string', description: 'Layout template for the directory zone (Multiple Entries listing). Defaults to gravityview-layout-builder. Use gv_list_layouts for the catalogue.' },
         template_ids: {
           type: 'object',
           description: 'Optional per-zone template overrides — { single?, edit? }. Multiple Entries (directory) and Single Entry can use different layouts (e.g. directory: gravityview-layout-builder, single: default_table). Single defaults to directory; edit follows directory unless explicitly set.',
@@ -186,7 +199,7 @@ export const viewToolDefinitions = [
       type: 'object',
       properties: {
         id: VIEW_ID,
-        template_id: { type: 'string', description: 'New template id. Use gv_list_templates to discover.' },
+        template_id: { type: 'string', description: 'New template id. Use gv_list_layouts to discover.' },
         zone: { type: 'string', enum: ['directory', 'single', 'edit'], description: 'Zone to switch. Defaults to directory.' },
         policy: { type: 'string', enum: ['discard', 'keep'], description: 'discard (default) clears the zone\'s field+widget placements so they don\'t reference the old template\'s areas; keep preserves them at the risk of orphan placements.' },
         ifMatch: IF_MATCH,
@@ -269,7 +282,7 @@ export const viewToolDefinitions = [
   },
   {
     name: 'gv_remove_view_field',
-    description: 'Delete a single field slot. Requires GRAVITYVIEW_ALLOW_DELETE=true (or GRAVITY_FORMS_ALLOW_DELETE=true) in the MCP env to guard against accidents.',
+    description: 'Delete a single field slot. Reversible — call gv_add_view_field with the same field_id to restore.',
     inputSchema: {
       type: 'object',
       properties: { id: VIEW_ID, area: AREA, slot: SLOT, ifMatch: IF_MATCH, ...COMPACT_ARG },
@@ -304,7 +317,7 @@ export const viewToolDefinitions = [
   },
   {
     name: 'gv_remove_view_widget',
-    description: 'Delete a single widget slot. Requires GRAVITYVIEW_ALLOW_DELETE=true.',
+    description: 'Delete a single widget slot. Reversible — call gv_add_view_widget to restore.',
     inputSchema: {
       type: 'object',
       properties: { id: VIEW_ID, area: { type: 'string' }, slot: SLOT, ifMatch: IF_MATCH, ...COMPACT_ARG },
@@ -347,7 +360,7 @@ export const viewToolDefinitions = [
   },
   {
     name: 'gv_delete_grid_row',
-    description: 'Remove a grid row and every field/widget placed in any of its areas on the targeted surface. Requires GRAVITYVIEW_ALLOW_DELETE=true.',
+    description: 'Remove a grid row and every field/widget placed in any of its areas on the targeted surface.',
     inputSchema: {
       type: 'object',
       properties: { id: VIEW_ID, surface: { type: 'string', enum: ['fields', 'widgets'] }, row_uid: { type: 'string' }, ifMatch: IF_MATCH, ...COMPACT_ARG },
@@ -398,7 +411,7 @@ export const viewToolDefinitions = [
   },
   {
     name: 'gv_remove_search_field',
-    description: 'Remove a search field slot from a search_bar widget\'s search_fields_section. Requires GRAVITYVIEW_ALLOW_DELETE=true.',
+    description: 'Remove a search field slot from a search_bar widget\'s search_fields_section.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -422,7 +435,8 @@ export const viewToolDefinitions = [
 export function buildViewToolHandlers({ client, validator }) {
   return {
     // Discovery
-    gv_list_templates: () => client.listTemplates(),
+    gv_list_layouts: () => client.listLayouts(),
+    gv_get_template_settings_schema: (params) => client.getTemplateSettingsSchema(params),
     gv_list_widgets: () => client.listWidgets(),
     gv_list_grid_row_types: () => client.listGridRowTypes(),
     gv_list_widget_zones: () => client.listWidgetZones(),
@@ -458,6 +472,7 @@ export function buildViewToolHandlers({ client, validator }) {
       validator.validateApplyPayload(params);
       if (params.validateAgainstSchemas) {
         await validator.validateAgainstSchemas({
+          id: params.id,
           fields: params.fields || {},
           widgets: params.widgets || {},
           template_id: params.template_id,

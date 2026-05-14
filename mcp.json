@@ -6,7 +6,8 @@
   "license": "MIT",
   "capabilities": {
     "tools": 26,
-    "resources": 0
+    "resources": 0,
+    "note": "22 tools in src/index.js + 4 field operation tools in src/field-operations/index.js"
   },
   "tools": [
     {
@@ -158,13 +159,12 @@
       "GRAVITY_FORMS_BASE_URL"
     ],
     "optional": [
+      "GRAVITY_FORMS_AUTH_METHOD",
       "GRAVITY_FORMS_ALLOW_DELETE",
       "GRAVITY_FORMS_TIMEOUT",
       "GRAVITY_FORMS_MAX_RETRIES",
-      "GRAVITY_FORMS_RETRY_DELAY",
       "GRAVITY_FORMS_DEBUG",
-      "GRAVITY_FORMS_RATE_LIMIT",
-      "GRAVITY_FORMS_RATE_WINDOW"
+      "GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS"
     ]
   },
   "features": {

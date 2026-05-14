@@ -151,13 +151,13 @@
     "optional": [
       {
         "name": "GRAVITY_FORMS_AUTH_METHOD",
-        "description": "Authentication method: 'basic' (recommended) or 'oauth'",
+        "description": "Authentication method: 'basic' (recommended) or 'oauth'/'oauth1'. Basic requires HTTPS; falls back to OAuth on HTTP.",
         "type": "string",
         "default": "basic"
       },
       {
         "name": "GRAVITY_FORMS_ALLOW_DELETE",
-        "description": "Set to 'true' to enable DELETE operations (forms and entries)",
+        "description": "Set to 'true' to enable DELETE operations (forms, entries, feeds)",
         "type": "boolean",
         "default": false
       },
@@ -175,7 +175,13 @@
       },
       {
         "name": "GRAVITY_FORMS_DEBUG",
-        "description": "Enable debug logging",
+        "description": "Enable debug logging (output goes to stderr)",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "name": "GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS",
+        "description": "Allow self-signed SSL certificates (local development only, never in production)",
         "type": "boolean",
         "default": false
       }
@@ -187,7 +193,7 @@
     "repository": "https://github.com/GravityKit/MCP",
     "documentation": "https://github.com/GravityKit/MCP#readme",
     "api_coverage": "100%",
-    "total_tools": 24,
+    "total_tools": 26,
     "authentication_methods": ["OAuth 1.0a", "Basic Authentication"],
     "features": [
       "Complete REST API v2 coverage",

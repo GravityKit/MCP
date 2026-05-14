@@ -29,9 +29,9 @@ export class GravityFormsClient {
         'Accept': 'application/json'
       },
       // Allow self-signed certificates for local development
-      // Set MCP_ALLOW_SELF_SIGNED_CERTS=true in .env for local dev environments
+      // Set GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true in .env for local dev environments
       httpsAgent: new https.Agent({
-        rejectUnauthorized: config.MCP_ALLOW_SELF_SIGNED_CERTS !== 'true'
+        rejectUnauthorized: (config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS || config.MCP_ALLOW_SELF_SIGNED_CERTS) !== 'true'
       })
     });
 

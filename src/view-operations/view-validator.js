@@ -124,11 +124,22 @@ export class ViewValidator {
    * Pass `{ template_id, context }` so the schema fetch matches the
    * setting set the inspector actually persists for that combination.
    */
-  async validateAgainstSchemas({ fields = {}, widgets = {}, template_id, context }) {
+  async validateAgainstSchemas({ id, fields = {}, widgets = {}, template_id, context }) {
     const allEntries = [
       ...Object.values(fields).flatMap((arr) => arr.map((item) => ({ kind: 'field', item }))),
       ...Object.values(widgets).flatMap((arr) => arr.map((item) => ({ kind: 'widget', item }))),
     ];
+
+    // Numeric field ids (form-bound fields) need the input type to
+    // resolve their full schema — `email` adds emailmailto/subject/
+    // body, `address` adds show_map_link, `fileupload` adds
+    // link_to_file/image_*, etc. Look those up once per view via
+    // gv_list_available_fields so the validator catches typos on
+    // input-type-specific settings without false-positives. When no
+    // view id is supplied (e.g. gv_create_view before the View
+    // exists), the lookup is skipped and numeric ids fall through
+    // to a permissive base-only check.
+    const inputTypeByFieldId = id ? await this.getInputTypeMap(id) : new Map();
 
     for (const { kind, item } of allEntries) {
       // Widgets identify themselves through field_id too — InspectorRoute
@@ -136,10 +147,18 @@ export class ViewValidator {
       // the widget's settings schema (e.g. search_bar → search_layout,
       // search_fields, …). Skipping schema validation for widgets would
       // miss the most common authoring mistake (typoed setting key).
-      const typeSlug = guessFieldType(item.field_id);
+      const fieldId  = String(item.field_id ?? '').trim();
+      const isNum    = /^\d+(\.\d+)?$/.test(fieldId);
+      const typeSlug = isNum ? 'field' : fieldId;
       if (!typeSlug) continue;
 
-      const schema = await this.getSchema(typeSlug, template_id, context);
+      // For numeric ids, the actual GF input type drives which
+      // overlay applies. Fall back to no input_type when we can't
+      // look it up — yields the BASE schema only, which still
+      // catches typos like `custom_lable` and `cusotm_class`.
+      const inputType = isNum ? (inputTypeByFieldId.get(fieldId) || undefined) : undefined;
+
+      const schema = await this.getSchema(typeSlug, template_id, context, inputType);
       if (!schema || !Array.isArray(schema.schema)) continue;
 
       const validKeys = new Set(schema.schema.map((entry) => entry.slug));
@@ -161,12 +180,43 @@ export class ViewValidator {
         if (!validKeys.has(key)) {
           const samples = [...validKeys].slice(0, 12).join(', ');
           const more = validKeys.size > 12 ? ', …' : '';
+          const inputHint = inputType ? ` (input_type=${inputType})` : '';
           throw new Error(
-            `${kind} "${item.field_id}" has unknown setting "${key}". Schema for ${schema.kind || 'type'} "${typeSlug}" lists: ${samples}${more}`
+            `${kind} "${item.field_id}" has unknown setting "${key}". Schema for ${schema.kind || 'type'} "${typeSlug}"${inputHint} lists: ${samples}${more}`
           );
         }
       }
     }
+  }
+
+  /**
+   * Build a map of `field_id → input_type` for all GF form fields
+   * available to this View. Cached per view id so repeat calls in
+   * the same MCP session don't refetch.
+   *
+   * @param {number} viewId
+   * @returns {Promise<Map<string, string>>}
+   */
+  async getInputTypeMap(viewId) {
+    if (!this._inputTypeMaps) this._inputTypeMaps = new Map();
+    if (this._inputTypeMaps.has(viewId)) return this._inputTypeMaps.get(viewId);
+
+    let map = new Map();
+    try {
+      const data = await this.client.listAvailableFields({ id: viewId });
+      const formFields = Array.isArray(data?.form_fields) ? data.form_fields : [];
+      for (const field of formFields) {
+        const fid = String(field.id ?? '').trim();
+        const it  = String(field.input_type ?? field.type ?? '').trim();
+        if (fid && it) map.set(fid, it);
+      }
+    } catch (err) {
+      // Available-fields fetch failed (network, perms, missing form)
+      // — degrade to permissive (base-only) schema validation. The
+      // server still validates on apply.
+    }
+    this._inputTypeMaps.set(viewId, map);
+    return map;
   }
 
   /**
@@ -180,8 +230,11 @@ export class ViewValidator {
    * No-op when none of the area keys look like Layout Builder keys.
    */
   async validateLayoutBuilderAreas({ id, fields = {}, widgets = {} }) {
-    const allAreas = Object.keys({ ...fields, ...widgets });
-    const lbAreas = allAreas.filter((key) => key.includes('::'));
+    // gv_get_view_areas returns FIELD-zone areas only (directory /
+    // single / edit). Widget area keys live on a separate surface
+    // (header_* / footer_*) and are validated server-side against the
+    // widget tree, so skip them here to avoid false-positive rejects.
+    const lbAreas = Object.keys(fields).filter((key) => key.includes('::'));
     if (!id || lbAreas.length === 0) return;
 
     let known;
@@ -214,11 +267,16 @@ export class ViewValidator {
     }
   }
 
-  async getSchema(fieldType, template_id, context) {
-    const key = `${fieldType}|${template_id || ''}|${context || ''}`;
+  async getSchema(fieldType, template_id, context, input_type) {
+    const key = `${fieldType}|${template_id || ''}|${context || ''}|${input_type || ''}`;
     if (this.schemaCache.has(key)) return this.schemaCache.get(key);
     try {
-      const data = await this.client.getFieldTypeSchema({ field_type: fieldType, template_id, context });
+      const data = await this.client.getFieldTypeSchema({
+        field_type: fieldType,
+        template_id,
+        context,
+        input_type,
+      });
       this.schemaCache.set(key, data);
       return data;
     } catch (error) {
@@ -229,25 +287,6 @@ export class ViewValidator {
       return null;
     }
   }
-}
-
-/**
- * Best-effort field-type inference from a `field_id`. The inspector
- * REST API uses the same identifier for both numeric form fields
- * (e.g. "1", "5.2") and meta-fields (e.g. "custom", "entry_link",
- * "edit_link"). Numeric ids are form fields and could be any type;
- * non-numeric ids ARE the type slug. For numeric ids we return null
- * because validating them needs the form schema, not the field-type
- * schema (different API).
- */
-function guessFieldType(fieldId) {
-  if (fieldId === undefined || fieldId === null) return null;
-  const str = String(fieldId).trim();
-  if (str === '') return null;
-  // Numeric (incl. composite like "5.2") — we can't determine type
-  // from the id alone. Skip schema-aware validation for these.
-  if (/^\d+(\.\d+)?$/.test(str)) return null;
-  return str;
 }
 
 export default ViewValidator;

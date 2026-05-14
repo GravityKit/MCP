@@ -4,7 +4,7 @@
  * Mirrors `forms.test.js` shape: MockHttpClient for the transport,
  * scenarios cover happy path, negative client-side validation, and
  * the inspector-specific behaviours (If-Match optimistic-concurrency,
- * mode replace/merge, area-key URL encoding, allowDelete guard).
+ * mode replace/merge, area-key URL encoding).
  */
 
 import { GravityViewClient } from '../gravityview-client.js';
@@ -24,12 +24,9 @@ let mockHttpClient;
 let testEnv;
 
 suite.beforeEach(() => {
-  testEnv = {
-    ...setupTestEnvironment(),
-    // GravityViewClient falls back to GRAVITY_FORMS_* creds, so the
-    // shared setupTestEnvironment values cover both surfaces.
-    GRAVITYVIEW_ALLOW_DELETE: 'true',
-  };
+  // GravityViewClient falls back to GRAVITY_FORMS_* creds, so the
+  // shared setupTestEnvironment values cover both surfaces.
+  testEnv = setupTestEnvironment();
   mockHttpClient = new MockHttpClient();
   client = new GravityViewClient(testEnv);
   client.httpClient = mockHttpClient; // bypass real network
@@ -75,15 +72,21 @@ suite.test('Constructor: falls back to GRAVITY_FORMS_CONSUMER_KEY/SECRET', () =>
 // Discovery
 // ====================================================================
 
-suite.test('listTemplates: returns the templates array', async () => {
+suite.test('listLayouts: returns the layouts array', async () => {
   mockHttpClient.setMockResponse(
     'GET',
-    '/templates',
-    new MockResponse({ templates: [{ id: 'default_list' }, { id: 'default_table' }] })
+    '/layouts',
+    new MockResponse({
+      layouts: [
+        { id: 'gravityview-layout-builder', label: 'Layout Builder', is_grid_aware: true },
+        { id: 'diy', label: 'DIY', is_grid_aware: false },
+      ],
+    })
   );
-  const data = await client.listTemplates();
-  TestAssert.equal(data.templates.length, 2);
-  TestAssert.equal(data.templates[0].id, 'default_list');
+  const data = await client.listLayouts();
+  TestAssert.equal(data.layouts.length, 2);
+  TestAssert.equal(data.layouts[0].id, 'gravityview-layout-builder');
+  TestAssert.equal(data.layouts[0].is_grid_aware, true);
 });
 
 suite.test('getFieldTypeSchema: requires field_type', async () => {
@@ -238,16 +241,11 @@ suite.test('moveViewField: posts to /fields/_move with from/to/position', async 
   TestAssert.equal(req.config.data.position, 0);
 });
 
-suite.test('removeViewField: rejected when allowDelete is false', async () => {
-  client.allowDelete = false;
-  await TestAssert.throwsAsync(
-    () => client.removeViewField({ id: 9, area: 'directory_list-title', slot: 'slot1' }),
-    'GRAVITYVIEW_ALLOW_DELETE'
-  );
-});
-
-suite.test('removeViewField: deletes when allowDelete is true', async () => {
-  client.allowDelete = true;
+suite.test('removeViewField: deletes via DELETE /views/{id}/fields/{area}/{slot}', async () => {
+  // Field/widget removal is part of normal authoring (reversible by
+  // re-adding the same field_id), so there is no client-side gate —
+  // the only protection layer is the WP capability check on the
+  // server's permission_callback.
   mockHttpClient.setMockResponse(
     'DELETE',
     '/views/9/fields/directory_list-title/slot1',
@@ -346,20 +344,90 @@ suite.test('Validator: validateAgainstSchemas rejects unknown setting keys', asy
   );
 });
 
-suite.test('Validator: validateAgainstSchemas skips numeric field ids (form fields)', async () => {
-  // Numeric ids can't be validated via field-type schema — they're
-  // form fields, not GravityView meta-fields. Validator should
-  // silently skip them rather than throwing.
-  let called = 0;
-  client.getFieldTypeSchema = async () => {
-    called++;
-    return { schema: [] };
+suite.test('Validator: validateAgainstSchemas resolves input_type for numeric ids and rejects unknown keys', async () => {
+  // Numeric field id "2" is form field of type=email. The validator
+  // looks up the input_type via listAvailableFields, then fetches
+  // the schema with field_type=field + input_type=email so the
+  // email-specific overlay (emailmailto, emailsubject, emailbody,
+  // emailencrypt) is in the valid-key set. A bogus setting like
+  // `made_up_email_setting` must be rejected.
+  client.listAvailableFields = async () => ({
+    form_fields: [
+      { id: '2', label: 'Email', input_type: 'email', type: 'email' },
+    ],
+  });
+  client.getFieldTypeSchema = async ({ field_type, input_type }) => {
+    TestAssert.equal(field_type, 'field');
+    TestAssert.equal(input_type, 'email');
+    return {
+      field_type: 'field',
+      schema: [
+        { slug: 'show_label' },
+        { slug: 'custom_label' },
+        { slug: 'custom_class' },
+        // Email-specific overlays:
+        { slug: 'emailmailto' },
+        { slug: 'emailsubject' },
+        { slug: 'emailbody' },
+        { slug: 'emailencrypt' },
+      ],
+    };
   };
   const v = new ViewValidator(client);
+
+  // Email-specific setting allowed:
   await v.validateAgainstSchemas({
-    fields: { 'directory_list-title': [{ field_id: '1' }, { field_id: '5.2' }] },
+    id: 9999,
+    fields: {
+      'directory_list-title': [{ field_id: '2', emailmailto: '1', emailsubject: 'Hi' }],
+    },
   });
-  TestAssert.equal(called, 0);
+
+  // Bogus setting rejected — was the case Zack flagged in stress
+  // testing where validateAgainstSchemas:true silently accepted
+  // typoed keys on numeric form fields.
+  await TestAssert.throwsAsync(
+    () =>
+      v.validateAgainstSchemas({
+        id: 9999,
+        fields: {
+          'directory_list-title': [{ field_id: '2', made_up_email_setting: 'nope' }],
+        },
+      }),
+    'unknown setting "made_up_email_setting"'
+  );
+});
+
+suite.test('Validator: validateAgainstSchemas falls back to base schema when input_type lookup fails', async () => {
+  // No id supplied (e.g. gv_create_view before the View exists) —
+  // input_type lookup is skipped and the validator hits the field
+  // schema with no input_type. Catches the common typos against
+  // the base settings without false-positive-rejecting overlay
+  // settings the validator can't see.
+  client.getFieldTypeSchema = async ({ field_type, input_type }) => {
+    TestAssert.equal(field_type, 'field');
+    TestAssert.equal(input_type, undefined);
+    return {
+      field_type: 'field',
+      schema: [
+        { slug: 'show_label' },
+        { slug: 'custom_label' },
+        { slug: 'custom_class' },
+      ],
+    };
+  };
+  const v = new ViewValidator(client);
+
+  // Typo on a base-schema slug → rejected.
+  await TestAssert.throwsAsync(
+    () =>
+      v.validateAgainstSchemas({
+        fields: {
+          'directory_list-title': [{ field_id: '1', custom_lable: 'typo' }],
+        },
+      }),
+    'unknown setting "custom_lable"'
+  );
 });
 
 suite.run();
