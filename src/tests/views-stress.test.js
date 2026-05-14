@@ -2707,4 +2707,225 @@ suite.test('New ability: gv_set_view_status rejects an invalid status enum value
   TestAssert.equal(status, 400, 'invalid status → 400');
 });
 
+// ====================================================================
+// Coverage for the post-Gemini-review enhancements
+// ====================================================================
+
+suite.test('New ability: gv_list_views enumerates with status / form_id / search filters', async () => {
+  if (suite.skip) return;
+  const seedTitle = `[stress] list-views needle ${Date.now()}`;
+  const view = await h.gv_create_view({
+    title: seedTitle,
+    form_id: Number(formId),
+    template_id: 'gravityview-layout-builder',
+    status: 'draft',
+  });
+  mintedViewIds.push(view.view_id);
+
+  // Substring search picks up the freshly-created View.
+  const found = await h.gv_list_views({ search: 'list-views needle', per_page: 10 });
+  TestAssert.isTrue(Array.isArray(found.views), 'returns views array');
+  TestAssert.isTrue(found.total >= 1, 'total reflects matching count');
+  const match = found.views.find((v) => v.view_id === view.view_id);
+  TestAssert.isTrue(!!match, 'newly-minted View appears in search results');
+  TestAssert.equal(match.form_id, Number(formId), 'form_id reflected');
+  TestAssert.equal(match.status, 'draft', 'status reflected');
+
+  // form_id filter narrows to that form (every result must match).
+  const byForm = await h.gv_list_views({ form_id: Number(formId), per_page: 5 });
+  for (const v of byForm.views) {
+    TestAssert.equal(v.form_id, Number(formId), 'every row matches form_id filter');
+  }
+
+  // Pagination metadata.
+  const paged = await h.gv_list_views({ per_page: 2, page: 1 });
+  TestAssert.equal(paged.per_page, 2, 'per_page echoed');
+  TestAssert.equal(paged.page, 1, 'page echoed');
+  TestAssert.isTrue(paged.total_pages >= 1, 'total_pages computed');
+});
+
+suite.test('Projection: gv_get_view_config include narrows the response shape', async () => {
+  if (suite.skip) return;
+  const viewId = await mintView('projection');
+
+  const full = await h.gv_get_view_config({ id: viewId, compact: false });
+  TestAssert.isTrue('template_id' in full, 'full has template_id');
+  TestAssert.isTrue('fields' in full, 'full has fields');
+  TestAssert.isTrue('widgets' in full, 'full has widgets');
+
+  const slim = await h.gv_get_view_config({
+    id: viewId,
+    include: ['template_settings', 'form_id'],
+    compact: false,
+  });
+  TestAssert.isTrue('view_id' in slim, 'view_id always present (projection invariant)');
+  TestAssert.isTrue('form_id' in slim, 'requested form_id present');
+  TestAssert.isTrue('template_settings' in slim, 'requested template_settings present');
+  TestAssert.isTrue(!('fields' in slim), 'unrequested fields stripped');
+  TestAssert.isTrue(!('widgets' in slim), 'unrequested widgets stripped');
+  TestAssert.isTrue(!('template_id' in slim), 'unrequested template_id stripped');
+});
+
+suite.test('Dry-run: gv_apply_view_config dry_run=true does NOT persist + flags response', async () => {
+  if (suite.skip) return;
+  const viewId = await mintView('dry-run apply');
+
+  // Real bulk write to set a baseline. Each apply bumps the version,
+  // so re-fetch + re-quote between writes (the test harness only
+  // caches the version returned by the LAST call; the unit-test
+  // happens to interleave reads + writes that defeat that).
+  await h.gv_apply_view_config({
+    id:                viewId,
+    mode:              'merge',
+    template_settings: { page_size: 25 },
+  });
+  const before = await h.gv_get_view_config({ id: viewId, include: ['template_settings'] });
+  TestAssert.equal(before.template_settings.page_size, 25, 'baseline persisted');
+
+  const dry = await h.gv_apply_view_config({
+    id:                viewId,
+    mode:              'merge',
+    template_settings: { page_size: 999 },
+    dry_run:           true,
+  });
+  TestAssert.equal(dry.dry_run, true, 'response flagged dry_run');
+  TestAssert.equal(dry.would_apply, true, 'response flagged would_apply');
+
+  const after = await h.gv_get_view_config({ id: viewId, include: ['template_settings'] });
+  TestAssert.equal(after.template_settings.page_size, 25, 'meta unchanged after dry-run');
+});
+
+suite.test('Dry-run: gv_patch_view_field dry_run=true validates without persisting', async () => {
+  if (suite.skip) return;
+  const viewId = await mintView('dry-run patch-field');
+  await h.gv_add_grid_row({
+    id:           viewId,
+    surface:      'fields',
+    row_uid:      'r1',
+    type:         '100',
+    template_ids: ['default_table'],
+  });
+  const added = await h.gv_add_view_field({
+    id:       viewId,
+    area:     'directory_table-columns',
+    field_id: 'custom',
+    label:    'Original',
+  });
+  await h.gv_patch_view_field({
+    id:       viewId,
+    area:     'directory_table-columns',
+    slot:     added.slot,
+    settings: { custom_label: 'Real Label' },
+  });
+
+  const dryPatch = await h.gv_patch_view_field({
+    id:       viewId,
+    area:     'directory_table-columns',
+    slot:     added.slot,
+    settings: { custom_label: 'Dry Label' },
+    dry_run:  true,
+  });
+  TestAssert.equal(dryPatch.dry_run, true);
+
+  const after = await h.gv_get_view_config({ id: viewId });
+  const stored = after.fields['directory_table-columns']?.[added.slot]?.custom_label;
+  TestAssert.equal(stored, 'Real Label', 'meta still holds the real-write value, not the dry-run value');
+});
+
+suite.test('Dry-run: gv_add_view_field dry_run=true returns shape but does NOT add a slot', async () => {
+  if (suite.skip) return;
+  const viewId = await mintView('dry-run add-field');
+  await h.gv_add_grid_row({
+    id:           viewId,
+    surface:      'fields',
+    row_uid:      'r1',
+    type:         '100',
+    template_ids: ['default_table'],
+  });
+
+  const beforeCount = Object.keys(
+    (await h.gv_get_view_config({ id: viewId })).fields?.['directory_table-columns'] ?? {},
+  ).length;
+
+  const dry = await h.gv_add_view_field({
+    id:       viewId,
+    area:     'directory_table-columns',
+    field_id: 'custom',
+    label:    'Hypothetical',
+    dry_run:  true,
+  });
+  TestAssert.equal(dry.dry_run, true);
+
+  const afterCount = Object.keys(
+    (await h.gv_get_view_config({ id: viewId })).fields?.['directory_table-columns'] ?? {},
+  ).length;
+  TestAssert.equal(afterCount, beforeCount, 'slot count unchanged after dry-run add');
+});
+
+suite.test('Catalog: every gk-gravityview ability advertises a next_steps annotation', async () => {
+  if (suite.skip) return;
+  const { data: catalog } = await gvClient.httpClient.request({
+    method:  'GET',
+    baseURL: gvClient.baseUrl,
+    url:     '/wp-json/wp-abilities/v1/abilities',
+  });
+  const ours = catalog.filter((a) => typeof a?.name === 'string' && a.name.startsWith('gk-gravityview/'));
+  TestAssert.isTrue(ours.length > 0, 'at least one gk-gravityview ability');
+  for (const ab of ours) {
+    const ns = ab?.meta?.annotations?.next_steps;
+    TestAssert.isTrue(Array.isArray(ns), `${ab.name} has next_steps array`);
+    for (const step of ns) {
+      TestAssert.isTrue(
+        typeof step?.ability === 'string' && step.ability.startsWith('gk-gravityview/'),
+        `${ab.name} next-step references gk-gravityview ability`,
+      );
+      TestAssert.isTrue(typeof step?.when === 'string' && step.when.length > 0, `${ab.name} next-step has when text`);
+    }
+  }
+});
+
+suite.test('Discovery bridge: list-layouts has_grid description points at list-grid-row-types', async () => {
+  if (suite.skip) return;
+  const { data: catalog } = await gvClient.httpClient.request({
+    method:  'GET',
+    baseURL: gvClient.baseUrl,
+    url:     '/wp-json/wp-abilities/v1/abilities',
+  });
+  const listLayouts = catalog.find((a) => a.name === 'gk-gravityview/list-layouts');
+  const hasGridDesc =
+    listLayouts?.output_schema?.properties?.layouts?.items?.properties?.has_grid?.description ?? '';
+  TestAssert.isTrue(
+    hasGridDesc.includes('list-grid-row-types'),
+    'has_grid description bridges to list-grid-row-types (the discovery step)',
+  );
+  TestAssert.isTrue(
+    hasGridDesc.includes('list-view-areas'),
+    'has_grid description bridges to list-view-areas for static layouts',
+  );
+});
+
+suite.test('Field presets: default catalog is empty (filter-driven, core ships none)', async () => {
+  if (suite.skip) return;
+  const r = await h.gv_list_field_presets();
+  TestAssert.equal(r.count, 0, 'no core-shipped presets');
+  TestAssert.isTrue(Array.isArray(r.presets), 'presets is an array');
+  TestAssert.equal(r.presets.length, 0);
+});
+
+suite.test('Field presets: apply-field-preset rejects an unknown preset id with 404', async () => {
+  if (suite.skip) return;
+  const viewId = await mintView('preset 404');
+  let status = null;
+  try {
+    await h.gv_apply_field_preset({
+      id:        viewId,
+      preset_id: 'definitely-not-registered',
+      area:      'directory_list-title',
+    });
+  } catch (err) {
+    status = err?.response?.status ?? null;
+  }
+  TestAssert.equal(status, 404, 'unknown preset id → 404');
+});
+
 suite.run();
