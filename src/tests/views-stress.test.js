@@ -2928,4 +2928,529 @@ suite.test('Field presets: apply-field-preset rejects an unknown preset id with 
   TestAssert.equal(status, 404, 'unknown preset id → 404');
 });
 
+// ====================================================================
+// Multiple Forms add-on stress (gk-multiple-forms/* abilities +
+// cross-plugin filters on get/apply-view-config + list-views).
+//
+// All tests skip themselves when MFV isn't loaded — that's surfaced
+// via the absence of `gv_list_joins` from the catalog. On dev.test
+// MFV is active, so they run for real.
+// ====================================================================
+
+const mfvSkip = () => suite.skip || typeof h?.gv_list_joins !== 'function';
+
+/** Mint a throwaway secondary GF form for join-target tests. */
+async function mintSecondaryForm(label) {
+  const created = await gfClient.createForm({
+    title:  `[stress mfv ${label}] ${Date.now()}`,
+    fields: [
+      { id: 1, type: 'text', label: 'Customer Ref' },
+      { id: 2, type: 'text', label: 'Email' },
+      { id: 3, type: 'number', label: 'Amount' },
+    ],
+  });
+  // createForm returns `{ form: { id }, edit_url, entries_url }` —
+  // the form id lives on `.form.id`, not on the top-level result.
+  const id = Number(created?.form?.id ?? 0);
+  if (!id) {
+    throw new Error('mintSecondaryForm: created form id missing from createForm response');
+  }
+  return id;
+}
+
+suite.test('MFV: catalog exposes the three gk-multiple-forms/* abilities', async () => {
+  if (mfvSkip()) return;
+  TestAssert.isTrue(typeof h.gv_list_joins === 'function', 'gv_list_joins handler present');
+  TestAssert.isTrue(typeof h.gv_apply_joins === 'function', 'gv_apply_joins handler present');
+  TestAssert.isTrue(typeof h.gv_list_joinable_fields === 'function', 'gv_list_joinable_fields handler present');
+});
+
+suite.test('MFV: list-joins on a no-joins View → empty + count=0', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv list empty');
+  const r = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(r.count, 0, 'no joins on a fresh View');
+  TestAssert.isTrue(Array.isArray(r.joins), 'joins is an array');
+});
+
+suite.test('MFV: list-joinable-fields enumerates form fields + entry-property aliases', async () => {
+  if (mfvSkip()) return;
+  const formId = await mintSecondaryForm('joinable');
+  const r = await h.gv_list_joinable_fields({ form_id: formId });
+  TestAssert.isTrue(r.fields.length >= 3, 'at least 3 numeric fields + aliases');
+  const ids = r.fields.map((f) => f.id);
+  for (const expected of ['1', '2', '3', 'entry_id', 'created_by']) {
+    TestAssert.isTrue(ids.includes(expected), `expected ${expected} in joinable fields`);
+  }
+  // Cleanup
+  await gfClient.deleteForm(formId).catch(() => {});
+});
+
+suite.test('MFV: apply-joins dry_run → flags response + does NOT persist', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv dry-run apply-joins');
+  const joinedFormId = await mintSecondaryForm('dry');
+  const dry = await h.gv_apply_joins({
+    id:    viewId,
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+    dry_run: true,
+  });
+  TestAssert.equal(dry.dry_run, true, 'dry_run flag stamped');
+  TestAssert.equal(dry.would_apply, true, 'would_apply flag stamped');
+  TestAssert.equal(dry.count, 1, 'count reports the validated row count');
+
+  const after = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(after.count, 0, 'meta unchanged after dry-run');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV: apply-joins persists + list-joins inflates form/field labels', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv apply real');
+  const joinedFormId = await mintSecondaryForm('real');
+  const r = await h.gv_apply_joins({
+    id: viewId,
+    joins: [
+      [Number(formId), '1', joinedFormId, '1'],
+      [Number(formId), 'entry_id', joinedFormId, '3'],
+    ],
+  });
+  TestAssert.equal(r.count, 2);
+
+  const list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 2, 'two joins surfaced');
+  TestAssert.isTrue(list.joins[0].details.base_form_label.length > 0, 'base form label inflated');
+  TestAssert.isTrue(list.joins[0].details.base_form_active, 'base form active');
+  TestAssert.isTrue(list.joins[0].details.join_form_active, 'join form active');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV: apply-joins replaces (not merges) — 3 → 1 → 0', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv replace');
+  const joinedFormId = await mintSecondaryForm('replace');
+
+  // Set 3
+  let r = await h.gv_apply_joins({
+    id: viewId,
+    joins: [
+      [Number(formId), '1', joinedFormId, '1'],
+      [Number(formId), '2', joinedFormId, '2'],
+      [Number(formId), 'entry_id', joinedFormId, '3'],
+    ],
+  });
+  TestAssert.equal(r.count, 3);
+
+  // Replace with 1
+  r = await h.gv_apply_joins({
+    id: viewId,
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+  });
+  TestAssert.equal(r.count, 1, 'apply-joins is replace-not-merge');
+  let list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 1);
+
+  // Clear with empty
+  r = await h.gv_apply_joins({ id: viewId, joins: [] });
+  TestAssert.equal(r.count, 0);
+  list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 0, 'empty array clears all joins');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV: apply-joins rejects malformed rows with 400', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv invalid rows');
+  let status = null;
+  try {
+    await h.gv_apply_joins({
+      id: viewId,
+      joins: [
+        [Number(formId), '1', 999999, '1'],
+        ['not-numeric', '1', 999999, '1'], // invalid base_form_id type
+      ],
+    });
+  } catch (err) {
+    status = err?.response?.status ?? null;
+  }
+  TestAssert.equal(status, 400, 'malformed row → 400');
+
+  // Verify the View still has no joins (atomic rollback on error).
+  const list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 0, 'no partial write on validation error');
+});
+
+suite.test('MFV: apply-view-config writes joins via the cross-plugin filter', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv cross-plugin');
+  const joinedFormId = await mintSecondaryForm('crossplugin');
+
+  await h.gv_apply_view_config({
+    id:    viewId,
+    mode:  'merge',
+    joins: [
+      [Number(formId), '1', joinedFormId, '1'],
+      [Number(formId), 'entry_id', joinedFormId, '3'],
+    ],
+  });
+
+  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  TestAssert.isTrue(Array.isArray(cfg.joins), 'get-view-config exposes joins');
+  TestAssert.equal(cfg.joins.length, 2, 'apply-view-config persisted both joins');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV: get-view-config include=[joins] projection narrows shape', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv projection');
+  const joinedFormId = await mintSecondaryForm('proj');
+  await h.gv_apply_joins({
+    id: viewId,
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+  });
+
+  const slim = await h.gv_get_view_config({
+    id:      viewId,
+    include: ['joins'],
+    compact: false,
+  });
+  TestAssert.isTrue('joins' in slim, 'projection kept joins');
+  TestAssert.equal(slim.joins.length, 1);
+  TestAssert.isTrue(!('fields' in slim), 'projection stripped fields');
+  TestAssert.isTrue(!('widgets' in slim), 'projection stripped widgets');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV: list-views match_joined surfaces Views joining a form (not just primary)', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv list-views match');
+  const joinedFormId = await mintSecondaryForm('listmatch');
+  await h.gv_apply_joins({
+    id: viewId,
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+  });
+
+  // Search for Views connected to the JOINED form (not primary).
+  const matched = await h.gv_list_views({ form_id: joinedFormId, match_joined: true });
+  TestAssert.isTrue(
+    matched.views.some((v) => v.view_id === viewId),
+    'View surfaces under match_joined when its form is only joined',
+  );
+
+  // Without match_joined, the joined-only View must NOT show up.
+  const unmatched = await h.gv_list_views({ form_id: joinedFormId });
+  TestAssert.isTrue(
+    !unmatched.views.some((v) => v.view_id === viewId),
+    'plain form_id filter excludes joined-only Views',
+  );
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV: list-available-fields includes joined_form_fields tagged with form_id', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv available-fields');
+  const joinedFormId = await mintSecondaryForm('availfields');
+  await h.gv_apply_joins({
+    id: viewId,
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+  });
+
+  const r = await h.gv_list_available_fields({ id: viewId, zone: 'directory' });
+  TestAssert.isTrue(Array.isArray(r.joined_form_fields), 'joined_form_fields is an array');
+  TestAssert.isTrue(r.joined_form_fields.length > 0, 'at least one joined-form field returned');
+  for (const f of r.joined_form_fields) {
+    TestAssert.equal(f.form_id, joinedFormId, 'every joined field tagged with the joined form_id');
+  }
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV: every gk-multiple-forms/* ability advertises a next_steps annotation', async () => {
+  if (mfvSkip()) return;
+  const { data: catalog } = await gvClient.httpClient.request({
+    method:  'GET',
+    baseURL: gvClient.baseUrl,
+    url:     '/wp-json/wp-abilities/v1/abilities',
+  });
+  const ours = catalog.filter((a) => typeof a?.name === 'string' && a.name.startsWith('gk-multiple-forms/'));
+  TestAssert.isTrue(ours.length >= 3, 'at least three MFV abilities registered');
+  for (const ab of ours) {
+    const ns = ab?.meta?.annotations?.next_steps;
+    TestAssert.isTrue(Array.isArray(ns) && ns.length > 0, `${ab.name} advertises next_steps`);
+  }
+});
+
+// --------------------------------------------------------------------
+// DEEP Multi-Form authoring stress — mixes fields from both the primary
+// and joined forms into the same View areas, the way a real
+// multi-form authoring flow does. Verifies the field tree records
+// each slot's source `form_id` correctly so renderers hydrate against
+// the right form / field collision space.
+// --------------------------------------------------------------------
+
+suite.test('MFV deep: field slots from primary AND joined forms coexist in one area', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv mixed fields');
+
+  // Mint the joined form with field IDs that would COLLIDE with the
+  // primary if disambiguation were broken: both forms have id=1 + id=2.
+  const joinedFormId = await mintSecondaryForm('mixed-fields');
+
+  // Wire the join so the View can pull from both forms.
+  await h.gv_apply_joins({
+    id:    viewId,
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+  });
+
+  // Layout Builder needs a row before fields can land.
+  await h.gv_add_grid_row({
+    id:           viewId,
+    surface:      'fields',
+    row_uid:      'mixed_row',
+    type:         '100',
+    template_ids: ['gravityview-layout-builder'],
+  });
+
+  // Discover fields available from both forms.
+  const avail = await h.gv_list_available_fields({ id: viewId, zone: 'directory' });
+  TestAssert.isTrue(Array.isArray(avail.form_fields), 'primary form_fields surfaced');
+  TestAssert.isTrue(Array.isArray(avail.joined_form_fields), 'joined_form_fields surfaced');
+  TestAssert.isTrue(avail.form_fields.length > 0, 'primary form has fields');
+  TestAssert.isTrue(avail.joined_form_fields.length > 0, 'joined form has fields');
+
+  // Every joined field must carry the joined form_id tag — not the primary.
+  for (const f of avail.joined_form_fields) {
+    TestAssert.equal(f.form_id, joinedFormId, 'joined field tagged with joined form_id');
+  }
+
+  // Pick one numeric field id from each form. Using `1` from both
+  // intentionally — that's the collision case real Multi-Form
+  // configurations hit.
+  const primaryFieldId = avail.form_fields[0]?.id;
+  const joinedFieldId  = avail.joined_form_fields[0]?.id;
+  TestAssert.isTrue(!!primaryFieldId, 'have a primary field id');
+  TestAssert.isTrue(!!joinedFieldId, 'have a joined field id');
+
+  // Add a slot from the PRIMARY form into the View's grid area.
+  const primarySlot = await h.gv_add_view_field({
+    id:       viewId,
+    area:     'directory_mixed_row-1',
+    field_id: primaryFieldId,
+    label:    'Primary Field',
+    form_id:  Number(formId),
+  });
+  TestAssert.isTrue(!!primarySlot.slot, 'primary slot created');
+
+  // Add a slot from the JOINED form into the SAME area.
+  const joinedSlot = await h.gv_add_view_field({
+    id:       viewId,
+    area:     'directory_mixed_row-1',
+    field_id: joinedFieldId,
+    label:    'Joined Field',
+    form_id:  joinedFormId,
+  });
+  TestAssert.isTrue(!!joinedSlot.slot, 'joined slot created');
+  TestAssert.isTrue(joinedSlot.slot !== primarySlot.slot, 'unique slot UID despite same field_id');
+
+  // Verify both slots are persisted in the field tree under the same area.
+  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  const area = cfg.fields?.['directory_mixed_row-1'];
+  TestAssert.isTrue(typeof area === 'object' && area !== null, 'area exists in field tree');
+  TestAssert.isTrue(primarySlot.slot in area, 'primary slot in tree');
+  TestAssert.isTrue(joinedSlot.slot in area, 'joined slot in tree');
+
+  // The View's joins are still intact after the field placements.
+  const cfgJoins = cfg.joins;
+  TestAssert.isTrue(Array.isArray(cfgJoins) && cfgJoins.length === 1, 'join survived field placements');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV deep: 3-form join + fields from each form land in distinct areas', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv 3-form');
+  const orderForm   = await mintSecondaryForm('orders');
+  const addressForm = await mintSecondaryForm('addresses');
+
+  // Triple-form join: primary ← orders ← addresses (cascading).
+  await h.gv_apply_joins({
+    id: viewId,
+    joins: [
+      [Number(formId),  '1', orderForm,    '1'],
+      [orderForm,       '2', addressForm,  '2'],
+    ],
+  });
+
+  // List joins includes both rows + inflates labels for all three forms.
+  const list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 2);
+  const labels = list.joins.map((j) => `${j.details.base_form_label}/${j.details.join_form_label}`);
+  TestAssert.isTrue(labels.length === 2, 'two label pairs');
+  TestAssert.isTrue(labels.every((l) => l.includes('/')), 'every join surfaces both form labels');
+
+  // available-fields now spans all three forms.
+  const avail = await h.gv_list_available_fields({ id: viewId });
+  const joinedFormIds = new Set(avail.joined_form_fields.map((f) => f.form_id));
+  TestAssert.isTrue(joinedFormIds.has(orderForm), 'orders form_id present in joined_form_fields');
+  TestAssert.isTrue(joinedFormIds.has(addressForm), 'addresses form_id present in joined_form_fields');
+
+  // Place one field from each form into 3 different rows so the View
+  // is genuinely cross-form authored.
+  for (const rowUid of ['r_orders', 'r_addr']) {
+    await h.gv_add_grid_row({
+      id:           viewId,
+      surface:      'fields',
+      row_uid:      rowUid,
+      type:         '100',
+      template_ids: ['gravityview-layout-builder'],
+    });
+  }
+
+  await h.gv_add_view_field({
+    id:       viewId,
+    area:     'directory_r_orders-1',
+    field_id: avail.joined_form_fields.find((f) => f.form_id === orderForm)?.id,
+    label:    'Order Field',
+    form_id:  orderForm,
+  });
+  await h.gv_add_view_field({
+    id:       viewId,
+    area:     'directory_r_addr-1',
+    field_id: avail.joined_form_fields.find((f) => f.form_id === addressForm)?.id,
+    label:    'Address Field',
+    form_id:  addressForm,
+  });
+
+  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  TestAssert.isTrue(Object.keys(cfg.fields?.['directory_r_orders-1'] ?? {}).length === 1, 'orders row has 1 slot');
+  TestAssert.isTrue(Object.keys(cfg.fields?.['directory_r_addr-1'] ?? {}).length === 1, 'address row has 1 slot');
+
+  await gfClient.deleteForm(orderForm).catch(() => {});
+  await gfClient.deleteForm(addressForm).catch(() => {});
+});
+
+suite.test('MFV deep: apply-view-config bulk — joins + fields from both forms in one call', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv bulk mixed');
+  const joinedFormId = await mintSecondaryForm('bulk');
+
+  // First materialise a row to host the slots.
+  await h.gv_add_grid_row({
+    id:           viewId,
+    surface:      'fields',
+    row_uid:      'bulk_row',
+    type:         '100',
+    template_ids: ['gravityview-layout-builder'],
+  });
+
+  // Bulk write everything in one shot: joins + fields tree spanning both forms.
+  await h.gv_apply_view_config({
+    id:    viewId,
+    mode:  'merge',
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+    fields: {
+      'directory_bulk_row-1': [
+        { field_id: '1',           label: 'From Primary',  form_id: Number(formId) },
+        { field_id: '2',           label: 'Email Primary', form_id: Number(formId) },
+        { field_id: '1',           label: 'From Joined',   form_id: joinedFormId },
+        { field_id: '3',           label: 'Amount Joined', form_id: joinedFormId },
+      ],
+    },
+  });
+
+  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  TestAssert.isTrue(Array.isArray(cfg.joins) && cfg.joins.length === 1, 'bulk wrote joins');
+  const slots = cfg.fields?.['directory_bulk_row-1'] ?? {};
+  TestAssert.equal(Object.keys(slots).length, 4, 'four slots in bulk_row-1');
+
+  // Verify that the View knows which slots came from which form.
+  const formIds = Object.values(slots).map((s) => Number(s.form_id ?? 0));
+  const primaryCount = formIds.filter((id) => id === Number(formId)).length;
+  const joinedCount  = formIds.filter((id) => id === joinedFormId).length;
+  TestAssert.isTrue(primaryCount >= 2, 'at least 2 slots from primary form');
+  TestAssert.isTrue(joinedCount  >= 2, 'at least 2 slots from joined form');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV deep: dry_run on mixed-form bulk apply does NOT persist any slot', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv dry mixed');
+  const joinedFormId = await mintSecondaryForm('dry-mixed');
+
+  await h.gv_add_grid_row({
+    id:           viewId,
+    surface:      'fields',
+    row_uid:      'dry_row',
+    type:         '100',
+    template_ids: ['gravityview-layout-builder'],
+  });
+
+  const dry = await h.gv_apply_view_config({
+    id:    viewId,
+    mode:  'merge',
+    dry_run: true,
+    joins: [[Number(formId), '1', joinedFormId, '1']],
+    fields: {
+      'directory_dry_row-1': [
+        { field_id: '1', label: 'Primary',  form_id: Number(formId) },
+        { field_id: '1', label: 'Joined',   form_id: joinedFormId },
+      ],
+    },
+  });
+  TestAssert.equal(dry.dry_run, true);
+
+  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  TestAssert.isTrue(!cfg.joins || cfg.joins.length === 0, 'no joins persisted on dry-run');
+  const slots = cfg.fields?.['directory_dry_row-1'] ?? {};
+  TestAssert.equal(Object.keys(slots).length, 0, 'no slots persisted on dry-run');
+
+  await gfClient.deleteForm(joinedFormId).catch(() => {});
+});
+
+suite.test('MFV deep: apply-joins clears + replaces, list-joins reflects each step', async () => {
+  if (mfvSkip()) return;
+  const viewId = await mintView('mfv replace cycle');
+  const f1 = await mintSecondaryForm('repl1');
+  const f2 = await mintSecondaryForm('repl2');
+
+  // Round 1: 2 joins
+  await h.gv_apply_joins({
+    id: viewId,
+    joins: [
+      [Number(formId), '1', f1, '1'],
+      [Number(formId), '2', f2, '2'],
+    ],
+  });
+  let list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 2);
+
+  // Round 2: replace with a single join to f2 only
+  await h.gv_apply_joins({
+    id: viewId,
+    joins: [[Number(formId), 'entry_id', f2, '3']],
+  });
+  list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 1);
+  TestAssert.equal(list.joins[0].join_form_id, f2);
+
+  // Round 3: clear
+  await h.gv_apply_joins({ id: viewId, joins: [] });
+  list = await h.gv_list_joins({ id: viewId });
+  TestAssert.equal(list.count, 0);
+
+  // get-view-config reflects the cleared state.
+  const cfg = await h.gv_get_view_config({ id: viewId, include: ['joins'], compact: false });
+  TestAssert.isTrue(!cfg.joins || cfg.joins.length === 0, 'cleared joins reflected in get-view-config');
+
+  await gfClient.deleteForm(f1).catch(() => {});
+  await gfClient.deleteForm(f2).catch(() => {});
+});
+
 suite.run();

@@ -57,6 +57,19 @@ export function methodForAbility(annotations = {}) {
 }
 
 /**
+ * Default ability namespaces surfaced as MCP tools. Both `gk-gravityview/*`
+ * (core GravityView abilities) and `gk-multiple-forms/*` (the Multiple
+ * Forms add-on's join surface) share the `gv_*` MCP prefix because
+ * they're conceptually one product family from the agent's POV. Slugs
+ * are unique across both namespaces (verified manually); a collision
+ * would silently shadow one with the other and is worth detecting if
+ * we add a third namespace.
+ *
+ * @type {string[]}
+ */
+export const DEFAULT_ABILITY_NAMESPACES = ['gk-gravityview', 'gk-multiple-forms'];
+
+/**
  * Fetch the abilities catalog + build MCP tool definitions and
  * handlers in a single pass.
  *
@@ -65,11 +78,12 @@ export function methodForAbility(annotations = {}) {
  *
  * @param {object} gvClient  GravityViewClient instance — uses its
  *                           authenticated httpClient.
- * @param {string} [namespace='gk-gravityview'] Filter abilities by
- *                                              namespace prefix.
+ * @param {string|string[]} [namespaces=DEFAULT_ABILITY_NAMESPACES]
+ *   Filter abilities by namespace prefix. Accepts a single string for
+ *   backward compatibility or an array.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number }>}
  */
-export async function loadAbilitiesAsTools(gvClient, namespace = 'gk-gravityview') {
+export async function loadAbilitiesAsTools(gvClient, namespaces = DEFAULT_ABILITY_NAMESPACES) {
   // gvClient.httpClient is namespaced to /gravityview/v1. The
   // Abilities API lives at a sibling namespace (/wp-abilities/v1),
   // so we override baseURL per-request to the WP root rather than
@@ -83,7 +97,10 @@ export async function loadAbilitiesAsTools(gvClient, namespace = 'gk-gravityview
     throw new Error('Unexpected Abilities API catalog shape — expected array.');
   }
 
-  const ours = data.filter((a) => typeof a?.name === 'string' && a.name.startsWith(namespace + '/'));
+  const nsList = Array.isArray(namespaces) ? namespaces : [namespaces];
+  const ours = data.filter(
+    (a) => typeof a?.name === 'string' && nsList.some((ns) => a.name.startsWith(ns + '/')),
+  );
 
   const definitions = [];
   const handlers = {};
