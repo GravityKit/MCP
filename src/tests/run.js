@@ -16,6 +16,7 @@ import validationTests from './validation.test.js';
 import sanitizeTests from './sanitize.test.js';
 import bugFixesTests from './bug-fixes.test.js';
 import mutexTests from './mutex.test.js';
+import abilitiesLoaderTests from './abilities-loader.test.js';
 
 // Test suites to run
 const testSuites = [
@@ -29,7 +30,8 @@ const testSuites = [
   validationTests,
   sanitizeTests,
   mutexTests,
-  bugFixesTests
+  bugFixesTests,
+  abilitiesLoaderTests
 ];
 
 // Test statistics

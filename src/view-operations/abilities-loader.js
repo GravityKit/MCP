@@ -57,6 +57,98 @@ export function methodForAbility(annotations = {}) {
 }
 
 /**
+ * Coerce an ability's `input_schema` payload into a JSON Schema object the
+ * MCP runtime can validate (`{ type: "object", properties: {...} }`).
+ *
+ * Two shapes from the WordPress Abilities API need normalising before they
+ * hit MCP's Zod validator:
+ *
+ *   1. `input_schema` is itself an array — happens when the PHP side returns
+ *      a list of parameter descriptors instead of a schema object. We wrap
+ *      it as `{ type: 'object', properties: {<derived>}, required: [<derived>] }`,
+ *      pulling each entry's `name` / `slug` / `key` as the property key when
+ *      present. Anonymous entries fall back to `arg<N>`.
+ *   2. `input_schema.properties` is an array (almost always `[]` from
+ *      PHP serialising an empty associative array as a JSON list). MCP
+ *      expects `properties` to be a `Record<string, JSONSchema>` — we
+ *      coerce empty arrays to `{}` and non-empty arrays via the same
+ *      per-entry key derivation as case 1.
+ *
+ * Returns a fresh object — never mutates the input.
+ *
+ * @param {unknown} raw  The `input_schema` value as received from the API.
+ * @returns {{ type: 'object', properties: object, required?: string[], additionalProperties?: boolean }}
+ */
+export function normalizeInputSchema(raw) {
+  // Missing / falsy → open object so the tool is still callable.
+  if (raw === null || raw === undefined || raw === false) {
+    return { type: 'object', properties: {}, additionalProperties: true };
+  }
+
+  // Shape 1: top-level array of parameter descriptors.
+  if (Array.isArray(raw)) {
+    const { properties, required } = arrayToProperties(raw);
+    const out = { type: 'object', properties };
+    if (required.length) out.required = required;
+    return out;
+  }
+
+  // Anything that isn't an object at this point is unusable — fall back
+  // to an open object rather than letting Zod blow up downstream.
+  if (typeof raw !== 'object') {
+    return { type: 'object', properties: {}, additionalProperties: true };
+  }
+
+  // Shape 2: object whose `properties` is an array (PHP-serialised empty
+  // assoc array, or a list of descriptors). Normalise it but keep every
+  // other key the upstream provided (e.g. `required`, `additionalProperties`,
+  // `description`, custom `$schema` extensions).
+  const out = { ...raw };
+  if (out.type !== 'object') out.type = 'object';
+
+  if (Array.isArray(out.properties)) {
+    const { properties, required } = arrayToProperties(out.properties);
+    out.properties = properties;
+    if (required.length && !Array.isArray(out.required)) {
+      out.required = required;
+    }
+  } else if (out.properties === null || out.properties === undefined) {
+    out.properties = {};
+  } else if (typeof out.properties !== 'object') {
+    out.properties = {};
+  }
+
+  return out;
+}
+
+/**
+ * Convert a list of parameter descriptors into a `properties` map +
+ * `required` list. Each entry contributes one property; the key is
+ * derived from `name` / `slug` / `key` / `title` (in that order), or
+ * `arg<index>` for anonymous entries. The descriptor is copied as the
+ * value, with the chosen identifier key stripped so it doesn't double
+ * as both the map key and a redundant schema field. An entry's
+ * `required: true` (or string "true") lifts the property into the
+ * outer `required` array — JSON Schema requires it there, not per-prop.
+ */
+function arrayToProperties(arr) {
+  const properties = {};
+  const required = [];
+  arr.forEach((entry, i) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      // Non-object entries can't be expressed as a JSON Schema property;
+      // skip rather than fabricate a placeholder of unknown intent.
+      return;
+    }
+    const key = entry.name || entry.slug || entry.key || entry.title || `arg${i}`;
+    const { name: _n, slug: _s, key: _k, required: req, ...rest } = entry;
+    properties[key] = rest;
+    if (req === true || req === 'true') required.push(key);
+  });
+  return { properties, required };
+}
+
+/**
  * Default ability namespaces surfaced as MCP tools. Both `gk-gravityview/*`
  * (core GravityView abilities) and `gk-multiple-forms/*` (the Multiple
  * Forms add-on's join surface) share the `gv_*` MCP prefix because
@@ -109,13 +201,16 @@ export async function loadAbilitiesAsTools(gvClient, namespaces = DEFAULT_ABILIT
     const toolName = abilityNameToToolName(ability.name);
     const annotations = ability?.meta?.annotations || {};
 
-    // MCP tool definition. inputSchema defaults to an open object
-    // when the ability has no declared input — callers can still
-    // pass keys; the server will validate per its own schema.
+    // MCP tool definition. `normalizeInputSchema()` guarantees the
+    // shape MCP's Zod validator expects:
+    //   `{ type: 'object', properties: <Record<string,JSONSchema>>, … }`.
+    // Without it, abilities whose PHP serialisation produced an array
+    // (top-level or under `properties`) fail `tools/list` validation —
+    // see the helper's docblock for the two shapes we coerce.
     definitions.push({
       name: toolName,
       description: ability.description || ability.label || ability.name,
-      inputSchema: ability.input_schema || { type: 'object', properties: {}, additionalProperties: true },
+      inputSchema: normalizeInputSchema(ability.input_schema),
     });
 
     // Closure captures the ability name + method so the dispatcher
