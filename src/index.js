@@ -22,8 +22,8 @@ import FieldAwareValidator from './config/field-validation.js';
 import logger from './utils/logger.js';
 import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
-import { GravityViewClient } from './gravityview-client.js';
-import { loadAbilitiesAsTools } from './view-operations/abilities-loader.js';
+import { WordPressClient } from './wp-client.js';
+import { loadAbilitiesAsTools } from './abilities/loader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,7 +52,7 @@ const server = new Server(
 let gravityFormsClient = null;
 let fieldOperations = null;
 let fieldValidator = null;
-let gravityViewClient = null;
+let wpClient = null;
 // Auto-generated from the WordPress Abilities API (Foundation catalog
 // first, WP core fallback). Populated by initializeClient(). This is
 // the ONLY source of gv_* tools — when no catalog is reachable (older
@@ -89,15 +89,15 @@ async function initializeClient() {
     logger.info('✅ GravityKit MCP initialized successfully');
     logger.info('✅ Field operations infrastructure initialized');
 
-    // GravityView Inspector client — separate WP REST namespace
-    // (`/wp-json/gravityview/v1/*`) so the credentials and base
-    // URL are resolved independently of the GF REST endpoint. The
+    // WordPress client — the authenticated transport to the WP root
+    // (Foundation catalog + WP core Abilities API). Credentials and
+    // base URL are resolved independently of the GF REST endpoint. The
     // constructor allows credential fallback to GRAVITY_FORMS_*
     // env vars so single-WP-install setups don't need to mint
     // two separate app passwords.
     try {
-      gravityViewClient = new GravityViewClient(process.env);
-      logger.info('✅ GravityView client initialized — loading gv_* abilities');
+      wpClient = new WordPressClient(process.env);
+      logger.info('✅ WordPress client initialized — loading GravityKit abilities');
 
       // Fire-and-forget: kick off the abilities catalog fetch in the
       // background so MCP startup is fast. ListTools awaits up to 2s
@@ -109,8 +109,8 @@ async function initializeClient() {
     } catch (gvError) {
       // Don't fail the whole MCP if GravityView credentials are
       // missing — gf_* tools still work standalone.
-      logger.warn(`⚠️  GravityView client unavailable: ${gvError.message}`);
-      gravityViewClient = null;
+      logger.warn(`⚠️  WordPress client unavailable: ${gvError.message}`);
+      wpClient = null;
       abilityToolDefinitions = null;
       abilityToolHandlers = null;
     }
@@ -141,7 +141,7 @@ async function initializeClient() {
  *                                     after the timeout fires.
  */
 async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
-  if (!gravityViewClient) return;
+  if (!wpClient) return;
   if (force) {
     abilityToolDefinitions = null;
     abilityToolHandlers = null;
@@ -149,7 +149,7 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
   }
   if (abilityToolDefinitions) return;
   if (!abilitiesLoadPromise) {
-    abilitiesLoadPromise = loadAbilitiesAsTools(gravityViewClient)
+    abilitiesLoadPromise = loadAbilitiesAsTools(wpClient)
       .then(({ definitions, handlers, count, source }) => {
         abilityToolDefinitions = definitions;
         abilityToolHandlers = handlers;
@@ -230,7 +230,7 @@ function wrapHandler(handler, params = {}) {
 
 /**
  * Variant of wrapHandler for gv_* tools. Differs in two ways:
- *   - Checks gravityViewClient (not gravityFormsClient).
+ *   - Checks wpClient (not gravityFormsClient).
  *   - Surfaces the inspector REST envelope (`{ code, message, data }`)
  *     so the agent sees `gv_rest_invalid_template` etc. instead of a
  *     generic "Request failed with status code 400". The inspector's
@@ -238,7 +238,7 @@ function wrapHandler(handler, params = {}) {
  */
 function wrapViewHandler(handler, params = {}) {
   return async () => {
-    if (!gravityViewClient) {
+    if (!wpClient) {
       return createErrorResponse('GravityView client not initialized');
     }
     try {
@@ -831,9 +831,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // (re)fetched.
     default:
       if (name === 'gv_reload_abilities') {
-        if (!gravityViewClient) {
+        if (!wpClient) {
           return createErrorResponse(
-            'GravityView client not initialized. Set GRAVITYVIEW_BASE_URL + GRAVITYVIEW_WP_USERNAME + GRAVITYVIEW_WP_APP_PASSWORD in .env (or reuse the GRAVITY_FORMS_* credentials).'
+            'WordPress client not initialized. Set GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD in .env (or reuse the GRAVITY_FORMS_* credentials).'
           );
         }
         const before = abilityToolDefinitions?.length ?? 0;
@@ -854,9 +854,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       if (typeof name === 'string' && name.startsWith('gv_')) {
-        if (!gravityViewClient) {
+        if (!wpClient) {
           return createErrorResponse(
-            'GravityView client not initialized. Set GRAVITYVIEW_BASE_URL + GRAVITYVIEW_WP_USERNAME + GRAVITYVIEW_WP_APP_PASSWORD in .env (or reuse GRAVITY_FORMS_BASE_URL / GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET when the same WP install hosts both surfaces).'
+            'WordPress client not initialized. Set GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD in .env (or reuse GRAVITY_FORMS_BASE_URL / GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET when the same WP install hosts both surfaces).'
           );
         }
         // Self-heal: every gv_* call retries the abilities load if a

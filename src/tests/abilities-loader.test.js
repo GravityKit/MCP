@@ -15,7 +15,7 @@ import {
   methodForAbility,
   FOUNDATION_CATALOG_ROUTE,
   CORE_ABILITIES_ROUTE,
-} from '../view-operations/abilities-loader.js';
+} from '../abilities/loader.js';
 
 const suite = new TestRunner('Abilities Loader Tests');
 

@@ -7,8 +7,8 @@
  * mode replace/merge, area-key URL encoding).
  */
 
-import { GravityViewClient } from '../gravityview-client.js';
-import { ViewValidator } from '../view-operations/view-validator.js';
+import { GravityViewInspectorClient } from '../gravityview/inspector-client.js';
+import { ViewValidator } from '../gravityview/view-validator.js';
 import {
   TestRunner,
   TestAssert,
@@ -24,11 +24,11 @@ let mockHttpClient;
 let testEnv;
 
 suite.beforeEach(() => {
-  // GravityViewClient falls back to GRAVITY_FORMS_* creds, so the
+  // GravityViewInspectorClient falls back to GRAVITY_FORMS_* creds, so the
   // shared setupTestEnvironment values cover both surfaces.
   testEnv = setupTestEnvironment();
   mockHttpClient = new MockHttpClient();
-  client = new GravityViewClient(testEnv);
+  client = new GravityViewInspectorClient(testEnv);
   client.httpClient = mockHttpClient; // bypass real network
 });
 
@@ -37,21 +37,21 @@ suite.beforeEach(() => {
 // ====================================================================
 
 suite.test('Constructor: throws without a base URL', () => {
-  TestAssert.throws(() => new GravityViewClient({}), 'GRAVITYVIEW_BASE_URL');
+  TestAssert.throws(() => new GravityViewInspectorClient({}), 'GRAVITYKIT_WP_URL');
 });
 
 suite.test('Constructor: throws without credentials', () => {
   TestAssert.throws(
-    () => new GravityViewClient({ GRAVITYVIEW_BASE_URL: 'https://example.com' }),
+    () => new GravityViewInspectorClient({ GRAVITYKIT_WP_URL: 'https://example.com' }),
     'WordPress credentials'
   );
 });
 
 suite.test('Constructor: builds Basic auth header from WP creds', () => {
-  const c = new GravityViewClient({
-    GRAVITYVIEW_BASE_URL: 'https://example.com',
-    GRAVITYVIEW_WP_USERNAME: 'admin',
-    GRAVITYVIEW_WP_APP_PASSWORD: 'abc def ghi jkl',
+  const c = new GravityViewInspectorClient({
+    GRAVITYKIT_WP_URL: 'https://example.com',
+    GRAVITYKIT_WP_USERNAME: 'admin',
+    GRAVITYKIT_WP_APP_PASSWORD: 'abc def ghi jkl',
   });
   TestAssert.equal(
     c.basicAuth,
@@ -60,7 +60,7 @@ suite.test('Constructor: builds Basic auth header from WP creds', () => {
 });
 
 suite.test('Constructor: falls back to GRAVITY_FORMS_CONSUMER_KEY/SECRET', () => {
-  const c = new GravityViewClient({
+  const c = new GravityViewInspectorClient({
     GRAVITY_FORMS_BASE_URL: 'https://example.com',
     GRAVITY_FORMS_CONSUMER_KEY: 'fk',
     GRAVITY_FORMS_CONSUMER_SECRET: 'fs',

@@ -36,8 +36,8 @@
  * provides WP credentials + a base URL.
  *
  * Required env (any one set is enough):
- *   - GRAVITYVIEW_BASE_URL + GRAVITYVIEW_WP_USERNAME +
- *     GRAVITYVIEW_WP_APP_PASSWORD
+ *   - GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME +
+ *     GRAVITYKIT_WP_APP_PASSWORD
  *   - WORDPRESS_LOCAL_DEV_TEST_URL +
  *     WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER +
  *     WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD
@@ -58,9 +58,9 @@ import dotenv from 'dotenv';
 import fs from 'node:fs';
 import path from 'node:path';
 import GravityFormsClient from '../gravity-forms-client.js';
-import { GravityViewClient } from '../gravityview-client.js';
-import { ViewValidator } from '../view-operations/view-validator.js';
-import { loadAbilitiesAsTools } from '../view-operations/abilities-loader.js';
+import { GravityViewInspectorClient } from '../gravityview/inspector-client.js';
+import { ViewValidator } from '../gravityview/view-validator.js';
+import { loadAbilitiesAsTools } from '../abilities/loader.js';
 import { TestRunner, TestAssert } from './helpers.js';
 
 dotenv.config();
@@ -72,24 +72,24 @@ const suite = new TestRunner('GravityView REST stress tests (live)');
 // Skip when no creds — keeps the unit-test job green on CI runners
 // without a backing WP install.
 const baseUrl =
-  process.env.GRAVITYVIEW_BASE_URL ||
+  process.env.GRAVITYKIT_WP_URL ||
   process.env.WORDPRESS_LOCAL_DEV_TEST_URL ||
   process.env.GRAVITY_FORMS_BASE_URL ||
   '';
 const wpUser =
-  process.env.GRAVITYVIEW_WP_USERNAME ||
+  process.env.GRAVITYKIT_WP_USERNAME ||
   process.env.WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER ||
   process.env.WP_USERNAME ||
   '';
 const wpPass =
-  process.env.GRAVITYVIEW_WP_APP_PASSWORD ||
+  process.env.GRAVITYKIT_WP_APP_PASSWORD ||
   process.env.WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD ||
   process.env.WP_APP_PASSWORD ||
   '';
 
 const hasCreds = Boolean(baseUrl && wpUser && wpPass);
 if (!hasCreds) {
-  console.log('\n⚠️  Skipping GravityView stress tests — set GRAVITYVIEW_BASE_URL + GRAVITYVIEW_WP_USERNAME + GRAVITYVIEW_WP_APP_PASSWORD (or the WORDPRESS_LOCAL_DEV_TEST_* equivalents) to run.\n');
+  console.log('\n⚠️  Skipping GravityView stress tests — set GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD (or the WORDPRESS_LOCAL_DEV_TEST_* equivalents) to run.\n');
   suite.skip = true;
 }
 
@@ -101,7 +101,7 @@ let fieldIds = {};     // { name, email, address, date, fileupload, textarea, ch
 let mintedViewIds = []; // tracked for end-of-suite cleanup
 
 // Abilities API tool handlers — auto-generated from
-// `/wp-abilities/v1/abilities`. Replaces the legacy GravityViewClient
+// `/wp-abilities/v1/abilities`. Replaces the legacy GravityViewInspectorClient
 // method calls now that the inspector lives entirely on the
 // Abilities API surface (`/wp-json/wp-abilities/v1/abilities/gk-gravityview/{name}/run`).
 // `h` is a short alias used throughout the test bodies — every old
@@ -129,13 +129,13 @@ suite.beforeAll(async () => {
   if (suite.skip) return;
 
   const clientEnv = {
-    GRAVITYVIEW_BASE_URL: baseUrl,
-    GRAVITYVIEW_WP_USERNAME: wpUser,
-    GRAVITYVIEW_WP_APP_PASSWORD: wpPass,
+    GRAVITYKIT_WP_URL: baseUrl,
+    GRAVITYKIT_WP_USERNAME: wpUser,
+    GRAVITYKIT_WP_APP_PASSWORD: wpPass,
     GRAVITYVIEW_ALLOW_DELETE: 'true',
     MCP_ALLOW_SELF_SIGNED_CERTS: allowSelfSigned ? 'true' : 'false',
   };
-  gvClient = new GravityViewClient(clientEnv);
+  gvClient = new GravityViewInspectorClient(clientEnv);
   validator = new ViewValidator(gvClient);
 
   // Load the abilities catalog → builds gv_* tool handlers that
@@ -229,7 +229,7 @@ suite.afterAll(async () => {
   if (!cleanup) return;
   // Tear down minted views via gv_apply_view_config replace + empty
   // tree (clears placements), then the underlying WP posts via the
-  // wp/v2 endpoint. GravityViewClient doesn't expose a delete-view
+  // wp/v2 endpoint. GravityViewInspectorClient doesn't expose a delete-view
   // method (intentional — destructive), so hit the WP REST surface
   // directly with the same basic-auth headers.
   for (const viewId of mintedViewIds) {
@@ -2634,7 +2634,7 @@ suite.test('Safety: abilities-loader does NOT add a client-side destructive gate
   // ability registry, so the env-var ratchet served no remaining
   // purpose. Status-level removal still flows through gv_set_view_status
   // and is gated server-side by the WP `delete_post` capability.
-  const { loadAbilitiesAsTools } = await import('../view-operations/abilities-loader.js');
+  const { loadAbilitiesAsTools } = await import('../abilities/loader.js');
   const { handlers } = await loadAbilitiesAsTools(gvClient);
   let msg = '';
   try {

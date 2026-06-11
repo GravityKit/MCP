@@ -159,17 +159,17 @@ function arrayToProperties(arr) {
  * unreachable — the caller leaves gv_* tools unregistered and retries
  * on a later call.
  *
- * @param {object} gvClient  GravityViewClient instance — uses its
+ * @param {object} wpClient  WordPressClient instance — uses its
  *                           authenticated httpClient.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(gvClient) {
+export async function loadAbilitiesAsTools(wpClient) {
   try {
-    const items = await fetchFoundationCatalogItems(gvClient);
+    const items = await fetchFoundationCatalogItems(wpClient);
     const entries = catalogItemsToEntries(items);
 
     if (entries.length > 0) {
-      return buildTools(gvClient, entries, 'foundation-catalog');
+      return buildTools(wpClient, entries, 'foundation-catalog');
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -177,8 +177,8 @@ export async function loadAbilitiesAsTools(gvClient) {
     logger.warn(`Foundation catalog unavailable (${err.message}) — falling back to WP core catalog at ${CORE_ABILITIES_ROUTE}`);
   }
 
-  const entries = await fetchCoreEntries(gvClient);
-  return buildTools(gvClient, entries, 'wp-core');
+  const entries = await fetchCoreEntries(wpClient);
+  return buildTools(wpClient, entries, 'wp-core');
 }
 
 /**
@@ -188,10 +188,10 @@ export async function loadAbilitiesAsTools(gvClient) {
  * `X-WP-TotalPages` response header. MAX_PAGES is a runaway guard, not
  * a coverage cap — at 100 items/page it allows 2,000 abilities.
  *
- * @param {object} gvClient GravityViewClient instance.
+ * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<object[]>} Catalog items (Manager::to_rest_item() shape).
  */
-async function fetchFoundationCatalogItems(gvClient) {
+async function fetchFoundationCatalogItems(wpClient) {
   const PER_PAGE = 100;
   const MAX_PAGES = 20;
   const items = [];
@@ -200,12 +200,12 @@ async function fetchFoundationCatalogItems(gvClient) {
   let totalPages = 1;
 
   do {
-    // gvClient.httpClient is namespaced to /gravityview/v1 — override
+    // wpClient.httpClient is namespaced to /gravityview/v1 — override
     // baseURL per-request so the URL resolves at the WP root (same
     // auth + TLS config, no second axios instance).
-    const response = await gvClient.httpClient.request({
+    const response = await wpClient.httpClient.request({
       method:  'GET',
-      baseURL: gvClient.baseUrl,
+      baseURL: wpClient.baseUrl,
       url:     FOUNDATION_CATALOG_ROUTE,
       params:  { per_page: PER_PAGE, page },
     });
@@ -269,13 +269,13 @@ function catalogItemsToEntries(items) {
  * Throws when no usable abilities are found so the caller's state stays
  * null (not sticky-empty) and the per-call self-heal keeps retrying.
  *
- * @param {object} gvClient GravityViewClient instance.
+ * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>>}
  */
-async function fetchCoreEntries(gvClient) {
-  const { data } = await gvClient.httpClient.request({
+async function fetchCoreEntries(wpClient) {
+  const { data } = await wpClient.httpClient.request({
     method:  'GET',
-    baseURL: gvClient.baseUrl,
+    baseURL: wpClient.baseUrl,
     url:     CORE_ABILITIES_ROUTE,
   });
 
@@ -320,12 +320,12 @@ async function fetchCoreEntries(gvClient) {
  * first wins; later collisions are logged and skipped — never silently
  * shadowed.
  *
- * @param {object} gvClient GravityViewClient instance.
+ * @param {object} wpClient WordPressClient instance.
  * @param {Array}  entries  Normalized tool entries.
  * @param {string} source   Which catalog produced the entries.
  * @returns {{ definitions: object[], handlers: Record<string, Function>, count: number, source: string }}
  */
-function buildTools(gvClient, entries, source) {
+function buildTools(wpClient, entries, source) {
   const definitions = [];
   const handlers = {};
   const claimedBy = new Map();
@@ -357,7 +357,7 @@ function buildTools(gvClient, entries, source) {
     // per-ability enable/disable toggles.
     const abilityName = entry.abilityName;
     const method      = methodForAbility(entry.annotations);
-    handlers[entry.toolName] = async (params) => executeAbility(gvClient, abilityName, method, params || {});
+    handlers[entry.toolName] = async (params) => executeAbility(wpClient, abilityName, method, params || {});
   }
 
   return { definitions, handlers, count: definitions.length, source };
@@ -396,10 +396,10 @@ function walkInputToBracketedParams(value, key, out) {
   out[key] = value;
 }
 
-async function executeAbility(gvClient, abilityName, method, input) {
-  // Cross-namespace request — override baseURL away from
-  // /gravityview/v1 so the URL resolves to /wp-abilities/v1.
-  const baseURL = gvClient.baseUrl;
+async function executeAbility(wpClient, abilityName, method, input) {
+  // Explicit baseURL so the URL resolves at the WP root regardless
+  // of how the client instance is namespaced.
+  const baseURL = wpClient.baseUrl;
   const url     = `/wp-json/wp-abilities/v1/abilities/${abilityName}/run`;
 
   if (method === 'GET' || method === 'DELETE') {
@@ -415,12 +415,12 @@ async function executeAbility(gvClient, abilityName, method, input) {
       walkInputToBracketedParams(input, 'input', params);
       config.params = params;
     }
-    const { data } = await gvClient.httpClient.request(config);
+    const { data } = await wpClient.httpClient.request(config);
     return data;
   }
 
   // POST. The Abilities API wraps input under an `input` key in the body.
-  const { data } = await gvClient.httpClient.request({
+  const { data } = await wpClient.httpClient.request({
     method,
     baseURL,
     url,

@@ -11,8 +11,8 @@
  */
 
 import 'dotenv/config';
-import { GravityViewClient } from '/Users/zackkatz/Dropbox/MonoKit/MCPs/gravitymcp/src/gravityview-client.js';
-import { loadAbilitiesAsTools, methodForAbility } from '/Users/zackkatz/Dropbox/MonoKit/MCPs/gravitymcp/src/view-operations/abilities-loader.js';
+import { WordPressClient } from '/Users/zackkatz/Dropbox/MonoKit/MCPs/gravitymcp/src/wp-client.js';
+import { loadAbilitiesAsTools, methodForAbility } from '/Users/zackkatz/Dropbox/MonoKit/MCPs/gravitymcp/src/abilities/loader.js';
 
 const RESET   = '\x1b[0m';
 const DIM     = '\x1b[2m';
@@ -39,7 +39,7 @@ function ok(s) {
   console.log(`  ${GREEN}✓${RESET} ${s}`);
 }
 
-const client = new GravityViewClient(process.env);
+const client = new WordPressClient(process.env);
 
 // ──────────────────────────────────────────────────────────────────
 header('1. Discover the catalog (single network call)');
@@ -111,7 +111,7 @@ header('5. End-to-end round-trip: create → apply → read');
 // ──────────────────────────────────────────────────────────────────
 
 step('5a', 'gv_create_view — mint a fresh draft');
-const formId = Number(process.env.GRAVITYVIEW_DEMO_FORM_ID || 296);
+const formId = Number(process.env.GRAVITYKIT_DEMO_FORM_ID || 296);
 const created = await handlers.gv_create_view({
   title: `Abilities API demo · ${new Date().toISOString().slice(11, 19)}`,
   form_id: formId,

@@ -3,15 +3,15 @@
  *
  * Wraps the `/wp-json/gravityview/v1/...` endpoints exposed by the
  * GravityView plugin's Inspector route family (see
- * `src/REST/InspectorRoute.php` in the GravityView codebase).
+ * `src/REST/InspectorRoute.php` in the GravityView codebase). Those
+ * routes are registered ONLY when `DOING_GRAVITYVIEW_TESTS` is defined
+ * server-side — this client is the integration-test and demo harness,
+ * not a runtime dependency. Runtime gv_* tools come from the abilities
+ * loader (`src/abilities/loader.js`) riding the base WordPressClient.
  *
- * Authentication: WordPress Application Password via HTTP Basic Auth.
- * The same WP install hosts both the GF REST and the GravityView REST
- * surfaces, so when WP_USERNAME / WP_APP_PASSWORD aren't set we fall
- * back to GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET
- * (which in practice are usually a WP user + app password too — most
- * local-dev setups reuse them rather than minting two separate
- * credentials).
+ * Authentication, base-URL resolution, TLS, and timeouts come from
+ * WordPressClient (`src/wp-client.js`); this subclass mounts the
+ * gravityview/v1 namespace on top.
  *
  * Concurrency: every config write supports `If-Match: "<version>"`
  * for optimistic-concurrency. Reads return the version in the body
@@ -20,69 +20,19 @@
  * { ifMatch: 'auto' })` without juggling ETags by hand.
  */
 
-import axios from 'axios';
-import https from 'https';
-import logger from './utils/logger.js';
+import logger from '../utils/logger.js';
+import { WordPressClient } from '../wp-client.js';
 
-export class GravityViewClient {
+export class GravityViewInspectorClient extends WordPressClient {
   constructor(config) {
-    this.config = config || {};
+    super(config);
 
-    const baseUrl = this.resolveBaseUrl();
-    if (!baseUrl) {
-      throw new Error('GravityView client requires GRAVITYVIEW_BASE_URL or GRAVITY_FORMS_BASE_URL.');
-    }
-    if (!baseUrl.startsWith('https://') && !baseUrl.startsWith('http://')) {
-      throw new Error('GravityView base URL must start with http:// or https://');
-    }
-
-    this.baseUrl = baseUrl.replace(/\/$/, '');
     this.restNamespace = '/wp-json/gravityview/v1';
-
-    // Auth resolution order: canonical GRAVITYVIEW_* (prod-style) →
-    // WORDPRESS_LOCAL_DEV_TEST_* (the local dev.test admin creds; same
-    // values reused by any other MonoKit tool that hits the local
-    // install) → generic WP_USERNAME → GF MCP consumer key fallback.
-    // The descriptive local-dev names exist so this single admin
-    // credential isn't duplicated across every per-product env block.
-    const username = this.config.GRAVITYVIEW_WP_USERNAME
-      || this.config.WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER
-      || this.config.WP_USERNAME
-      || this.config.GRAVITY_FORMS_CONSUMER_KEY;
-    const password = this.config.GRAVITYVIEW_WP_APP_PASSWORD
-      || this.config.WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD
-      || this.config.WP_APP_PASSWORD
-      || this.config.GRAVITY_FORMS_CONSUMER_SECRET;
-    if (!username || !password) {
-      throw new Error('GravityView client requires WordPress credentials. Set GRAVITYVIEW_WP_USERNAME + GRAVITYVIEW_WP_APP_PASSWORD, or WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER + _ADMIN_PASSWORD, or reuse GRAVITY_FORMS_CONSUMER_KEY/SECRET.');
-    }
-    this.basicAuth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
-
-    const allowSelfSigned = (this.config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS || this.config.MCP_ALLOW_SELF_SIGNED_CERTS) === 'true';
-
-    this.httpClient = axios.create({
-      baseURL: `${this.baseUrl}${this.restNamespace}`,
-      timeout: parseInt(this.config.GRAVITYVIEW_TIMEOUT || this.config.GRAVITY_FORMS_TIMEOUT, 10) || 30000,
-      headers: {
-        'User-Agent': 'GravityKit-MCP/2.1.1 (gravityview)',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'Authorization': this.basicAuth,
-      },
-      httpsAgent: new https.Agent({ rejectUnauthorized: !allowSelfSigned }),
-    });
+    this.httpClient = this.createHttpClient(`${this.baseUrl}${this.restNamespace}`);
 
     // version cache keyed by view id — populated by every read so
     // callers can opt into automatic If-Match without a manual GET.
     this.versionCache = new Map();
-
-  }
-
-  resolveBaseUrl() {
-    return this.config.GRAVITYVIEW_BASE_URL
-      || this.config.WORDPRESS_LOCAL_DEV_TEST_URL
-      || this.config.GRAVITY_FORMS_BASE_URL
-      || '';
   }
 
   /**
@@ -160,7 +110,7 @@ export class GravityViewClient {
    * Canonical search-field input slugs. Used by the MCP validator
    * (and assertSearchInputType pre-flight) to reject typos.
    *
-   * Now delegates to the gk-gravityview/list-search-input-types
+   * Now delegates to the gk-gravityview/search-input-types-list
    * ability — the legacy `/gravityview/v1/search-fields/input-types`
    * route is gone post-Phase-5.
    */
@@ -168,7 +118,7 @@ export class GravityViewClient {
     const { data } = await this.httpClient.request({
       method:  'GET',
       baseURL: this.baseUrl,
-      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/list-search-input-types/run',
+      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/search-input-types-list/run',
     });
     return data;
   }
@@ -180,7 +130,7 @@ export class GravityViewClient {
 
   async getFieldTypeSchema({ field_type, template_id, context, input_type, form_id } = {}) {
     if (!field_type) throw new Error('field_type is required.');
-    // Delegate to the gk-gravityview/get-field-type-schema ability.
+    // Delegate to the gk-gravityview/field-type-schema-get ability.
     // Bracketed query params are how WP REST rebuilds an object from
     // a query string — `?input[field_type]=text&input[template_id]=...`.
     const params = {};
@@ -190,7 +140,7 @@ export class GravityViewClient {
     const { data } = await this.httpClient.request({
       method:  'GET',
       baseURL: this.baseUrl,
-      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/get-field-type-schema/run',
+      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/field-type-schema-get/run',
       params,
     });
     return data;
@@ -218,7 +168,7 @@ export class GravityViewClient {
     const { data } = await this.httpClient.request({
       method:  'GET',
       baseURL: this.baseUrl,
-      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/list-available-fields/run',
+      url:     '/wp-json/wp-abilities/v1/abilities/gk-gravityview/available-fields-get/run',
       params:  { 'input[id]': id },
     });
     return data;
@@ -651,4 +601,4 @@ function stripUndefined(obj) {
   return out;
 }
 
-export default GravityViewClient;
+export default GravityViewInspectorClient;
