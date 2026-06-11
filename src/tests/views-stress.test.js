@@ -105,7 +105,7 @@ let mintedViewIds = []; // tracked for end-of-suite cleanup
 // method calls now that the inspector lives entirely on the
 // Abilities API surface (`/wp-json/wp-abilities/v1/abilities/gk-gravityview/{name}/run`).
 // `h` is a short alias used throughout the test bodies — every old
-// `h.gv_apply_view_config({...})` is now `h.gv_apply_view_config({...})`.
+// `h.gv_view_config_apply({...})` is now `h.gv_view_config_apply({...})`.
 let h = null;
 const cleanup = process.env.GRAVITYVIEW_TEST_CLEANUP !== 'false';
 const allowSelfSigned = process.env.MCP_ALLOW_SELF_SIGNED_CERTS === 'true';
@@ -227,7 +227,7 @@ suite.afterAll(async () => {
   }
 
   if (!cleanup) return;
-  // Tear down minted views via gv_apply_view_config replace + empty
+  // Tear down minted views via gv_view_config_apply replace + empty
   // tree (clears placements), then the underlying WP posts via the
   // wp/v2 endpoint. GravityViewInspectorClient doesn't expose a delete-view
   // method (intentional — destructive), so hit the WP REST surface
@@ -252,7 +252,7 @@ suite.afterAll(async () => {
 
 /** Mint a Layout Builder view + register it for cleanup. */
 async function mintView(suffix) {
-  const view = await h.gv_create_view({
+  const view = await h.gv_view_create({
     title: `[stress] ${suffix} ${Date.now()}`,
     form_id: Number(formId),
     template_id: 'gravityview-layout-builder',
@@ -265,14 +265,14 @@ async function mintView(suffix) {
 
 /** Apply one slot's settings + return the stored shape via GET /config. */
 async function roundTripSlot(viewId, area, slot, settings) {
-  const apply = await h.gv_apply_view_config({
+  const apply = await h.gv_view_config_apply({
     id:     viewId,
     fields: { [area]: [{ ...settings, slot }] },
     mode:   'merge',
   });
   TestAssert.isNotNull(apply.applied, 'apply response carries applied envelope');
 
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   const stored = config?.fields?.[area]?.[slot];
   TestAssert.isNotNull(stored, `slot ${slot} round-trips into ${area}`);
   return stored;
@@ -280,11 +280,11 @@ async function roundTripSlot(viewId, area, slot, settings) {
 
 /** Stage helpers — now route through the abilities pipeline. */
 async function createPreviewStage(viewId, payload) {
-  return h.gv_create_preview_stage({ id: viewId, ...payload });
+  return h.gv_preview_stage_create({ id: viewId, ...payload });
 }
 
 async function deletePreviewStage(viewId, stageKey) {
-  return h.gv_discard_preview_stage({ id: viewId, stage_key: stageKey });
+  return h.gv_preview_stage_delete({ id: viewId, stage_key: stageKey });
 }
 
 /** Recursive tree walker — does any node carry this key? */
@@ -307,7 +307,7 @@ const schemaItem = (schema, slug) => schema.find((it) => it?.slug === slug) || n
 
 suite.test('Shape: /layouts uses has_grid (not is_grid_aware), skips preset_* + *_placeholder', async () => {
   if (suite.skip) return;
-  const { layouts } = await h.gv_list_layouts({});
+  const { layouts } = await h.gv_layouts_list({});
   TestAssert.isTrue(Array.isArray(layouts) && layouts.length > 0, 'layouts array non-empty');
 
   for (const layout of layouts) {
@@ -329,13 +329,13 @@ suite.test('Shape: /layouts uses has_grid (not is_grid_aware), skips preset_* + 
 
 suite.test('Shape: schema response omits the static groups map', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'text' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'text' });
   TestAssert.isTrue(!('groups' in resp), 'No top-level `groups` map');
 });
 
 suite.test('Shape: schema items drop UI-only keys (priority/class/tooltip/article/codemirror/mount_target/extension)', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'edit_link' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'edit_link' });
   const banned = ['priority', 'class', 'tooltip', 'article', 'codemirror', 'mount_target', 'extension'];
   for (const key of banned) {
     TestAssert.isTrue(
@@ -347,7 +347,7 @@ suite.test('Shape: schema items drop UI-only keys (priority/class/tooltip/articl
 
 suite.test('Shape: schema items drop raw requires/requires_not DSL + the parsed-only intermediates', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'text' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'text' });
   for (const item of resp.schema || []) {
     TestAssert.isTrue(!('requires_not' in item), 'raw requires_not DSL stripped');
     TestAssert.isTrue(!('requires_parsed' in item), 'requires_parsed unified into requires.show');
@@ -358,7 +358,7 @@ suite.test('Shape: schema items drop raw requires/requires_not DSL + the parsed-
 
 suite.test('Shape: requires envelope uses show/hide sub-keys; single-condition collapses to leaf', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'text' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'text' });
   const showLabel = schemaItem(resp.schema, 'show_label');
   TestAssert.isNotNull(showLabel, 'show_label present');
   const hide = showLabel.requires?.hide;
@@ -371,7 +371,7 @@ suite.test('Shape: requires envelope uses show/hide sub-keys; single-condition c
 
 suite.test('Shape: multi-condition rule keeps Query Filters group wrapper', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'text' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'text' });
   const customLabel = schemaItem(resp.schema, 'custom_label');
   TestAssert.isNotNull(customLabel);
   const show = customLabel.requires?.show;
@@ -383,7 +383,7 @@ suite.test('Shape: multi-condition rule keeps Query Filters group wrapper', asyn
 
 suite.test('Shape: synthetic _id hashes stripped from parsed rules', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'text' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'text' });
   const hasSynthetic = treeHasKey(
     resp.schema,
     '_id',
@@ -394,7 +394,7 @@ suite.test('Shape: synthetic _id hashes stripped from parsed rules', async () =>
 
 suite.test('Shape: desc HTML stripped to plain text', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'text' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'text' });
   const slot = schemaItem(resp.schema, 'conditional_logic_container');
   if (!slot) return;
   const desc = slot.desc || '';
@@ -406,7 +406,7 @@ suite.test('Shape: desc HTML stripped to plain text', async () => {
 
 suite.test('Shape: empty values (null / "" / []) dropped from schema items', async () => {
   if (suite.skip) return;
-  const resp = await h.gv_get_field_type_schema({ field_type: 'text' });
+  const resp = await h.gv_field_type_schema_get({ field_type: 'text' });
   for (const item of resp.schema || []) {
     for (const [k, v] of Object.entries(item)) {
       const isEmpty = v === null || v === '' || (Array.isArray(v) && v.length === 0);
@@ -422,7 +422,7 @@ suite.test('Shape: empty values (null / "" / []) dropped from schema items', asy
 suite.test('Shape: apply default returns compact {view_id, version, applied}', async () => {
   if (suite.skip) return;
   const viewId = await mintView('compact apply');
-  const apply = await h.gv_apply_view_config({
+  const apply = await h.gv_view_config_apply({
     id:     viewId,
     fields: { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'cmpct001' }] },
     mode:   'merge',
@@ -443,7 +443,7 @@ suite.test('Shape: apply default returns compact {view_id, version, applied}', a
 suite.test('Shape: create_field_slot response uses `slot` not legacy `slot_uid`', async () => {
   if (suite.skip) return;
   const viewId = await mintView('slot-alias');
-  const created = await h.gv_add_view_field({
+  const created = await h.gv_view_field_add({
     id:       viewId,
     area:     'directory_list-title',
     field_id: fieldIds.name,
@@ -459,7 +459,7 @@ suite.test('Shape: create_field_slot response uses `slot` not legacy `slot_uid`'
 suite.test('Shape: version timestamp is real (not 1970 Unix epoch)', async () => {
   if (suite.skip) return;
   const viewId = await mintView('version timestamp');
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   TestAssert.isTrue(!config.version.includes('1970-01-01T00:00:00Z'), 'epoch sentinel must not appear');
   TestAssert.isTrue(
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z:\d+$/.test(config.version),
@@ -475,7 +475,7 @@ suite.test('Round-trip: bulk apply preserves diverse settings verbatim', async (
   if (suite.skip) return;
   const viewId = await mintView('round-trip bulk');
 
-  const apply = await h.gv_apply_view_config({
+  const apply = await h.gv_view_config_apply({
     id: viewId,
     fields: {
       'directory_list-title': [
@@ -511,7 +511,7 @@ suite.test('Round-trip: bulk apply preserves diverse settings verbatim', async (
   });
   TestAssert.isNotNull(apply.applied);
 
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   const titleSlot = config.fields['directory_list-title']['rtname001'];
   TestAssert.equal(titleSlot.custom_label, 'Speaker Name');
   TestAssert.equal(titleSlot.custom_class, 'speaker-name big');
@@ -559,7 +559,7 @@ suite.test('Round-trip: move_field preserves slot UID + settings across areas', 
   if (suite.skip) return;
   const viewId = await mintView('move preserves uid');
 
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id: viewId,
     fields: {
       'directory_list-title': [{
@@ -572,13 +572,13 @@ suite.test('Round-trip: move_field preserves slot UID + settings across areas', 
     mode: 'merge',
   });
 
-  await h.gv_move_view_field({
+  await h.gv_view_field_move({
     id:   viewId,
     from: { area: 'directory_list-title', slot: 'rtmove001' },
     to:   { area: 'directory_list-subtitle' },
   });
 
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   TestAssert.isTrue(
     !(config.fields['directory_list-title'] || {})['rtmove001'],
     'source area no longer holds the slot'
@@ -652,7 +652,7 @@ suite.test('Sanitisation: custom content keeps full HTML body', async () => {
 suite.test('Sanitisation: numeric values coerce to int regardless of mode', async () => {
   if (suite.skip) return;
   const viewId = await mintView('numeric coerce');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   const stored = await roundTripSlot(viewId, 'directory_table-columns', 'sanitnum001', {
     field_id: fieldIds.name,
     width:    '50',
@@ -730,13 +730,13 @@ suite.test('Concurrency: parallel writes with same ETag → 1 accepted, rest rej
   // Read once to capture the starting ETag, then fire N parallel
   // applies with the same If-Match. Server's GET_LOCK + counter
   // bump means exactly ONE should accept.
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   const etag   = `"${config.version}"`;
   const N      = 5;
 
   const results = await Promise.allSettled(
     Array.from({ length: N }, (_, i) =>
-      h.gv_apply_view_config({
+      h.gv_view_config_apply({
         id:      viewId,
         fields:  { 'directory_list-title': [{ field_id: fieldIds.name, slot: `conc${String(i).padStart(3, '0')}` }] },
         mode:    'merge',
@@ -786,7 +786,7 @@ suite.test('Preview stage: POST returns 32-hex key, DELETE clears, ownership enf
 suite.test('Warnings: valid conditional_logic doc → no warnings in apply response', async () => {
   if (suite.skip) return;
   const viewId = await mintView('cl valid no warnings');
-  const apply  = await h.gv_apply_view_config({
+  const apply  = await h.gv_view_config_apply({
     id:     viewId,
     fields: {
       'directory_list-title': [{
@@ -806,7 +806,7 @@ suite.test('Warnings: valid conditional_logic doc → no warnings in apply respo
 suite.test('Warnings: CL missing version → reason=missing_version, value dropped', async () => {
   if (suite.skip) return;
   const viewId = await mintView('cl missing version');
-  const apply  = await h.gv_apply_view_config({
+  const apply  = await h.gv_view_config_apply({
     id:     viewId,
     fields: {
       'directory_list-title': [{
@@ -829,7 +829,7 @@ suite.test('Warnings: CL missing version → reason=missing_version, value dropp
   TestAssert.isNotNull(match, 'warning carries area/slot/key/reason=missing_version');
 
   // Confirm the value was actually dropped from the persisted slot.
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   const stored = config.fields['directory_list-title']['clbad001'];
   TestAssert.isTrue(
     !stored.conditional_logic || stored.conditional_logic === '',
@@ -848,9 +848,9 @@ suite.test('Widget create: persists every payload setting beyond id+label', asyn
   // default_table has stable static widget zones (header_top /
   // footer_top) — using it instead of Layout Builder lets the
   // test target a known area without first creating grid rows.
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
-  const created = await h.gv_add_view_widget({
+  const created = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: {
@@ -868,7 +868,7 @@ suite.test('Widget create: persists every payload setting beyond id+label', asyn
 
   // Confirm GET /config sees the same settings (proves persistence,
   // not just response shape).
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   const slot   = config.widgets?.header_top?.[created.slot];
   TestAssert.isNotNull(slot, 'widget slot persisted in config');
   TestAssert.equal(slot.id, 'custom_content');
@@ -880,9 +880,9 @@ suite.test('Widget create: persists every payload setting beyond id+label', asyn
 suite.test('Widget create: search_bar payload auto-migrates to modern shape', async () => {
   if (suite.skip) return;
   const viewId = await mintView('widget create search_bar modern');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
-  const created = await h.gv_add_view_widget({
+  const created = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: {
@@ -911,11 +911,11 @@ suite.test('Widget create: search_bar payload auto-migrates to modern shape', as
 suite.test('Render: unknown slot WITHOUT staged_slot returns 404', async () => {
   if (suite.skip) return;
   const viewId = await mintView('render no staged');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
   let status = null;
   try {
-    await h.gv_render_view_field({
+    await h.gv_view_field_render({
       id:   viewId,
       area: 'directory_table-columns',
       slot: 'never0001',
@@ -929,7 +929,7 @@ suite.test('Render: unknown slot WITHOUT staged_slot returns 404', async () => {
 suite.test('Render: staged_slot synthesizes an unsaved slot for preview', async () => {
   if (suite.skip) return;
   const viewId = await mintView('render staged unsaved');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
   // Render with `staged_slot` carrying field_id + a custom_label —
   // server should synthesize a slot record and run the production
@@ -937,7 +937,7 @@ suite.test('Render: staged_slot synthesizes an unsaved slot for preview', async 
   // from the existing /render endpoint contract.
   let result;
   try {
-    result = await h.gv_render_view_field({
+    result = await h.gv_view_field_render({
       id:          viewId,
       area:        'directory_table-columns',
       slot:        'staged0001',
@@ -970,10 +970,10 @@ suite.test('Render: staged_slot synthesizes an unsaved slot for preview', async 
 suite.test('Render: settings override on saved slot still works (regression)', async () => {
   if (suite.skip) return;
   const viewId = await mintView('render settings override');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
   // First save a real slot.
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id:     viewId,
     fields: {
       'directory_table-columns': [{ field_id: fieldIds.name, slot: 'saved001' }],
@@ -984,7 +984,7 @@ suite.test('Render: settings override on saved slot still works (regression)', a
   // Then render with a settings override. Should not 404.
   let status = null;
   try {
-    await h.gv_render_view_field({
+    await h.gv_view_field_render({
       id:       viewId,
       area:     'directory_table-columns',
       slot:     'saved001',
@@ -1005,7 +1005,7 @@ suite.test('Render: settings override on saved slot still works (regression)', a
 
 suite.test('Search input types: GET /search-fields/input-types returns canonical core slugs', async () => {
   if (suite.skip) return;
-  const { input_types } = await h.gv_list_search_input_types({});
+  const { input_types } = await h.gv_search_input_types_list({});
   TestAssert.isTrue(Array.isArray(input_types), 'input_types is an array');
   // The core list must contain at minimum these slugs. Add-ons may
   // contribute more via the gravityview/search/input_labels filter,
@@ -1035,8 +1035,8 @@ suite.test('Search input types: client pre-flight accepts valid slug', async () 
 suite.test('Search input types: server rejects typo with 400 + helpful error', async () => {
   if (suite.skip) return;
   const viewId = await mintView('search input server reject');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: { field_id: 'search_bar', label: 'Search' },
@@ -1049,7 +1049,7 @@ suite.test('Search input types: server rejects typo with 400 + helpful error', a
   let serverStatus = null;
   let serverMessage = '';
   try {
-    await h.gv_add_search_field({
+    await h.gv_search_field_add({
       id:          viewId,
       widget_area: 'header_top',
       widget_slot: widget.slot,
@@ -1088,7 +1088,7 @@ suite.test('Search input types: server rejects typo with 400 + helpful error', a
 
 suite.test('Template settings schema: core source always exposes shared keys (page_size etc.)', async () => {
   if (suite.skip) return;
-  const { schema, template_id } = await h.gv_get_template_settings_schema({ template_id: 'default_table' });
+  const { schema, template_id } = await h.gv_template_settings_schema_get({ template_id: 'default_table' });
   TestAssert.equal(template_id, 'default_table');
   TestAssert.isTrue(Array.isArray(schema) && schema.length > 0, 'schema array non-empty');
   const slugs = new Set(schema.map((it) => it?.slug));
@@ -1101,8 +1101,8 @@ suite.test('Mock source: schema exposes dotted slugs gated by template_ids', asy
     return;
   }
   // mockone is gated on default_table — should appear there + nowhere else.
-  const onTable = await h.gv_get_template_settings_schema({ template_id: 'default_table' });
-  const onList  = await h.gv_get_template_settings_schema({ template_id: 'default_list' });
+  const onTable = await h.gv_template_settings_schema_get({ template_id: 'default_table' });
+  const onList  = await h.gv_template_settings_schema_get({ template_id: 'default_list' });
 
   const tableSlugs = new Set(onTable.schema.map((it) => it?.slug));
   const listSlugs  = new Set(onList.schema.map((it) => it?.slug));
@@ -1128,7 +1128,7 @@ suite.test('Mock source: core source dedupes entries claimed by silo `groups`', 
   // those slugs, the dedupe logic must still ensure the core source
   // emits NOTHING with those group values regardless of how the
   // catalog grows. Belt-and-braces check.
-  const { schema } = await h.gv_get_template_settings_schema({ template_id: 'default_table' });
+  const { schema } = await h.gv_template_settings_schema_get({ template_id: 'default_table' });
   for (const it of schema) {
     if ((it?.group ?? '') === 'mock_silo' && !(it?.slug ?? '').startsWith('mockone.')) {
       throw new Error(`core source emitted undotted slug "${it.slug}" for silo'd group "mock_silo"`);
@@ -1143,9 +1143,9 @@ suite.test('Mock source: PATCH /template-settings routes nested writes to the ri
     return;
   }
   const viewId = await mintView('mock silo round-trip');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
-  await h.gv_patch_view_settings({
+  await h.gv_view_settings_patch({
     id:                viewId,
     template_settings: {
       mockone:   { foo: 'hello', bar: '42', content: '<p>html ok</p>' },
@@ -1153,7 +1153,7 @@ suite.test('Mock source: PATCH /template-settings routes nested writes to the ri
     },
   });
 
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   TestAssert.equal(String(config.template_settings.page_size), '99', 'top-level page_size on core meta');
   TestAssert.isTrue(
     config.template_settings.mockone && typeof config.template_settings.mockone === 'object',
@@ -1174,9 +1174,9 @@ suite.test('Mock source: /apply also splits namespaced writes to silo meta', asy
     return;
   }
   const viewId = await mintView('mock silo apply path');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id: viewId,
     template_settings: {
       page_size: '25',
@@ -1185,7 +1185,7 @@ suite.test('Mock source: /apply also splits namespaced writes to silo meta', asy
     mode: 'merge',
   });
 
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   TestAssert.equal(String(config.template_settings.page_size), '25', 'core key persisted via apply');
   TestAssert.equal(config.template_settings.mockone?.foo, 'via-apply', 'silo key persisted via apply');
 });
@@ -1197,21 +1197,21 @@ suite.test('Mock source: keys NOT in the partial payload survive the merge', asy
     return;
   }
   const viewId = await mintView('mock silo non-overlap merge');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
   // Seed two keys on the silo, then patch only one — the other
   // must remain. This proves the per-source bucket-seeded merge
   // doesn't blow away unmentioned silo keys.
-  await h.gv_patch_view_settings({
+  await h.gv_view_settings_patch({
     id:                viewId,
     template_settings: { mockone: { foo: 'first', bar: '7' } },
   });
-  await h.gv_patch_view_settings({
+  await h.gv_view_settings_patch({
     id:                viewId,
     template_settings: { mockone: { foo: 'second' } },
   });
 
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   TestAssert.equal(config.template_settings.mockone?.foo, 'second', 'updated key takes new value');
   TestAssert.equal(Number(config.template_settings.mockone?.bar), 7, 'untouched key survives merge');
 });
@@ -1224,7 +1224,7 @@ suite.test('CL with leading whitespace is accepted (trim bug)', async () => {
   if (suite.skip) return;
   const viewId = await mintView('cl trim bug');
   const padded = '   ' + JSON.stringify({ version: 2, actionType: 'show', logicType: 'all', rules: [] }) + '   \n';
-  const apply  = await h.gv_apply_view_config({
+  const apply  = await h.gv_view_config_apply({
     id:     viewId,
     fields: {
       'directory_list-title': [{
@@ -1240,7 +1240,7 @@ suite.test('CL with leading whitespace is accepted (trim bug)', async () => {
     'no warning emitted — padded JSON was trimmed and accepted'
   );
 
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   const stored = config.fields['directory_list-title']['cltrim001'].conditional_logic;
   TestAssert.isTrue(
     typeof stored === 'string' && stored.startsWith('{') && stored.endsWith('}'),
@@ -1251,8 +1251,8 @@ suite.test('CL with leading whitespace is accepted (trim bug)', async () => {
 suite.test('Per-field narrowing rejects date_range on search_mode', async () => {
   if (suite.skip) return;
   const viewId = await mintView('per-field narrow search_mode');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: { field_id: 'search_bar', label: 'Search' },
@@ -1261,7 +1261,7 @@ suite.test('Per-field narrowing rejects date_range on search_mode', async () => 
   let serverStatus = null;
   let serverMessage = '';
   try {
-    await h.gv_add_search_field({
+    await h.gv_search_field_add({
       id:          viewId,
       widget_area: 'header_top',
       widget_slot: widget.slot,
@@ -1283,15 +1283,15 @@ suite.test('Per-field narrowing rejects date_range on search_mode', async () => 
 suite.test('Per-field narrowing accepts hidden on search_mode', async () => {
   if (suite.skip) return;
   const viewId = await mintView('per-field narrow search_mode ok');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: { field_id: 'search_bar', label: 'Search' },
   });
 
   // `hidden` IS valid for search_mode — should succeed.
-  const created = await h.gv_add_search_field({
+  const created = await h.gv_search_field_add({
     id:          viewId,
     widget_area: 'header_top',
     widget_slot: widget.slot,
@@ -1304,12 +1304,12 @@ suite.test('Per-field narrowing accepts hidden on search_mode', async () => {
 suite.test('create_widget_slot rejects nested invalid search_fields_section', async () => {
   if (suite.skip) return;
   const viewId = await mintView('widget nested search reject');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
 
   let serverStatus = null;
   let serverMessage = '';
   try {
-    await h.gv_add_view_widget({
+    await h.gv_view_widget_add({
       id:     viewId,
       area:   'header_top',
       widget: {
@@ -1334,7 +1334,7 @@ suite.test('create_widget_slot rejects nested invalid search_fields_section', as
 suite.test('Warnings: CL string that isn\'t a JSON object → reason=not_json_object', async () => {
   if (suite.skip) return;
   const viewId = await mintView('cl not json object');
-  const apply  = await h.gv_apply_view_config({
+  const apply  = await h.gv_view_config_apply({
     id:     viewId,
     fields: {
       'directory_list-title': [{
@@ -1363,8 +1363,8 @@ suite.test('Area keys: gv_create_grid_row returns ready-to-use prefixed area_key
   if (suite.skip) return;
   const viewId = await mintView('area_keys contract');
   // Layout Builder is the only grid-aware template by default.
-  await h.gv_patch_view_template({ id: viewId, template_id: 'gravityview-layout-builder' });
-  const row = await h.gv_add_grid_row({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'gravityview-layout-builder' });
+  const row = await h.gv_grid_row_add({
     id:    viewId,
     type:  '25/25/25/25',
     zones: ['directory'],
@@ -1383,13 +1383,13 @@ suite.test('Area keys: gv_create_grid_row returns ready-to-use prefixed area_key
 suite.test('Area keys: apply_view_config REJECTS a fields area key missing the zone prefix', async () => {
   if (suite.skip) return;
   const viewId = await mintView('reject unprefixed');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'gravityview-layout-builder' });
-  const row = await h.gv_add_grid_row({ id: viewId, type: '100', zones: ['directory'] });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'gravityview-layout-builder' });
+  const row = await h.gv_grid_row_add({ id: viewId, type: '100', zones: ['directory'] });
   // Use the LEGACY unprefixed key (this is the exact bug the demo hit).
   const badKey = `gravityview-layout-builder-top::100::${row.row_uid}`;
   let status = null, code = null;
   try {
-    await h.gv_apply_view_config({
+    await h.gv_view_config_apply({
       id:     viewId,
       mode:   'merge',
       fields: { [badKey]: [{ field_id: fieldIds.name, slot: 'should_fail' }] },
@@ -1407,7 +1407,7 @@ suite.test('Area keys: apply_view_config REJECTS a bogus widget area key', async
   const viewId = await mintView('reject bogus widget area');
   let status = null, code = null;
   try {
-    await h.gv_apply_view_config({
+    await h.gv_view_config_apply({
       id:      viewId,
       mode:    'merge',
       widgets: { 'not_a_real_zone': [{ field_id: 'search_bar', slot: 'x' }] },
@@ -1423,12 +1423,12 @@ suite.test('Area keys: apply_view_config REJECTS a bogus widget area key', async
 suite.test('Area keys: prefixed keys round-trip end-to-end (create-row → use area_keys → read-back)', async () => {
   if (suite.skip) return;
   const viewId = await mintView('e2e prefixed roundtrip');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'gravityview-layout-builder' });
-  const row = await h.gv_add_grid_row({ id: viewId, type: '50/50', zones: ['directory'] });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'gravityview-layout-builder' });
+  const row = await h.gv_grid_row_add({ id: viewId, type: '50/50', zones: ['directory'] });
   TestAssert.equal(row.area_keys.length, 2);
 
   // Use the API's own returned keys verbatim — the test the demo would have passed.
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id:     viewId,
     mode:   'merge',
     fields: {
@@ -1437,7 +1437,7 @@ suite.test('Area keys: prefixed keys round-trip end-to-end (create-row → use a
     },
   });
 
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   TestAssert.isNotNull(cfg.fields[row.area_keys[0]]?.rt_a, 'first area has its slot after apply');
   TestAssert.isNotNull(cfg.fields[row.area_keys[1]]?.rt_b, 'second area has its slot after apply');
 
@@ -1451,7 +1451,7 @@ suite.test('Area keys: prefixed keys round-trip end-to-end (create-row → use a
 suite.test('Inspector shape: template_ids contains directory + single ONLY (no edit)', async () => {
   if (suite.skip) return;
   const viewId = await mintView('template_ids no edit');
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   TestAssert.isNotNull(cfg.template_ids?.directory, 'template_ids.directory present');
   TestAssert.isNotNull(cfg.template_ids?.single, 'template_ids.single present');
   TestAssert.isTrue(
@@ -1463,8 +1463,8 @@ suite.test('Inspector shape: template_ids contains directory + single ONLY (no e
 suite.test('Inspector shape: template_settings does NOT carry the legacy `template` key', async () => {
   if (suite.skip) return;
   const viewId = await mintView('no legacy template key');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   TestAssert.isTrue(
     !('template' in (cfg.template_settings || {})),
     'template_settings.template stripped — canonical store is template_ids.directory',
@@ -1474,9 +1474,9 @@ suite.test('Inspector shape: template_settings does NOT carry the legacy `templa
 suite.test('Inspector shape: template_settings stays clean even after a template switch', async () => {
   if (suite.skip) return;
   const viewId = await mintView('template switch no leak');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  await h.gv_patch_view_template({ id: viewId, template_id: 'gravityview-layout-builder' });
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'gravityview-layout-builder' });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   TestAssert.isTrue(
     !('template' in (cfg.template_settings || {})),
     'template_settings.template still absent after switch',
@@ -1497,16 +1497,16 @@ suite.test('Inspector shape: template_settings stays clean even after a template
 // so storage carries the canonical shape regardless of who wrote it.
 // ============================================================
 
-suite.test('Search field shape: gv_add_search_field emits the domain canonical shape', async () => {
+suite.test('Search field shape: gv_search_field_add emits the domain canonical shape', async () => {
   if (suite.skip) return;
   const viewId = await mintView('search field canonical shape');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: { field_id: 'search_bar', label: 'Search' },
   });
-  const created = await h.gv_add_search_field({
+  const created = await h.gv_search_field_add({
     id:          viewId,
     widget_area: 'header_top',
     widget_slot: widget.slot,
@@ -1514,7 +1514,7 @@ suite.test('Search field shape: gv_add_search_field emits the domain canonical s
     field:       { id: fieldIds.name, input: 'input_text', label: 'Speaker' },
   });
 
-  const cfg    = await h.gv_get_view_config({ id: viewId });
+  const cfg    = await h.gv_view_config_get({ id: viewId });
   const stored = cfg.widgets.header_top[widget.slot].search_fields_section[
     'search-general_top::100::canonshape_row'
   ][created.search_slot];
@@ -1540,13 +1540,13 @@ suite.test('Search field shape: gv_add_search_field emits the domain canonical s
 suite.test('Search field shape: GF field carries `type`={form_id}::{field_id} + form_field object', async () => {
   if (suite.skip) return;
   const viewId = await mintView('search field gf canonical type');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: { field_id: 'search_bar', label: 'Search' },
   });
-  await h.gv_add_search_field({
+  await h.gv_search_field_add({
     id:          viewId,
     widget_area: 'header_top',
     widget_slot: widget.slot,
@@ -1554,7 +1554,7 @@ suite.test('Search field shape: GF field carries `type`={form_id}::{field_id} + 
     field:       { id: fieldIds.email, input: 'input_text', label: 'Email' },
   });
 
-  const cfg  = await h.gv_get_view_config({ id: viewId });
+  const cfg  = await h.gv_view_config_get({ id: viewId });
   const slot = Object.values(
     cfg.widgets.header_top[widget.slot].search_fields_section['search-general_top::100::gftype_row'],
   )[0];
@@ -1571,19 +1571,19 @@ suite.test('Search field shape: GF field carries `type`={form_id}::{field_id} + 
   TestAssert.isTrue('id' in slot.form_field && 'type' in slot.form_field, 'form_field carries the GF field shape');
 });
 
-suite.test('Search field shape: bulk apply (gv_apply_view_config) routes nested entries through the domain too', async () => {
+suite.test('Search field shape: bulk apply (gv_view_config_apply) routes nested entries through the domain too', async () => {
   if (suite.skip) return;
   const viewId = await mintView('bulk normalise search section');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: { field_id: 'search_bar', label: 'Search' },
   });
-  // Bulk-apply a nested search_fields_section through gv_apply_view_config —
+  // Bulk-apply a nested search_fields_section through gv_view_config_apply —
   // entries SHOULD pass through Search_Field::from_configuration → to_configuration
   // just like the per-field CRUD path does.
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id:      viewId,
     mode:    'merge',
     widgets: {
@@ -1600,7 +1600,7 @@ suite.test('Search field shape: bulk apply (gv_apply_view_config) routes nested 
     },
   });
 
-  const cfg    = await h.gv_get_view_config({ id: viewId });
+  const cfg    = await h.gv_view_config_get({ id: viewId });
   const stored = cfg.widgets.header_top[widget.slot].search_fields_section[
     'search-general_top::100::bulkrow'
   ].bulkfield;
@@ -1645,13 +1645,13 @@ suite.test('Search field round-trip: fields survive a legacy WP save_post (bug-c
   }
 
   const viewId = await mintView('search field legacy roundtrip');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id:     viewId,
     area:   'header_top',
     widget: { field_id: 'search_bar', label: 'Search' },
   });
-  await h.gv_add_search_field({
+  await h.gv_search_field_add({
     id:          viewId,
     widget_area: 'header_top',
     widget_slot: widget.slot,
@@ -1664,7 +1664,7 @@ suite.test('Search field round-trip: fields survive a legacy WP save_post (bug-c
   // hook chain end-to-end against the live WP install.
   cp.execSync(`cd ${wpRoot} && wp post update ${viewId} --post_modified="$(date -u +'%Y-%m-%d %H:%M:%S')"`, { stdio: 'pipe' });
 
-  const cfg     = await h.gv_get_view_config({ id: viewId });
+  const cfg     = await h.gv_view_config_get({ id: viewId });
   const section = cfg.widgets?.header_top?.[widget.slot]?.search_fields_section;
   TestAssert.isNotNull(section, 'search_fields_section present after legacy save');
   const row = section['search-general_top::100::roundtrip_row'];
@@ -1695,7 +1695,7 @@ function errMessage(err) {
 /** Run an apply that we expect to throw; return the captured error info. */
 async function expectApplyError(args) {
   try {
-    const result = await h.gv_apply_view_config(args);
+    const result = await h.gv_view_config_apply(args);
     return { thrown: false, result };
   } catch (err) {
     return {
@@ -1712,13 +1712,13 @@ async function expectApplyError(args) {
 suite.test('[hostile] Concurrency: 10 parallel applies with same If-Match → exactly 1 wins', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-conc-10');
-  const config = await h.gv_get_view_config({ id: viewId });
+  const config = await h.gv_view_config_get({ id: viewId });
   const etag   = `"${config.version}"`;
   const N      = 10;
 
   const results = await Promise.allSettled(
     Array.from({ length: N }, (_, i) =>
-      h.gv_apply_view_config({
+      h.gv_view_config_apply({
         id:      viewId,
         ifMatch: etag,
         mode:    'merge',
@@ -1732,12 +1732,12 @@ suite.test('[hostile] Concurrency: 10 parallel applies with same If-Match → ex
   TestAssert.equal(rejected, N - 1, `expected ${N - 1} 412 rejections, got ${rejected}`);
 });
 
-suite.test('[hostile] Concurrency: 50 parallel reads of gv_get_view_config all succeed', async () => {
+suite.test('[hostile] Concurrency: 50 parallel reads of gv_view_config_get all succeed', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-50-reads');
   const N = 50;
   const results = await Promise.allSettled(
-    Array.from({ length: N }, () => h.gv_get_view_config({ id: viewId }))
+    Array.from({ length: N }, () => h.gv_view_config_get({ id: viewId }))
   );
   const ok = results.filter((r) => r.status === 'fulfilled' && r.value?.view_id === viewId).length;
   TestAssert.equal(ok, N, `all ${N} reads should succeed, got ${ok}`);
@@ -1753,12 +1753,12 @@ suite.test('[hostile] Concurrency: 20 interleaved apply+read pairs — no torn r
   // unconditionally so we can assert each one is visible immediately).
   for (let i = 0; i < N; i++) {
     const slotUid = `tear${String(i).padStart(3, '0')}`;
-    await h.gv_apply_view_config({
+    await h.gv_view_config_apply({
       id:      viewId,
       mode:    'merge',
       fields:  { 'directory_list-title': [{ field_id: fieldIds.name, slot: slotUid, custom_label: `Iter ${i}` }] },
     });
-    const cfg = await h.gv_get_view_config({ id: viewId });
+    const cfg = await h.gv_view_config_get({ id: viewId });
     const slot = cfg.fields?.['directory_list-title']?.[slotUid];
     TestAssert.isNotNull(slot, `iteration ${i}: slot ${slotUid} must be present in subsequent read`);
     TestAssert.equal(slot.custom_label, `Iter ${i}`, `iteration ${i}: custom_label torn`);
@@ -1768,18 +1768,18 @@ suite.test('[hostile] Concurrency: 20 interleaved apply+read pairs — no torn r
 suite.test('[hostile] Concurrency: two writers racing on different slots in same area both land', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-two-writers');
-  const cfg   = await h.gv_get_view_config({ id: viewId });
+  const cfg   = await h.gv_view_config_get({ id: viewId });
   const etag  = `"${cfg.version}"`;
 
   // Same etag, but distinct slot UIDs in the same area.
   const results = await Promise.allSettled([
-    h.gv_apply_view_config({
+    h.gv_view_config_apply({
       id:      viewId,
       ifMatch: etag,
       mode:    'merge',
       fields:  { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'race_a' }] },
     }),
-    h.gv_apply_view_config({
+    h.gv_view_config_apply({
       id:      viewId,
       ifMatch: etag,
       mode:    'merge',
@@ -1792,12 +1792,12 @@ suite.test('[hostile] Concurrency: two writers racing on different slots in same
   TestAssert.equal(accepted, 1, 'optimistic concurrency: only 1 same-etag write lands per round');
 
   // Now retry the rejected write WITHOUT ifMatch (the docs say omit = bypass).
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id:     viewId,
     mode:   'merge',
     fields: { 'directory_list-title': [{ field_id: fieldIds.email, slot: 'race_b' }] },
   });
-  const final = await h.gv_get_view_config({ id: viewId });
+  const final = await h.gv_view_config_get({ id: viewId });
   TestAssert.isNotNull(final.fields?.['directory_list-title']?.race_a, 'race_a landed');
   TestAssert.isNotNull(final.fields?.['directory_list-title']?.race_b, 'race_b landed after retry without ifMatch');
 });
@@ -1816,7 +1816,7 @@ suite.test('[hostile] Huge payload: 200 fields in a single apply', async () => {
   const t0 = Date.now();
   let result, err;
   try {
-    result = await h.gv_apply_view_config({
+    result = await h.gv_view_config_apply({
       id:     viewId,
       mode:   'merge',
       fields: { 'directory_list-title': slots },
@@ -1835,7 +1835,7 @@ suite.test('[hostile] Huge payload: 200 fields in a single apply', async () => {
   }
   TestAssert.isNotNull(result.applied, '200-field apply succeeded');
   // Spot-check the round trip — pick start/end/middle.
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   const titleArea = cfg.fields?.['directory_list-title'] || {};
   TestAssert.isNotNull(titleArea.huge0000, 'first slot present');
   TestAssert.isNotNull(titleArea.huge0099, 'middle slot present');
@@ -1883,15 +1883,15 @@ suite.test('[hostile] Huge payload: conditional_logic with 100 nested rules', as
 suite.test('[hostile] Huge payload: search bar with 50 search fields across 5 positions', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-50-search-fields');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id: viewId, area: 'header_top', widget: { field_id: 'search_bar', label: 'Search' },
   });
   const positions = ['10', '20', '30', '40', '50'];
   for (const pos of positions) {
     for (let i = 0; i < 10; i++) {
       try {
-        await h.gv_add_search_field({
+        await h.gv_search_field_add({
           id: viewId, widget_area: 'header_top', widget_slot: widget.slot,
           position: `search-general_top::${pos}::row_${pos}`,
           slot: `s_${pos}_${i}`,
@@ -1902,7 +1902,7 @@ suite.test('[hostile] Huge payload: search bar with 50 search fields across 5 po
       }
     }
   }
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   const section = cfg.widgets?.header_top?.[widget.slot]?.search_fields_section || {};
   let total = 0;
   for (const row of Object.values(section)) total += Object.keys(row || {}).length;
@@ -2012,7 +2012,7 @@ suite.test('[hostile] Malformed: ifMatch = SQL injection attempt → safe reject
   TestAssert.isTrue(r.thrown, 'malicious ifMatch must reject');
   TestAssert.isTrue(r.status >= 400 && r.status < 500, `must be 4xx, got ${r.status}: ${r.message}`);
   // Confirm the view is still alive afterwards (no DB damage).
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   TestAssert.equal(cfg.view_id, viewId, 'view still readable after SQLi attempt');
 });
 
@@ -2048,7 +2048,7 @@ suite.test('[hostile] Malformed: slot uid with path traversal "../../../etc/pass
   // Server should normalise / reject. If it accepts, ensure no filesystem
   // surprise — the slot must just be a string key, not a real path.
   if (!r.thrown) {
-    const cfg = await h.gv_get_view_config({ id: viewId });
+    const cfg = await h.gv_view_config_get({ id: viewId });
     const area = cfg.fields?.['directory_list-title'] || {};
     const keys = Object.keys(area);
     TestAssert.isTrue(keys.length > 0, 'something stored');
@@ -2099,7 +2099,7 @@ suite.test('[hostile] Edge: field_id = "0" (zero) → either reject or treat as 
     TestAssert.isTrue(r.status >= 400 && r.status < 500, `field_id 0 reject must be 4xx (got ${r.status})`);
   }
   // If accepted, view must still be readable.
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   TestAssert.equal(cfg.view_id, viewId, 'view readable after field_id=0');
 });
 
@@ -2130,7 +2130,7 @@ suite.test('[hostile] Edge: field_id = "1.2.3.4" (IP-like) → no 5xx', async ()
 suite.test('[hostile] CL: invalid JSON string → warning, value dropped, no 5xx', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-cl-bad-json');
-  const apply = await h.gv_apply_view_config({
+  const apply = await h.gv_view_config_apply({
     id: viewId, mode: 'merge',
     fields: { 'directory_list-title': [{
       field_id: fieldIds.name, slot: 'clbj01',
@@ -2145,7 +2145,7 @@ suite.test('[hostile] CL: invalid JSON string → warning, value dropped, no 5xx
 suite.test('[hostile] CL: valid JSON of wrong shape (e.g. array) → warning, value dropped', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-cl-wrong-shape');
-  const apply = await h.gv_apply_view_config({
+  const apply = await h.gv_view_config_apply({
     id: viewId, mode: 'merge',
     fields: { 'directory_list-title': [{
       field_id: fieldIds.name, slot: 'clws01',
@@ -2184,13 +2184,13 @@ suite.test('[hostile] Unicode: emoji-only custom_label', async () => {
 suite.test('[hostile] Search input: leading/trailing whitespace ("  input_text  ") → reject or trim cleanly', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-search-whitespace');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id: viewId, area: 'header_top', widget: { field_id: 'search_bar', label: 'Search' },
   });
   let status = null;
   try {
-    await h.gv_add_search_field({
+    await h.gv_search_field_add({
       id: viewId, widget_area: 'header_top', widget_slot: widget.slot,
       position: 'search-general_top::100::ws_row',
       field: { id: fieldIds.name, input: '  input_text  ', label: 'WS' },
@@ -2206,13 +2206,13 @@ suite.test('[hostile] Search input: leading/trailing whitespace ("  input_text  
 suite.test('[hostile] Search input: wrong-case ("INPUT_TEXT") → reject or normalise', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-search-case');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id: viewId, area: 'header_top', widget: { field_id: 'search_bar', label: 'Search' },
   });
   let status = null;
   try {
-    await h.gv_add_search_field({
+    await h.gv_search_field_add({
       id: viewId, widget_area: 'header_top', widget_slot: widget.slot,
       position: 'search-general_top::100::case_row',
       field: { id: fieldIds.name, input: 'INPUT_TEXT', label: 'CASE' },
@@ -2226,13 +2226,13 @@ suite.test('[hostile] Search input: wrong-case ("INPUT_TEXT") → reject or norm
 suite.test('[hostile] Search input: numeric (1) instead of string', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-search-numeric-input');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id: viewId, area: 'header_top', widget: { field_id: 'search_bar', label: 'Search' },
   });
   let status = null;
   try {
-    await h.gv_add_search_field({
+    await h.gv_search_field_add({
       id: viewId, widget_area: 'header_top', widget_slot: widget.slot,
       position: 'search-general_top::100::num_row',
       field: { id: fieldIds.name, input: 1, label: 'NUM' },
@@ -2246,13 +2246,13 @@ suite.test('[hostile] Search input: numeric (1) instead of string', async () => 
 suite.test('[hostile] Search field: field.id = 0 → reject', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-searchfield-zero');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id: viewId, area: 'header_top', widget: { field_id: 'search_bar', label: 'Search' },
   });
   let status = null;
   try {
-    await h.gv_add_search_field({
+    await h.gv_search_field_add({
       id: viewId, widget_area: 'header_top', widget_slot: widget.slot,
       position: 'search-general_top::100::z_row',
       field: { id: 0, input: 'input_text', label: 'Z' },
@@ -2266,13 +2266,13 @@ suite.test('[hostile] Search field: field.id = 0 → reject', async () => {
 suite.test('[hostile] Search field: field.id pointing at a deleted/non-existent GF field', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-searchfield-ghost');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  const widget = await h.gv_add_view_widget({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  const widget = await h.gv_view_widget_add({
     id: viewId, area: 'header_top', widget: { field_id: 'search_bar', label: 'Search' },
   });
   let status = null;
   try {
-    await h.gv_add_search_field({
+    await h.gv_search_field_add({
       id: viewId, widget_area: 'header_top', widget_slot: widget.slot,
       position: 'search-general_top::100::g_row',
       field: { id: 99999, input: 'input_text', label: 'Ghost' },
@@ -2290,10 +2290,10 @@ suite.test('[hostile] Search field: field.id pointing at a deleted/non-existent 
 suite.test('[hostile] Widget: bogus widget id (definitely_not_real) → reject', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-widget-bogus-id');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   let status = null;
   try {
-    await h.gv_add_view_widget({
+    await h.gv_view_widget_add({
       id: viewId, area: 'header_top',
       widget: { field_id: 'definitely_not_a_real_widget', label: 'X' },
     });
@@ -2309,11 +2309,11 @@ suite.test('[hostile] area_settings injected as a "field" must NOT be treated as
   // area_settings is a meta key on the area itself, not a slot.
   // A slot literally named "area_settings" should either reject or be
   // namespaced so it doesn't clobber real area_settings.
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id: viewId, mode: 'merge',
     fields: { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'area_settings' }] },
   });
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   // If "area_settings" got stored as a real slot key, it MUST have a field_id —
   // otherwise it's been confused with the area-level settings envelope.
   const stored = cfg.fields?.['directory_list-title']?.area_settings;
@@ -2330,10 +2330,10 @@ suite.test('[hostile] area_settings injected as a "field" must NOT be treated as
 suite.test('[hostile] template-settings: page_size = 0 → coerced or rejected, no 5xx', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-pagesize-0');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   let err;
   try {
-    await h.gv_patch_view_settings({
+    await h.gv_view_settings_patch({
       id: viewId, template_settings: { page_size: 0 },
     });
   } catch (e) { err = e; }
@@ -2345,10 +2345,10 @@ suite.test('[hostile] template-settings: page_size = 0 → coerced or rejected, 
 suite.test('[hostile] template-settings: page_size = -1 → coerced or rejected', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-pagesize-neg');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   let err;
   try {
-    await h.gv_patch_view_settings({
+    await h.gv_view_settings_patch({
       id: viewId, template_settings: { page_size: -1 },
     });
   } catch (e) { err = e; }
@@ -2360,17 +2360,17 @@ suite.test('[hostile] template-settings: page_size = -1 → coerced or rejected'
 suite.test('[hostile] template-settings: page_size = "abc" → 4xx or coerced to 0/default', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-pagesize-string');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   let err;
   try {
-    await h.gv_patch_view_settings({
+    await h.gv_view_settings_patch({
       id: viewId, template_settings: { page_size: 'abc' },
     });
   } catch (e) { err = e; }
   if (err) {
     TestAssert.isTrue(errStatus(err) >= 400 && errStatus(err) < 500, `page_size="abc" reject must 4xx, got ${errStatus(err)}: ${errMessage(err)}`);
   } else {
-    const cfg = await h.gv_get_view_config({ id: viewId });
+    const cfg = await h.gv_view_config_get({ id: viewId });
     const ps = cfg.template_settings?.page_size;
     TestAssert.isTrue(
       ps === undefined || ps === null || ps === 0 || /^\d+$/.test(String(ps)),
@@ -2382,12 +2382,12 @@ suite.test('[hostile] template-settings: page_size = "abc" → 4xx or coerced to
 suite.test('[hostile] template-settings: 100 keys at once', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-100-template-keys');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   const ts = {};
   for (let i = 0; i < 100; i++) ts[`unknown_key_${i}`] = `v${i}`;
   let err;
   try {
-    await h.gv_patch_view_settings({ id: viewId, template_settings: ts });
+    await h.gv_view_settings_patch({ id: viewId, template_settings: ts });
   } catch (e) { err = e; }
   if (err) {
     TestAssert.isTrue(errStatus(err) >= 400 && errStatus(err) < 500, `bulk-template-settings must 4xx, got ${errStatus(err)}`);
@@ -2399,11 +2399,11 @@ suite.test('[hostile] template-settings: 100 keys at once', async () => {
 suite.test('[hostile] Render: 50 parallel staged_slot renders', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-render-50-parallel');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   const N = 50;
   const t0 = Date.now();
   const results = await Promise.allSettled(
-    Array.from({ length: N }, (_, i) => h.gv_render_view_field({
+    Array.from({ length: N }, (_, i) => h.gv_view_field_render({
       id: viewId, area: 'directory_table-columns',
       slot: `parallel${String(i).padStart(3, '0')}`,
       staged_slot: { field_id: fieldIds.name, custom_label: `Parallel ${i}`, show_label: '1' },
@@ -2424,11 +2424,11 @@ suite.test('[hostile] Render: 50 parallel staged_slot renders', async () => {
 suite.test('[hostile] Render: extremely long custom_label (10KB) — no 5xx', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-render-long-label');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
   const longLabel = 'L'.repeat(10000);
   let status = null;
   try {
-    await h.gv_render_view_field({
+    await h.gv_view_field_render({
       id: viewId, area: 'directory_table-columns', slot: 'longlabel001',
       staged_slot: { field_id: fieldIds.name, custom_label: longLabel, show_label: '1' },
     });
@@ -2465,7 +2465,7 @@ suite.test('[hostile] Apply to a deleted view → 404 (not 500)', async () => {
   let status = null;
   let message = '';
   try {
-    await h.gv_apply_view_config({
+    await h.gv_view_config_apply({
       id: viewId, mode: 'merge',
       fields: { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'd01' }] },
     });
@@ -2478,21 +2478,21 @@ suite.test('[hostile] Cross-view ifMatch → 412', async () => {
   // Mint view A, mutate it so its version counter bumps to ":1+", then mint B.
   // This guarantees A's etag is genuinely incompatible with B's fresh ":0".
   const viewA = await mintView('hostile-xview-A');
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id: viewA, mode: 'merge',
     fields: { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'bump_a' }] },
   });
-  const cfgA = await h.gv_get_view_config({ id: viewA });
+  const cfgA = await h.gv_view_config_get({ id: viewA });
   const etagA = `"${cfgA.version}"`;
 
   const viewB = await mintView('hostile-xview-B');
-  const cfgB = await h.gv_get_view_config({ id: viewB });
+  const cfgB = await h.gv_view_config_get({ id: viewB });
   // Sanity: versions must differ — otherwise the test can't prove anything.
   TestAssert.isTrue(cfgA.version !== cfgB.version, `view versions must differ; got A=${cfgA.version} B=${cfgB.version}`);
 
   let status = null, message = '';
   try {
-    await h.gv_apply_view_config({
+    await h.gv_view_config_apply({
       id: viewB, ifMatch: etagA, mode: 'merge',
       fields: { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'xvm01' }] },
     });
@@ -2503,15 +2503,15 @@ suite.test('[hostile] Cross-view ifMatch → 412', async () => {
 suite.test('[hostile] Same apply twice with same ifMatch → second 412', async () => {
   if (suite.skip) return;
   const viewId = await mintView('hostile-replay');
-  const cfg = await h.gv_get_view_config({ id: viewId });
+  const cfg = await h.gv_view_config_get({ id: viewId });
   const etag = `"${cfg.version}"`;
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id: viewId, ifMatch: etag, mode: 'merge',
     fields: { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'rep01' }] },
   });
   let status = null;
   try {
-    await h.gv_apply_view_config({
+    await h.gv_view_config_apply({
       id: viewId, ifMatch: etag, mode: 'merge',
       fields: { 'directory_list-title': [{ field_id: fieldIds.name, slot: 'rep02' }] },
     });
@@ -2556,11 +2556,11 @@ suite.test('[hostile] Self-ref: custom_content embedding [gravityview id="<self>
 // didn't exist before this pass.)
 // ============================================================
 
-suite.test('Consolidated schema: gv_get_view_field_schemas with no filter returns the bulk map', async () => {
+suite.test('Consolidated schema: gv_view_field_schemas_get with no filter returns the bulk map', async () => {
   if (suite.skip) return;
   const viewId = await mintView('schema bulk mode');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  await h.gv_apply_view_config({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_config_apply({
     id:     viewId,
     fields: { 'directory_table-columns': [
       { field_id: fieldIds.name,  slot: 'sb_a' },
@@ -2568,17 +2568,17 @@ suite.test('Consolidated schema: gv_get_view_field_schemas with no filter return
     ] },
     mode:   'merge',
   });
-  const r = await h.gv_get_view_field_schemas({ id: viewId });
+  const r = await h.gv_view_field_schemas_get({ id: viewId });
   TestAssert.isTrue(typeof r.schemas === 'object', 'schemas object present');
   const keys = Object.keys(r.schemas);
   TestAssert.isTrue(keys.length >= 2, `bulk returned at least the 2 placed slots (got ${keys.length})`);
 });
 
-suite.test('Consolidated schema: gv_get_view_field_schemas filtered to area+slot returns one-key map', async () => {
+suite.test('Consolidated schema: gv_view_field_schemas_get filtered to area+slot returns one-key map', async () => {
   if (suite.skip) return;
   const viewId = await mintView('schema single mode');
-  await h.gv_patch_view_template({ id: viewId, template_id: 'default_table' });
-  await h.gv_apply_view_config({
+  await h.gv_view_template_switch({ id: viewId, template_id: 'default_table' });
+  await h.gv_view_config_apply({
     id:     viewId,
     fields: { 'directory_table-columns': [
       { field_id: fieldIds.name,  slot: 'sb_solo' },
@@ -2586,7 +2586,7 @@ suite.test('Consolidated schema: gv_get_view_field_schemas filtered to area+slot
     ] },
     mode:   'merge',
   });
-  const r = await h.gv_get_view_field_schemas({
+  const r = await h.gv_view_field_schemas_get({
     id:   viewId,
     area: 'directory_table-columns',
     slot: 'sb_solo',
@@ -2596,28 +2596,35 @@ suite.test('Consolidated schema: gv_get_view_field_schemas filtered to area+slot
   TestAssert.equal(keys[0], 'directory_table-columns/sb_solo', 'returned key matches the requested area/slot');
 });
 
-suite.test('Safety: NO permanent-delete ability exists — only set-view-status: trash is the soft-remove path', async () => {
+suite.test('Safety: gv_view_delete defaults to soft delete (mode=trash, recoverable from trash)', async () => {
   if (suite.skip) return;
-  // Anti-test: delete-view was intentionally NOT shipped. AI agents
-  // shouldn't have a one-call permanent destruction path. Soft-delete
-  // via set-view-status: trash is the canonical path; recovery is via
-  // WP admin's "Restore from trash". This test pins that contract.
+  // gv_view_delete exists, but a default invocation (force omitted)
+  // soft-deletes the View — it transitions to trash status,
+  // recoverable from WP admin's "Restore from trash". This test pins
+  // the contract: an AI agent calling gv_view_delete without
+  // explicitly setting force=true gets a recoverable delete, not
+  // permanent destruction.
   TestAssert.isTrue(
-    typeof h.gv_delete_view === 'undefined',
-    'gv_delete_view ability must NOT exist (permanent destruction is admin-only by design)',
+    typeof h.gv_view_delete === 'function',
+    'gv_view_delete is loaded as a tool handler',
   );
+  const viewId = await mintView('soft-delete via gv_view_delete');
+  const r = await h.gv_view_delete({ id: viewId });
+  TestAssert.equal(r.deleted, true, 'default invocation reports deleted=true');
+  TestAssert.equal(r.mode, 'trash', 'default invocation soft-deletes (mode=trash)');
+  TestAssert.equal(r.force, false, 'default does not force-permadelete');
 });
 
 suite.test('Safety: set-view-status: trash works as the soft-remove path (recoverable)', async () => {
   if (suite.skip) return;
   const viewId = await mintView('soft-trash via set-status');
-  const r = await h.gv_set_view_status({ id: viewId, status: 'trash' });
+  const r = await h.gv_view_status_set({ id: viewId, status: 'trash' });
   TestAssert.equal(r.changed, true);
   TestAssert.equal(r.status, 'trash');
   // Trashed views are still in the post table — recoverable. The
   // get_post_status check is the canonical "is this trashed" probe.
   // We assert via wp-cli rather than a REST round-trip because the
-  // trashed view's accessibility through gv_get_view_config is a
+  // trashed view's accessibility through gv_view_config_get is a
   // separate contract.
 });
 
@@ -2632,7 +2639,7 @@ suite.test('Safety: abilities-loader does NOT add a client-side destructive gate
   // destructive ability" gate was removed when DeleteView shipped —
   // there is no longer any "delete the whole View" path through the
   // ability registry, so the env-var ratchet served no remaining
-  // purpose. Status-level removal still flows through gv_set_view_status
+  // purpose. Status-level removal still flows through gv_view_status_set
   // and is gated server-side by the WP `delete_post` capability.
   const { loadAbilitiesAsTools } = await import('../abilities/loader.js');
   const { handlers } = await loadAbilitiesAsTools(gvClient);
@@ -2648,11 +2655,11 @@ suite.test('Safety: abilities-loader does NOT add a client-side destructive gate
   );
 });
 
-suite.test('New ability: gv_duplicate_view clones form + template + fields', async () => {
+suite.test('New ability: gv_view_duplicate clones form + template + fields', async () => {
   if (suite.skip) return;
   const sourceId = await mintView('duplicate source');
-  await h.gv_patch_view_template({ id: sourceId, template_id: 'default_table' });
-  await h.gv_apply_view_config({
+  await h.gv_view_template_switch({ id: sourceId, template_id: 'default_table' });
+  await h.gv_view_config_apply({
     id:     sourceId,
     fields: { 'directory_table-columns': [
       { field_id: fieldIds.name, slot: 'dup_a', custom_label: 'Carry-over' },
@@ -2660,14 +2667,14 @@ suite.test('New ability: gv_duplicate_view clones form + template + fields', asy
     mode:   'merge',
   });
 
-  const r = await h.gv_duplicate_view({ id: sourceId, title: 'Duplicated for stress test' });
+  const r = await h.gv_view_duplicate({ id: sourceId, title: 'Duplicated for stress test' });
   TestAssert.equal(r.duplicated, true);
   TestAssert.equal(r.source_id, sourceId);
   TestAssert.isTrue(r.view_id > 0 && r.view_id !== sourceId, 'fresh post id, distinct from source');
   TestAssert.equal(r.title, 'Duplicated for stress test');
   mintedViewIds.push(r.view_id);
 
-  const dup = await h.gv_get_view_config({ id: r.view_id });
+  const dup = await h.gv_view_config_get({ id: r.view_id });
   TestAssert.equal(dup.form_id, Number(formId), 'form binding cloned');
   TestAssert.equal(dup.template_id, 'default_table', 'template cloned');
   TestAssert.equal(
@@ -2677,30 +2684,30 @@ suite.test('New ability: gv_duplicate_view clones form + template + fields', asy
   );
 });
 
-suite.test('New ability: gv_set_view_status — publish → draft round-trip + idempotent re-set', async () => {
+suite.test('New ability: gv_view_status_set — publish → draft round-trip + idempotent re-set', async () => {
   if (suite.skip) return;
   const viewId = await mintView('set-status round-trip');
 
-  const pub = await h.gv_set_view_status({ id: viewId, status: 'publish' });
+  const pub = await h.gv_view_status_set({ id: viewId, status: 'publish' });
   TestAssert.equal(pub.status, 'publish');
   TestAssert.equal(pub.previous_status, 'draft');
   TestAssert.equal(pub.changed, true);
 
-  const noop = await h.gv_set_view_status({ id: viewId, status: 'publish' });
+  const noop = await h.gv_view_status_set({ id: viewId, status: 'publish' });
   TestAssert.equal(noop.changed, false, 'idempotent — same status returns changed: false');
 
-  const draft = await h.gv_set_view_status({ id: viewId, status: 'draft' });
+  const draft = await h.gv_view_status_set({ id: viewId, status: 'draft' });
   TestAssert.equal(draft.status, 'draft');
   TestAssert.equal(draft.previous_status, 'publish');
   TestAssert.equal(draft.changed, true);
 });
 
-suite.test('New ability: gv_set_view_status rejects an invalid status enum value', async () => {
+suite.test('New ability: gv_view_status_set rejects an invalid status enum value', async () => {
   if (suite.skip) return;
   const viewId = await mintView('set-status invalid');
   let status = null;
   try {
-    await h.gv_set_view_status({ id: viewId, status: 'totally_made_up' });
+    await h.gv_view_status_set({ id: viewId, status: 'totally_made_up' });
   } catch (err) {
     status = err?.response?.status ?? null;
   }
@@ -2711,10 +2718,10 @@ suite.test('New ability: gv_set_view_status rejects an invalid status enum value
 // Coverage for the post-Gemini-review enhancements
 // ====================================================================
 
-suite.test('New ability: gv_list_views enumerates with status / form_id / search filters', async () => {
+suite.test('New ability: gv_views_list enumerates with status / form_id / search filters', async () => {
   if (suite.skip) return;
   const seedTitle = `[stress] list-views needle ${Date.now()}`;
-  const view = await h.gv_create_view({
+  const view = await h.gv_view_create({
     title: seedTitle,
     form_id: Number(formId),
     template_id: 'gravityview-layout-builder',
@@ -2723,7 +2730,7 @@ suite.test('New ability: gv_list_views enumerates with status / form_id / search
   mintedViewIds.push(view.view_id);
 
   // Substring search picks up the freshly-created View.
-  const found = await h.gv_list_views({ search: 'list-views needle', per_page: 10 });
+  const found = await h.gv_views_list({ search: 'list-views needle', per_page: 10 });
   TestAssert.isTrue(Array.isArray(found.views), 'returns views array');
   TestAssert.isTrue(found.total >= 1, 'total reflects matching count');
   const match = found.views.find((v) => v.view_id === view.view_id);
@@ -2732,28 +2739,28 @@ suite.test('New ability: gv_list_views enumerates with status / form_id / search
   TestAssert.equal(match.status, 'draft', 'status reflected');
 
   // form_id filter narrows to that form (every result must match).
-  const byForm = await h.gv_list_views({ form_id: Number(formId), per_page: 5 });
+  const byForm = await h.gv_views_list({ form_id: Number(formId), per_page: 5 });
   for (const v of byForm.views) {
     TestAssert.equal(v.form_id, Number(formId), 'every row matches form_id filter');
   }
 
   // Pagination metadata.
-  const paged = await h.gv_list_views({ per_page: 2, page: 1 });
+  const paged = await h.gv_views_list({ per_page: 2, page: 1 });
   TestAssert.equal(paged.per_page, 2, 'per_page echoed');
   TestAssert.equal(paged.page, 1, 'page echoed');
   TestAssert.isTrue(paged.total_pages >= 1, 'total_pages computed');
 });
 
-suite.test('Projection: gv_get_view_config include narrows the response shape', async () => {
+suite.test('Projection: gv_view_config_get include narrows the response shape', async () => {
   if (suite.skip) return;
   const viewId = await mintView('projection');
 
-  const full = await h.gv_get_view_config({ id: viewId, compact: false });
+  const full = await h.gv_view_config_get({ id: viewId, compact: false });
   TestAssert.isTrue('template_id' in full, 'full has template_id');
   TestAssert.isTrue('fields' in full, 'full has fields');
   TestAssert.isTrue('widgets' in full, 'full has widgets');
 
-  const slim = await h.gv_get_view_config({
+  const slim = await h.gv_view_config_get({
     id: viewId,
     include: ['template_settings', 'form_id'],
     compact: false,
@@ -2766,7 +2773,7 @@ suite.test('Projection: gv_get_view_config include narrows the response shape', 
   TestAssert.isTrue(!('template_id' in slim), 'unrequested template_id stripped');
 });
 
-suite.test('Dry-run: gv_apply_view_config dry_run=true does NOT persist + flags response', async () => {
+suite.test('Dry-run: gv_view_config_apply dry_run=true does NOT persist + flags response', async () => {
   if (suite.skip) return;
   const viewId = await mintView('dry-run apply');
 
@@ -2774,51 +2781,52 @@ suite.test('Dry-run: gv_apply_view_config dry_run=true does NOT persist + flags 
   // so re-fetch + re-quote between writes (the test harness only
   // caches the version returned by the LAST call; the unit-test
   // happens to interleave reads + writes that defeat that).
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id:                viewId,
     mode:              'merge',
     template_settings: { page_size: 25 },
   });
-  const before = await h.gv_get_view_config({ id: viewId, include: ['template_settings'] });
+  const before = await h.gv_view_config_get({ id: viewId, include: ['template_settings'] });
   TestAssert.equal(before.template_settings.page_size, 25, 'baseline persisted');
 
-  const dry = await h.gv_apply_view_config({
+  const dry = await h.gv_view_config_apply({
     id:                viewId,
     mode:              'merge',
     template_settings: { page_size: 999 },
     dry_run:           true,
   });
   TestAssert.equal(dry.dry_run, true, 'response flagged dry_run');
-  TestAssert.equal(dry.would_apply, true, 'response flagged would_apply');
+  // would_apply was dropped in Foundation FIX-22/66 (redundant with dry_run).
+  // The dry-run envelope is now { applied, dry_run, version, view_id }.
 
-  const after = await h.gv_get_view_config({ id: viewId, include: ['template_settings'] });
+  const after = await h.gv_view_config_get({ id: viewId, include: ['template_settings'] });
   TestAssert.equal(after.template_settings.page_size, 25, 'meta unchanged after dry-run');
 });
 
-suite.test('Dry-run: gv_patch_view_field dry_run=true validates without persisting', async () => {
+suite.test('Dry-run: gv_view_field_patch dry_run=true validates without persisting', async () => {
   if (suite.skip) return;
   const viewId = await mintView('dry-run patch-field');
-  await h.gv_add_grid_row({
+  await h.gv_grid_row_add({
     id:           viewId,
     surface:      'fields',
     row_uid:      'r1',
     type:         '100',
     template_ids: ['default_table'],
   });
-  const added = await h.gv_add_view_field({
+  const added = await h.gv_view_field_add({
     id:       viewId,
     area:     'directory_table-columns',
     field_id: 'custom',
     label:    'Original',
   });
-  await h.gv_patch_view_field({
+  await h.gv_view_field_patch({
     id:       viewId,
     area:     'directory_table-columns',
     slot:     added.slot,
     settings: { custom_label: 'Real Label' },
   });
 
-  const dryPatch = await h.gv_patch_view_field({
+  const dryPatch = await h.gv_view_field_patch({
     id:       viewId,
     area:     'directory_table-columns',
     slot:     added.slot,
@@ -2827,15 +2835,15 @@ suite.test('Dry-run: gv_patch_view_field dry_run=true validates without persisti
   });
   TestAssert.equal(dryPatch.dry_run, true);
 
-  const after = await h.gv_get_view_config({ id: viewId });
+  const after = await h.gv_view_config_get({ id: viewId });
   const stored = after.fields['directory_table-columns']?.[added.slot]?.custom_label;
   TestAssert.equal(stored, 'Real Label', 'meta still holds the real-write value, not the dry-run value');
 });
 
-suite.test('Dry-run: gv_add_view_field dry_run=true returns shape but does NOT add a slot', async () => {
+suite.test('Dry-run: gv_view_field_add dry_run=true returns shape but does NOT add a slot', async () => {
   if (suite.skip) return;
   const viewId = await mintView('dry-run add-field');
-  await h.gv_add_grid_row({
+  await h.gv_grid_row_add({
     id:           viewId,
     surface:      'fields',
     row_uid:      'r1',
@@ -2844,10 +2852,10 @@ suite.test('Dry-run: gv_add_view_field dry_run=true returns shape but does NOT a
   });
 
   const beforeCount = Object.keys(
-    (await h.gv_get_view_config({ id: viewId })).fields?.['directory_table-columns'] ?? {},
+    (await h.gv_view_config_get({ id: viewId })).fields?.['directory_table-columns'] ?? {},
   ).length;
 
-  const dry = await h.gv_add_view_field({
+  const dry = await h.gv_view_field_add({
     id:       viewId,
     area:     'directory_table-columns',
     field_id: 'custom',
@@ -2857,7 +2865,7 @@ suite.test('Dry-run: gv_add_view_field dry_run=true returns shape but does NOT a
   TestAssert.equal(dry.dry_run, true);
 
   const afterCount = Object.keys(
-    (await h.gv_get_view_config({ id: viewId })).fields?.['directory_table-columns'] ?? {},
+    (await h.gv_view_config_get({ id: viewId })).fields?.['directory_table-columns'] ?? {},
   ).length;
   TestAssert.equal(afterCount, beforeCount, 'slot count unchanged after dry-run add');
 });
@@ -2884,29 +2892,33 @@ suite.test('Catalog: every gk-gravityview ability advertises a next_steps annota
   }
 });
 
-suite.test('Discovery bridge: list-layouts has_grid description points at list-grid-row-types', async () => {
+suite.test('Discovery bridge: layouts-list has_grid description points at grid-row-types-list', async () => {
   if (suite.skip) return;
   const { data: catalog } = await gvClient.httpClient.request({
     method:  'GET',
     baseURL: gvClient.baseUrl,
     url:     '/wp-json/wp-abilities/v1/abilities',
   });
-  const listLayouts = catalog.find((a) => a.name === 'gk-gravityview/list-layouts');
+  // Foundation's verb-first → noun-first ability rename moved
+  // `list-layouts` → `layouts-list`, `list-grid-row-types` →
+  // `grid-row-types-list`, `list-view-areas` → `view-areas-get`.
+  // The has_grid description bridges to the new noun-first names.
+  const layoutsList = catalog.find((a) => a.name === 'gk-gravityview/layouts-list');
   const hasGridDesc =
-    listLayouts?.output_schema?.properties?.layouts?.items?.properties?.has_grid?.description ?? '';
+    layoutsList?.output_schema?.properties?.layouts?.items?.properties?.has_grid?.description ?? '';
   TestAssert.isTrue(
-    hasGridDesc.includes('list-grid-row-types'),
-    'has_grid description bridges to list-grid-row-types (the discovery step)',
+    hasGridDesc.includes('grid-row-types-list'),
+    'has_grid description bridges to grid-row-types-list (the discovery step)',
   );
   TestAssert.isTrue(
-    hasGridDesc.includes('list-view-areas'),
-    'has_grid description bridges to list-view-areas for static layouts',
+    hasGridDesc.includes('view-areas-get'),
+    'has_grid description bridges to view-areas-get for static layouts',
   );
 });
 
 suite.test('Field presets: default catalog is empty (filter-driven, core ships none)', async () => {
   if (suite.skip) return;
-  const r = await h.gv_list_field_presets();
+  const r = await h.gv_field_presets_list();
   TestAssert.equal(r.count, 0, 'no core-shipped presets');
   TestAssert.isTrue(Array.isArray(r.presets), 'presets is an array');
   TestAssert.equal(r.presets.length, 0);
@@ -2917,7 +2929,7 @@ suite.test('Field presets: apply-field-preset rejects an unknown preset id with 
   const viewId = await mintView('preset 404');
   let status = null;
   try {
-    await h.gv_apply_field_preset({
+    await h.gv_field_preset_apply({
       id:        viewId,
       preset_id: 'definitely-not-registered',
       area:      'directory_list-title',
@@ -3088,7 +3100,7 @@ suite.test('MFV: apply-view-config writes joins via the cross-plugin filter', as
   const viewId = await mintView('mfv cross-plugin');
   const joinedFormId = await mintSecondaryForm('crossplugin');
 
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id:    viewId,
     mode:  'merge',
     joins: [
@@ -3097,7 +3109,7 @@ suite.test('MFV: apply-view-config writes joins via the cross-plugin filter', as
     ],
   });
 
-  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  const cfg = await h.gv_view_config_get({ id: viewId, compact: false });
   TestAssert.isTrue(Array.isArray(cfg.joins), 'get-view-config exposes joins');
   TestAssert.equal(cfg.joins.length, 2, 'apply-view-config persisted both joins');
 
@@ -3113,7 +3125,7 @@ suite.test('MFV: get-view-config include=[joins] projection narrows shape', asyn
     joins: [[Number(formId), '1', joinedFormId, '1']],
   });
 
-  const slim = await h.gv_get_view_config({
+  const slim = await h.gv_view_config_get({
     id:      viewId,
     include: ['joins'],
     compact: false,
@@ -3136,14 +3148,14 @@ suite.test('MFV: list-views match_joined surfaces Views joining a form (not just
   });
 
   // Search for Views connected to the JOINED form (not primary).
-  const matched = await h.gv_list_views({ form_id: joinedFormId, match_joined: true });
+  const matched = await h.gv_views_list({ form_id: joinedFormId, match_joined: true });
   TestAssert.isTrue(
     matched.views.some((v) => v.view_id === viewId),
     'View surfaces under match_joined when its form is only joined',
   );
 
   // Without match_joined, the joined-only View must NOT show up.
-  const unmatched = await h.gv_list_views({ form_id: joinedFormId });
+  const unmatched = await h.gv_views_list({ form_id: joinedFormId });
   TestAssert.isTrue(
     !unmatched.views.some((v) => v.view_id === viewId),
     'plain form_id filter excludes joined-only Views',
@@ -3161,7 +3173,7 @@ suite.test('MFV: list-available-fields includes joined_form_fields tagged with f
     joins: [[Number(formId), '1', joinedFormId, '1']],
   });
 
-  const r = await h.gv_list_available_fields({ id: viewId, zone: 'directory' });
+  const r = await h.gv_available_fields_get({ id: viewId, zone: 'directory' });
   TestAssert.isTrue(Array.isArray(r.joined_form_fields), 'joined_form_fields is an array');
   TestAssert.isTrue(r.joined_form_fields.length > 0, 'at least one joined-form field returned');
   for (const f of r.joined_form_fields) {
@@ -3209,7 +3221,7 @@ suite.test('MFV deep: field slots from primary AND joined forms coexist in one a
   });
 
   // Layout Builder needs a row before fields can land.
-  await h.gv_add_grid_row({
+  await h.gv_grid_row_add({
     id:           viewId,
     surface:      'fields',
     row_uid:      'mixed_row',
@@ -3218,7 +3230,7 @@ suite.test('MFV deep: field slots from primary AND joined forms coexist in one a
   });
 
   // Discover fields available from both forms.
-  const avail = await h.gv_list_available_fields({ id: viewId, zone: 'directory' });
+  const avail = await h.gv_available_fields_get({ id: viewId, zone: 'directory' });
   TestAssert.isTrue(Array.isArray(avail.form_fields), 'primary form_fields surfaced');
   TestAssert.isTrue(Array.isArray(avail.joined_form_fields), 'joined_form_fields surfaced');
   TestAssert.isTrue(avail.form_fields.length > 0, 'primary form has fields');
@@ -3238,7 +3250,7 @@ suite.test('MFV deep: field slots from primary AND joined forms coexist in one a
   TestAssert.isTrue(!!joinedFieldId, 'have a joined field id');
 
   // Add a slot from the PRIMARY form into the View's grid area.
-  const primarySlot = await h.gv_add_view_field({
+  const primarySlot = await h.gv_view_field_add({
     id:       viewId,
     area:     'directory_mixed_row-1',
     field_id: primaryFieldId,
@@ -3248,7 +3260,7 @@ suite.test('MFV deep: field slots from primary AND joined forms coexist in one a
   TestAssert.isTrue(!!primarySlot.slot, 'primary slot created');
 
   // Add a slot from the JOINED form into the SAME area.
-  const joinedSlot = await h.gv_add_view_field({
+  const joinedSlot = await h.gv_view_field_add({
     id:       viewId,
     area:     'directory_mixed_row-1',
     field_id: joinedFieldId,
@@ -3259,7 +3271,7 @@ suite.test('MFV deep: field slots from primary AND joined forms coexist in one a
   TestAssert.isTrue(joinedSlot.slot !== primarySlot.slot, 'unique slot UID despite same field_id');
 
   // Verify both slots are persisted in the field tree under the same area.
-  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  const cfg = await h.gv_view_config_get({ id: viewId, compact: false });
   const area = cfg.fields?.['directory_mixed_row-1'];
   TestAssert.isTrue(typeof area === 'object' && area !== null, 'area exists in field tree');
   TestAssert.isTrue(primarySlot.slot in area, 'primary slot in tree');
@@ -3295,7 +3307,7 @@ suite.test('MFV deep: 3-form join + fields from each form land in distinct areas
   TestAssert.isTrue(labels.every((l) => l.includes('/')), 'every join surfaces both form labels');
 
   // available-fields now spans all three forms.
-  const avail = await h.gv_list_available_fields({ id: viewId });
+  const avail = await h.gv_available_fields_get({ id: viewId });
   const joinedFormIds = new Set(avail.joined_form_fields.map((f) => f.form_id));
   TestAssert.isTrue(joinedFormIds.has(orderForm), 'orders form_id present in joined_form_fields');
   TestAssert.isTrue(joinedFormIds.has(addressForm), 'addresses form_id present in joined_form_fields');
@@ -3303,7 +3315,7 @@ suite.test('MFV deep: 3-form join + fields from each form land in distinct areas
   // Place one field from each form into 3 different rows so the View
   // is genuinely cross-form authored.
   for (const rowUid of ['r_orders', 'r_addr']) {
-    await h.gv_add_grid_row({
+    await h.gv_grid_row_add({
       id:           viewId,
       surface:      'fields',
       row_uid:      rowUid,
@@ -3312,14 +3324,14 @@ suite.test('MFV deep: 3-form join + fields from each form land in distinct areas
     });
   }
 
-  await h.gv_add_view_field({
+  await h.gv_view_field_add({
     id:       viewId,
     area:     'directory_r_orders-1',
     field_id: avail.joined_form_fields.find((f) => f.form_id === orderForm)?.id,
     label:    'Order Field',
     form_id:  orderForm,
   });
-  await h.gv_add_view_field({
+  await h.gv_view_field_add({
     id:       viewId,
     area:     'directory_r_addr-1',
     field_id: avail.joined_form_fields.find((f) => f.form_id === addressForm)?.id,
@@ -3327,7 +3339,7 @@ suite.test('MFV deep: 3-form join + fields from each form land in distinct areas
     form_id:  addressForm,
   });
 
-  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  const cfg = await h.gv_view_config_get({ id: viewId, compact: false });
   TestAssert.isTrue(Object.keys(cfg.fields?.['directory_r_orders-1'] ?? {}).length === 1, 'orders row has 1 slot');
   TestAssert.isTrue(Object.keys(cfg.fields?.['directory_r_addr-1'] ?? {}).length === 1, 'address row has 1 slot');
 
@@ -3341,7 +3353,7 @@ suite.test('MFV deep: apply-view-config bulk — joins + fields from both forms 
   const joinedFormId = await mintSecondaryForm('bulk');
 
   // First materialise a row to host the slots.
-  await h.gv_add_grid_row({
+  await h.gv_grid_row_add({
     id:           viewId,
     surface:      'fields',
     row_uid:      'bulk_row',
@@ -3350,7 +3362,7 @@ suite.test('MFV deep: apply-view-config bulk — joins + fields from both forms 
   });
 
   // Bulk write everything in one shot: joins + fields tree spanning both forms.
-  await h.gv_apply_view_config({
+  await h.gv_view_config_apply({
     id:    viewId,
     mode:  'merge',
     joins: [[Number(formId), '1', joinedFormId, '1']],
@@ -3364,7 +3376,7 @@ suite.test('MFV deep: apply-view-config bulk — joins + fields from both forms 
     },
   });
 
-  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  const cfg = await h.gv_view_config_get({ id: viewId, compact: false });
   TestAssert.isTrue(Array.isArray(cfg.joins) && cfg.joins.length === 1, 'bulk wrote joins');
   const slots = cfg.fields?.['directory_bulk_row-1'] ?? {};
   TestAssert.equal(Object.keys(slots).length, 4, 'four slots in bulk_row-1');
@@ -3384,7 +3396,7 @@ suite.test('MFV deep: dry_run on mixed-form bulk apply does NOT persist any slot
   const viewId = await mintView('mfv dry mixed');
   const joinedFormId = await mintSecondaryForm('dry-mixed');
 
-  await h.gv_add_grid_row({
+  await h.gv_grid_row_add({
     id:           viewId,
     surface:      'fields',
     row_uid:      'dry_row',
@@ -3392,7 +3404,7 @@ suite.test('MFV deep: dry_run on mixed-form bulk apply does NOT persist any slot
     template_ids: ['gravityview-layout-builder'],
   });
 
-  const dry = await h.gv_apply_view_config({
+  const dry = await h.gv_view_config_apply({
     id:    viewId,
     mode:  'merge',
     dry_run: true,
@@ -3406,7 +3418,7 @@ suite.test('MFV deep: dry_run on mixed-form bulk apply does NOT persist any slot
   });
   TestAssert.equal(dry.dry_run, true);
 
-  const cfg = await h.gv_get_view_config({ id: viewId, compact: false });
+  const cfg = await h.gv_view_config_get({ id: viewId, compact: false });
   TestAssert.isTrue(!cfg.joins || cfg.joins.length === 0, 'no joins persisted on dry-run');
   const slots = cfg.fields?.['directory_dry_row-1'] ?? {};
   TestAssert.equal(Object.keys(slots).length, 0, 'no slots persisted on dry-run');
@@ -3446,7 +3458,7 @@ suite.test('MFV deep: apply-joins clears + replaces, list-joins reflects each st
   TestAssert.equal(list.count, 0);
 
   // get-view-config reflects the cleared state.
-  const cfg = await h.gv_get_view_config({ id: viewId, include: ['joins'], compact: false });
+  const cfg = await h.gv_view_config_get({ id: viewId, include: ['joins'], compact: false });
   TestAssert.isTrue(!cfg.joins || cfg.joins.length === 0, 'cleared joins reflected in get-view-config');
 
   await gfClient.deleteForm(f1).catch(() => {});

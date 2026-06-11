@@ -457,9 +457,13 @@ suite.test('loadAbilitiesAsTools: healthy schema passes through untouched', asyn
 // regressions here would silently mis-route every gv_* call.
 // ---------------------------------------------------------------------------
 
-suite.test('methodForAbility: readonly → GET, destructive → DELETE, else POST', () => {
+suite.test('methodForAbility: readonly → GET, destructive+idempotent → DELETE, else POST', () => {
   TestAssert.equal(methodForAbility({ readonly: true }), 'GET');
-  TestAssert.equal(methodForAbility({ destructive: true }), 'DELETE');
+  TestAssert.equal(methodForAbility({ destructive: true, idempotent: true }), 'DELETE');
+  // Destructive but NOT idempotent (e.g. view-delete with default soft trash)
+  // must POST — Foundation's run controller rejects DELETE on these with 405.
+  TestAssert.equal(methodForAbility({ destructive: true, idempotent: false }), 'POST');
+  TestAssert.equal(methodForAbility({ destructive: true }), 'POST');
   TestAssert.equal(methodForAbility({}), 'POST');
   TestAssert.equal(methodForAbility(), 'POST');
 });
