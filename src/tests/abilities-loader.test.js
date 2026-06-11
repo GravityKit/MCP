@@ -381,6 +381,36 @@ suite.test('catalog path: tool-name collision — first wins, later skipped, nev
   TestAssert.equal(run.url, '/wp-json/wp-abilities/v1/abilities/gk-gravityview/views-list/run', 'handler must stay bound to the first claimant');
 });
 
+suite.test('reserved names: catalog tools can never shadow the built-in gf_* contract', async () => {
+  const colliding = [
+    {
+      // Hypothetical future gk-gravity-forms ability whose server name
+      // collides with a released built-in tool — must be skipped.
+      name: 'gk-gravity-forms/forms-list-legacy',
+      description: 'Catalog claimant for a built-in name',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gf_list_forms',
+    },
+    {
+      name: 'gk-gravityview/views-list',
+      description: 'Safe name',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_views_list',
+    },
+  ];
+  const stub = buildCatalogStubGvClient([colliding]);
+  const { definitions, handlers, count } = await loadAbilitiesAsTools(stub, {
+    reservedNames: new Set(['gf_list_forms', 'gv_reload_abilities']),
+  });
+  TestAssert.equal(count, 1, 'reserved-name claimant must be skipped');
+  TestAssert.deepEqual(definitions.map((d) => d.name), ['gv_views_list']);
+  TestAssert.equal(handlers.gf_list_forms, undefined, 'no handler may bind to a reserved name');
+});
+
 suite.test('empty catalog → falls back to WP core path', async () => {
   const stub = buildCatalogStubGvClient([[]], { coreCatalog: syntheticCatalog() });
   const { source, count } = await loadAbilitiesAsTools(stub);

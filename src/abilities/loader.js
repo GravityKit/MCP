@@ -161,15 +161,20 @@ function arrayToProperties(arr) {
  *
  * @param {object} wpClient  WordPressClient instance — uses its
  *                           authenticated httpClient.
+ * @param {object} [options]
+ * @param {Set<string>} [options.reservedNames]  Tool names owned by the
+ *   built-in (static) tool set — e.g. the released gf_* contract.
+ *   Catalog abilities resolving to a reserved name are skipped with a
+ *   warning so the dynamic pipeline can never shadow a shipped tool.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(wpClient) {
+export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
   try {
     const items = await fetchFoundationCatalogItems(wpClient);
     const entries = catalogItemsToEntries(items);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog');
+      return buildTools(wpClient, entries, 'foundation-catalog', reservedNames);
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -178,7 +183,7 @@ export async function loadAbilitiesAsTools(wpClient) {
   }
 
   const entries = await fetchCoreEntries(wpClient);
-  return buildTools(wpClient, entries, 'wp-core');
+  return buildTools(wpClient, entries, 'wp-core', reservedNames);
 }
 
 /**
@@ -200,9 +205,8 @@ async function fetchFoundationCatalogItems(wpClient) {
   let totalPages = 1;
 
   do {
-    // wpClient.httpClient is namespaced to /gravityview/v1 — override
-    // baseURL per-request so the URL resolves at the WP root (same
-    // auth + TLS config, no second axios instance).
+    // Explicit baseURL per request keeps this correct even when a
+    // subclass mounts a namespaced httpClient (same auth + TLS).
     const response = await wpClient.httpClient.request({
       method:  'GET',
       baseURL: wpClient.baseUrl,
@@ -323,12 +327,19 @@ async function fetchCoreEntries(wpClient) {
  * @param {object} wpClient WordPressClient instance.
  * @param {Array}  entries  Normalized tool entries.
  * @param {string} source   Which catalog produced the entries.
+ * @param {Set<string>} [reservedNames] Names owned by the built-in tool set.
  * @returns {{ definitions: object[], handlers: Record<string, Function>, count: number, source: string }}
  */
-function buildTools(wpClient, entries, source) {
+function buildTools(wpClient, entries, source, reservedNames) {
   const definitions = [];
   const handlers = {};
   const claimedBy = new Map();
+
+  if (reservedNames) {
+    for (const name of reservedNames) {
+      claimedBy.set(name, 'a built-in tool');
+    }
+  }
 
   for (const entry of entries) {
     const existing = claimedBy.get(entry.toolName);
