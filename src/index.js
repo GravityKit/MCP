@@ -23,11 +23,6 @@ import logger from './utils/logger.js';
 import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
 import { GravityViewClient } from './gravityview-client.js';
-import {
-  createViewOperations,
-  viewToolDefinitions,
-  buildViewToolHandlers,
-} from './view-operations/index.js';
 import { loadAbilitiesAsTools } from './view-operations/abilities-loader.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -49,7 +44,7 @@ const server = new Server(
     capabilities: {
       tools: { listChanged: true }
     },
-    instructions: 'GravityKit MCP server. Two tool families: gf_* for Gravity Forms (forms, entries, feeds, notifications, fields) and gv_* for GravityView Views.\n\nGravityView authoring flow: 1) gv_create_view to create a draft (defaults to gravityview-layout-builder, supports per-zone template_ids). 2) Use gv_create_grid_row (surface=fields|widgets) to materialise rows in the layout. 3) Use gv_apply_view_config for bulk one-shot writes, or gv_add_view_field / gv_patch_view_field / gv_move_view_field for surgical edits. 4) For Search Bar internal layout, use gv_add_search_field / gv_patch_search_field / gv_remove_search_field — modern keyed-by-position storage (search_fields_section). Existing legacy search_bar widgets auto-migrate to modern on first save through this API.\n\nDiscovery: gv_list_layouts (Layout Builder, DIY, Table, List, DataTables, Map — with is_grid_aware flag), gv_list_widgets, gv_list_grid_row_types, gv_list_widget_zones (header/footer), gv_list_search_zones (search-general/search-advanced), gv_list_available_fields. Schema: gv_get_field_type_schema works for fields, widgets, AND search_field types (search_all, submit, search_mode, etc.) — kind in the response says which.\n\nMove semantics: gv_move_view_field accepts to.before_slot / to.after_slot for ref-relative placement (preferred) and position="start"|"end"|integer for symbolic. Concurrency: pass ifMatch="auto" to use the client-cached version. Compact: responses strip null/empty by default — pass compact=false for raw.\n\nGravity Forms specifics: checkbox/multiselect arrays auto-normalized; multiselect values with commas get split by GF REST API; gf_submit_form_data runs the full pipeline (validation/notifications/feeds), gf_create_entry is raw import.'
+    instructions: 'GravityKit MCP server. Two tool families: gf_* for Gravity Forms (forms, entries, feeds, notifications, fields) and gv_* for GravityView Views.\n\nGravityView authoring flow: 1) gv_view_create to create a draft (defaults to gravityview-layout-builder, supports per-zone template_ids). 2) Use gv_grid_row_add (surface=fields|widgets) to materialise rows in the layout. 3) Use gv_view_config_apply for bulk one-shot writes, or gv_view_field_add / gv_view_field_patch / gv_view_field_move for surgical edits. 4) For Search Bar internal layout, use gv_search_field_add / gv_search_field_patch / gv_search_field_remove — modern keyed-by-position storage (search_fields_section). Existing legacy search_bar widgets auto-migrate to modern on first save through this API.\n\nDiscovery: gv_layouts_list (Layout Builder, DIY, Table, List, DataTables, Map — with is_grid_aware flag), gv_widgets_list, gv_grid_row_types_list, gv_widget_zones_list (header/footer), gv_search_zones_list (search-general/search-advanced), gv_available_fields_get. Schema: gv_field_type_schema_get works for fields, widgets, AND search_field types (search_all, submit, search_mode, etc.) — kind in the response says which.\n\nMove semantics: gv_view_field_move accepts to.before_slot / to.after_slot for ref-relative placement (preferred) and position="start"|"end"|integer for symbolic. Concurrency: pass ifMatch="auto" to use the client-cached version. Compact: responses strip null/empty by default — pass compact=false for raw.\n\nGravity Forms specifics: checkbox/multiselect arrays auto-normalized; multiselect values with commas get split by GF REST API; gf_submit_form_data runs the full pipeline (validation/notifications/feeds), gf_create_entry is raw import.'
   }
 );
 
@@ -58,14 +53,11 @@ let gravityFormsClient = null;
 let fieldOperations = null;
 let fieldValidator = null;
 let gravityViewClient = null;
-let viewOperations = null;
-let viewToolHandlers = null;
-// Auto-generated from the WordPress Abilities API catalog. Populated
-// by initializeClient(). When present, abilityToolDefinitions REPLACES
-// the hand-maintained viewToolDefinitions in the tool list, and
-// abilityToolHandlers REPLACES the legacy switch for gv_* dispatch.
-// When the abilities catalog is unreachable (older WP, plugin off),
-// these stay null and the legacy path serves the gv_* tools.
+// Auto-generated from the WordPress Abilities API (Foundation catalog
+// first, WP core fallback). Populated by initializeClient(). This is
+// the ONLY source of gv_* tools — when no catalog is reachable (older
+// WP, plugin off), these stay null, gv_* tools are absent from
+// tools/list, and every gv_* call retries the load (self-healing).
 let abilityToolDefinitions = null;
 let abilityToolHandlers = null;
 // In-flight catalog fetch. Single-flight: concurrent callers share the
@@ -105,9 +97,7 @@ async function initializeClient() {
     // two separate app passwords.
     try {
       gravityViewClient = new GravityViewClient(process.env);
-      viewOperations = createViewOperations(gravityViewClient);
-      viewToolHandlers = buildViewToolHandlers(viewOperations);
-      logger.info('✅ GravityView client initialized — gv_* tools available');
+      logger.info('✅ GravityView client initialized — loading gv_* abilities');
 
       // Fire-and-forget: kick off the abilities catalog fetch in the
       // background so MCP startup is fast. ListTools awaits up to 2s
@@ -121,8 +111,6 @@ async function initializeClient() {
       // missing — gf_* tools still work standalone.
       logger.warn(`⚠️  GravityView client unavailable: ${gvError.message}`);
       gravityViewClient = null;
-      viewOperations = null;
-      viewToolHandlers = null;
       abilityToolDefinitions = null;
       abilityToolHandlers = null;
     }
@@ -162,20 +150,20 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
   if (abilityToolDefinitions) return;
   if (!abilitiesLoadPromise) {
     abilitiesLoadPromise = loadAbilitiesAsTools(gravityViewClient)
-      .then(({ definitions, handlers, count }) => {
+      .then(({ definitions, handlers, count, source }) => {
         abilityToolDefinitions = definitions;
         abilityToolHandlers = handlers;
-        logger.info(`✅ Loaded ${count} GravityView abilities from /wp-abilities/v1 — replacing legacy gv_* defs`);
+        const sourceLabel = source === 'foundation-catalog' ? 'gravitykit/v1 catalog' : '/wp-abilities/v1';
+        logger.info(`✅ Loaded ${count} GravityKit abilities from ${sourceLabel}`);
         // Tell connected MCP clients to refetch the tool list so the
-        // abilities-derived schemas (e.g. `joins` on apply-view-config,
-        // gv_apply_joins, gv_list_joins) replace the legacy ones in
-        // their cached catalogue.
+        // abilities-derived schemas (e.g. `joins` on view-config-apply,
+        // gk_apply_joins, gk_list_joins) land in their cached catalogue.
         server.sendToolListChanged().catch((err) => {
           logger.warn(`tools/list_changed notification failed: ${err.message}`);
         });
       })
       .catch((err) => {
-        logger.warn(`⚠️  Abilities API catalog unavailable: ${err.message} — falling back to legacy hand-maintained tool defs (will retry on next call)`);
+        logger.warn(`⚠️  Abilities API catalog unavailable: ${err.message} — gv_* tools unavailable until a catalog is reachable (will retry on next call)`);
         abilitiesLoadPromise = null; // clear so next call retries
         throw err;
       });
@@ -288,8 +276,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   }
   // Best-effort wait for the abilities catalog. 2s covers a warm
   // cold-start on dev.test (~800ms) plus headroom; if WP is
-  // genuinely unreachable we fall through to the legacy tool defs
-  // and the next gv_* call retries.
+  // genuinely unreachable the list ships without gv_* tools and the
+  // next gv_* call (or gv_reload_abilities) retries.
   await ensureAbilitiesLoaded({ timeoutMs: 2000 });
 
   return {
@@ -700,11 +688,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       ...fieldOperationTools,
 
       // GravityView Inspector — auto-generated from the WordPress
-      // Abilities API catalog when available, falls back to the
-      // hand-maintained list when not. abilityToolDefinitions is
-      // populated by initializeClient() above; both arrays are the
-      // same shape so the spread is uniform.
-      ...(abilityToolDefinitions ?? viewToolDefinitions),
+      // Abilities API (Foundation catalog first, WP core fallback).
+      // Empty until the background load succeeds; gv_reload_abilities
+      // and the per-call self-heal repopulate it.
+      ...(abilityToolDefinitions ?? []),
 
       // Always present — the manual escape hatch when the eager
       // background load fails AND the per-call self-heal hasn't fired
@@ -839,9 +826,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }, params)();
 
     // GravityView Inspector — every gv_* tool routes through the
-    // shared handler map. Single dispatch instead of 20 cases keeps
-    // the switch readable and makes adding/removing tools a one-line
-    // change in view-operations/index.js.
+    // abilities-derived handler map. Single dispatch keeps the switch
+    // readable; the map is rebuilt whenever the abilities catalog is
+    // (re)fetched.
     default:
       if (name === 'gv_reload_abilities') {
         if (!gravityViewClient) {
@@ -877,14 +864,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // and lets transient cert / network / boot races recover
         // without an MCP process restart.
         await ensureAbilitiesLoaded();
-        // Prefer the abilities-derived handler when the WordPress
-        // Abilities API catalog was reachable at startup. Falls back
-        // to the legacy hand-maintained handler map when not — both
-        // serve the same gv_* tool name to keep the wire compatible.
-        const handlerMap = abilityToolHandlers ?? viewToolHandlers;
+        const handlerMap = abilityToolHandlers;
         if (!handlerMap) {
           return createErrorResponse(
-            'GravityView tool handlers not initialized.'
+            'GravityView abilities catalog unreachable — no gv_* tools are available. Fix WP connectivity / credentials, then call gv_reload_abilities to refresh.'
           );
         }
         const handler = handlerMap[name];

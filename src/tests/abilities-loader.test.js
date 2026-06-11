@@ -12,8 +12,9 @@ import { TestRunner, TestAssert } from './helpers.js';
 import {
   normalizeInputSchema,
   loadAbilitiesAsTools,
-  abilityNameToToolName,
   methodForAbility,
+  FOUNDATION_CATALOG_ROUTE,
+  CORE_ABILITIES_ROUTE,
 } from '../view-operations/abilities-loader.js';
 
 const suite = new TestRunner('Abilities Loader Tests');
@@ -147,44 +148,94 @@ suite.test('normalizeInputSchema: never mutates its input', () => {
 // tool now satisfies the MCP contract.
 // ---------------------------------------------------------------------------
 
-/** Stub gvClient — only `httpClient.request` and `baseUrl` are exercised. */
+/**
+ * Stub gvClient for the WP-core fallback path: the Foundation catalog
+ * 404s (older Foundation without gravitykit/v1), the core catalog
+ * serves `catalog`. Records every request config in `requests`.
+ */
 function buildStubGvClient(catalog) {
+  const requests = [];
   return {
     baseUrl: 'https://test.invalid',
+    requests,
     httpClient: {
-      request: async () => ({ data: catalog }),
+      request: async (config) => {
+        requests.push(config);
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          const err = new Error('Request failed with status code 404');
+          err.response = { status: 404 };
+          throw err;
+        }
+        return { data: catalog, headers: {} };
+      },
     },
   };
 }
 
-/** Synthetic catalog covering the three failure modes + a healthy ability. */
+/**
+ * Stub gvClient whose Foundation catalog responds with the given pages
+ * (array of item-arrays; X-WP-TotalPages = pages.length). Core-catalog
+ * requests serve `coreCatalog`. Records every request config in
+ * `requests` so tests can assert handler execution wiring.
+ */
+function buildCatalogStubGvClient(pages, { coreCatalog = [] } = {}) {
+  const requests = [];
+  return {
+    baseUrl: 'https://test.invalid',
+    requests,
+    httpClient: {
+      request: async (config) => {
+        requests.push(config);
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          const page = config.params?.page || 1;
+          return {
+            data: pages[page - 1] || [],
+            headers: { 'x-wp-totalpages': String(pages.length) },
+          };
+        }
+        if (config.url === CORE_ABILITIES_ROUTE) {
+          return { data: coreCatalog, headers: {} };
+        }
+        // Ability /run executions.
+        return { data: { ok: true }, headers: {} };
+      },
+    },
+  };
+}
+
+/**
+ * Synthetic WP-core catalog covering the three failure modes + a healthy
+ * ability. GravityKit items carry the `gk_registered_by` stamp and the
+ * `mcp_tool_name` Foundation applies to every ability it registers —
+ * the core-path filter + naming contract.
+ */
 function syntheticCatalog() {
   return [
     // Healthy reference — must round-trip untouched.
     {
-      name: 'gk-gravityview/list-layouts',
+      name: 'gk-gravityview/layouts-list',
       description: 'List installed layouts',
       input_schema: { type: 'object', properties: { compact: { type: 'boolean' } } },
-      meta: { annotations: { readonly: true } },
+      meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: { readonly: true } },
     },
     // Bug shape #1 — input_schema is itself an array (tools 29-36).
     {
-      name: 'gk-gravityview/add-view-field',
+      name: 'gk-gravityview/view-field-add',
       description: 'Add a field to a View',
       input_schema: [
         { name: 'view_id', type: 'integer', required: true },
         { name: 'field_id', type: 'string', required: true },
       ],
-      meta: { annotations: {} },
+      meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_view_field_add', annotations: {} },
     },
     // Bug shape #2 — properties is an array (tool 57).
     {
       name: 'gk-multiple-forms/list-joins',
       description: 'List joins',
       input_schema: { type: 'object', properties: [] },
-      meta: { annotations: { readonly: true } },
+      meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gk_list_joins', annotations: { readonly: true } },
     },
-    // Outside our namespaces — must be filtered out.
+    // Another plugin's ability — no Foundation stamp, must be filtered out.
     {
       name: 'core/unrelated-ability',
       description: 'Should not be exposed',
@@ -194,12 +245,147 @@ function syntheticCatalog() {
   ];
 }
 
-suite.test('loadAbilitiesAsTools: filters to gk-gravityview/* + gk-multiple-forms/*', async () => {
-  const { definitions, count } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
-  TestAssert.equal(count, 3, 'expected 3 in-namespace abilities, got ' + count);
+suite.test('core fallback: filters on Foundation\'s gk_registered_by stamp, unstamped abilities excluded', async () => {
+  const { definitions, count, source } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
+  TestAssert.equal(source, 'wp-core', 'catalog 404 must route to the WP-core path');
+  TestAssert.equal(count, 3, 'expected 3 stamped abilities, got ' + count);
   TestAssert.equal(definitions.length, 3, 'definitions count must match');
   const names = definitions.map((d) => d.name).sort();
-  TestAssert.deepEqual(names, ['gv_add_view_field', 'gv_list_joins', 'gv_list_layouts']);
+  TestAssert.deepEqual(names, ['gk_list_joins', 'gv_layouts_list', 'gv_view_field_add']);
+});
+
+suite.test('core fallback: cross-product abilities included; meta.mcp_tool_name beats gv_ derivation', async () => {
+  const catalog = [
+    ...syntheticCatalog(),
+    {
+      // A different GravityKit product — included via the same stamp,
+      // named by the server, not the gv_ derivation.
+      name: 'gk-gravitycharts/charts-list',
+      description: 'List charts',
+      input_schema: { type: 'object', properties: {} },
+      meta: {
+        gk_registered_by: 'gravitykit',
+        mcp_tool_name: 'gc_charts_list',
+        annotations: { readonly: true },
+      },
+    },
+  ];
+  const { definitions, source } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  TestAssert.equal(source, 'wp-core');
+  const names = definitions.map((d) => d.name).sort();
+  TestAssert.deepEqual(names, ['gc_charts_list', 'gk_list_joins', 'gv_layouts_list', 'gv_view_field_add']);
+});
+
+// ---------------------------------------------------------------------------
+// Foundation catalog path — the canonical source. Items use the
+// gravitykit/v1 Manager::to_rest_item() shape: top-level `annotations`,
+// `enabled`, `mcp_tool_name`; already GravityKit-only server-side.
+// ---------------------------------------------------------------------------
+
+function syntheticFoundationCatalog() {
+  return [
+    {
+      name: 'gk-gravityview/views-list',
+      label: 'List Views',
+      description: 'List editable Views.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_views_list',
+    },
+    {
+      // Cross-product — the catalog path trusts the server's
+      // GravityKit-only filtering; no client-side product list.
+      name: 'gk-gravitycharts/charts-list',
+      label: 'List Charts',
+      description: 'List charts.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gc_charts_list',
+    },
+    {
+      // Defensive: the server omits disabled by default, but if one
+      // arrives flagged enabled:false it must be skipped.
+      name: 'gk-gravityview/view-status-set',
+      description: 'Disabled ability',
+      input_schema: { type: 'object', properties: {} },
+      annotations: {},
+      enabled: false,
+      mcp_tool_name: 'gv_view_status_set',
+    },
+    {
+      // No mcp_tool_name → must be SKIPPED with a warning; the client
+      // never invents tool names.
+      name: 'gk-gravityview/layouts-list',
+      description: 'List layouts',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+    },
+  ];
+}
+
+suite.test('catalog path: server-owned naming; disabled and unnamed items skipped', async () => {
+  const stub = buildCatalogStubGvClient([syntheticFoundationCatalog()]);
+  const { definitions, count, source } = await loadAbilitiesAsTools(stub);
+  TestAssert.equal(source, 'foundation-catalog');
+  const names = definitions.map((d) => d.name).sort();
+  TestAssert.deepEqual(names, ['gc_charts_list', 'gv_views_list']);
+  TestAssert.equal(count, 2);
+});
+
+suite.test('catalog path: handlers execute via /wp-abilities/v1 run route with annotation-derived method', async () => {
+  const stub = buildCatalogStubGvClient([syntheticFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gc_charts_list({});
+  const run = stub.requests.find((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.isTrue(!!run, 'handler must hit the run endpoint');
+  TestAssert.equal(run.url, '/wp-json/wp-abilities/v1/abilities/gk-gravitycharts/charts-list/run');
+  TestAssert.equal(run.method, 'GET');
+});
+
+suite.test('catalog path: paginates via X-WP-TotalPages', async () => {
+  const items = syntheticFoundationCatalog();
+  const stub = buildCatalogStubGvClient([[items[0]], [items[1]]]);
+  const { count, source } = await loadAbilitiesAsTools(stub);
+  TestAssert.equal(source, 'foundation-catalog');
+  TestAssert.equal(count, 2);
+});
+
+suite.test('catalog path: tool-name collision — first wins, later skipped, never shadowed', async () => {
+  const colliding = [
+    {
+      name: 'gk-gravityview/views-list',
+      description: 'first claimant',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_views_list',
+    },
+    {
+      name: 'gk-gravityboard/views-list',
+      description: 'colliding claimant',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_views_list',
+    },
+  ];
+  const stub = buildCatalogStubGvClient([colliding]);
+  const { definitions, handlers, count } = await loadAbilitiesAsTools(stub);
+  TestAssert.equal(count, 1, 'collision must not produce two tools');
+  TestAssert.equal(definitions[0].description, 'first claimant');
+  await handlers.gv_views_list({});
+  const run = stub.requests.find((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(run.url, '/wp-json/wp-abilities/v1/abilities/gk-gravityview/views-list/run', 'handler must stay bound to the first claimant');
+});
+
+suite.test('empty catalog → falls back to WP core path', async () => {
+  const stub = buildCatalogStubGvClient([[]], { coreCatalog: syntheticCatalog() });
+  const { source, count } = await loadAbilitiesAsTools(stub);
+  TestAssert.equal(source, 'wp-core');
+  TestAssert.equal(count, 3);
 });
 
 suite.test('loadAbilitiesAsTools: EVERY generated tool has a valid MCP inputSchema', async () => {
@@ -213,8 +399,8 @@ suite.test('loadAbilitiesAsTools: EVERY generated tool has a valid MCP inputSche
 
 suite.test('loadAbilitiesAsTools: tools 29-36 repro — array input_schema is wrapped', async () => {
   const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
-  const tool = definitions.find((d) => d.name === 'gv_add_view_field');
-  TestAssert.isTrue(!!tool, 'gv_add_view_field must exist');
+  const tool = definitions.find((d) => d.name === 'gv_view_field_add');
+  TestAssert.isTrue(!!tool, 'gv_view_field_add must exist');
   assertValidMcpInputSchema(tool.inputSchema);
   TestAssert.isTrue('view_id' in tool.inputSchema.properties);
   TestAssert.isTrue('field_id' in tool.inputSchema.properties);
@@ -223,15 +409,15 @@ suite.test('loadAbilitiesAsTools: tools 29-36 repro — array input_schema is wr
 
 suite.test('loadAbilitiesAsTools: tool 57 repro — properties:[] becomes properties:{}', async () => {
   const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
-  const tool = definitions.find((d) => d.name === 'gv_list_joins');
-  TestAssert.isTrue(!!tool, 'gv_list_joins must exist');
+  const tool = definitions.find((d) => d.name === 'gk_list_joins');
+  TestAssert.isTrue(!!tool, 'gk_list_joins must exist');
   assertValidMcpInputSchema(tool.inputSchema);
   TestAssert.deepEqual(tool.inputSchema.properties, {});
 });
 
 suite.test('loadAbilitiesAsTools: healthy schema passes through untouched', async () => {
   const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
-  const tool = definitions.find((d) => d.name === 'gv_list_layouts');
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
   TestAssert.isTrue(!!tool);
   TestAssert.deepEqual(tool.inputSchema.properties, { compact: { type: 'boolean' } });
 });
@@ -240,12 +426,6 @@ suite.test('loadAbilitiesAsTools: healthy schema passes through untouched', asyn
 // Lightweight smoke for the existing helpers — these have no tests yet and
 // regressions here would silently mis-route every gv_* call.
 // ---------------------------------------------------------------------------
-
-suite.test('abilityNameToToolName: strips namespace, kebab → snake', () => {
-  TestAssert.equal(abilityNameToToolName('gk-gravityview/list-layouts'), 'gv_list_layouts');
-  TestAssert.equal(abilityNameToToolName('gk-multiple-forms/list-joins'), 'gv_list_joins');
-  TestAssert.equal(abilityNameToToolName('gk-gravityview/apply-view-config'), 'gv_apply_view_config');
-});
 
 suite.test('methodForAbility: readonly → GET, destructive → DELETE, else POST', () => {
   TestAssert.equal(methodForAbility({ readonly: true }), 'GET');

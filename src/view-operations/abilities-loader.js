@@ -1,44 +1,47 @@
 /**
  * Auto-generate MCP tool definitions from the live WordPress
- * Abilities API catalog (`/wp-json/wp-abilities/v1/abilities`).
+ * Abilities API surface.
  *
- * Replaces the hand-maintained `viewToolDefinitions` array (and the
- * corresponding `buildViewToolHandlers` switch) with a dynamic
- * pipeline:
+ * Source preference chain (each step falls back to the next):
  *
- *   1. On MCP startup, fetch every ability registered under the
- *      `gk-gravityview/` namespace.
- *   2. Transform each ability into a `{ name, description, inputSchema }`
- *      tuple the MCP runtime can list to clients.
- *   3. Build a handler per ability that executes the ability through
- *      `/wp-abilities/v1/abilities/{name}/run` with the right HTTP
- *      method derived from the ability's annotations
- *      (`readonly` → GET, `destructive` → DELETE, otherwise POST).
+ *   1. Foundation catalog — `/wp-json/gravitykit/v1/abilities`.
+ *      The canonical contract: server-side GravityKit filtering
+ *      (`gk_registered_by === 'gravitykit'`), server-owned tool naming
+ *      (`mcp_tool_name`, derived from Foundation's per-product
+ *      MCP_TOOL_PREFIXES map), and disabled abilities already omitted.
+ *      Any GravityKit product that registers abilities through Foundation
+ *      appears here automatically — no client-side allow-list.
+ *   2. WP core catalog — `/wp-json/wp-abilities/v1/abilities`.
+ *      For connections whose user can't pass the Foundation catalog's
+ *      permission gate (default manage_options vs core's `read`).
+ *      Filtered client-side on Foundation's stamped metadata:
+ *      `meta.gk_registered_by === 'gravitykit'`.
+ *   3. When both catalogs are unreachable (older WP without the
+ *      Abilities API, plugin disabled, network blip) this module throws;
+ *      the caller leaves gv_* tools unregistered and retries on the next
+ *      gv_* call (self-healing).
  *
- * Naming convention: `gk-gravityview/list-layouts` → `gv_list_layouts`.
- * Strips the namespace prefix and converts dashes to underscores.
+ * Tool naming is owned by the SERVER on both paths: Foundation's
+ * `mcp_tool_name` (Manager::get_mcp_tool_name() + MCP_TOOL_PREFIXES).
+ * The client never invents names — abilities arriving without
+ * `mcp_tool_name` are skipped with a warning, so a naming gap is
+ * visible instead of silently diverging between connections.
  *
- * When the abilities catalog is unreachable (older WP without the
- * Abilities API, plugin disabled, network blip), the caller falls
- * back to the legacy hand-maintained tool definitions.
+ * Handlers execute abilities through `/wp-abilities/v1/abilities/{name}/run`
+ * with the HTTP method derived from the ability's annotations
+ * (`readonly` → GET, `destructive` → DELETE, otherwise POST).
  */
 
-/**
- * Convert a fully-qualified ability name to the MCP tool name our
- * existing callers + docs already know. Idempotent.
- *
- * Examples:
- *   gk-gravityview/list-layouts          → gv_list_layouts
- *   gk-gravityview/apply-view-config     → gv_apply_view_config
- *   gk-gravityview/get-template-settings-schema → gv_get_template_settings_schema
- */
-export function abilityNameToToolName(abilityName) {
-  if (typeof abilityName !== 'string' || !abilityName.includes('/')) {
-    return abilityName;
-  }
-  const [, slug] = abilityName.split('/');
-  return 'gv_' + slug.replace(/-/g, '_');
-}
+import logger from '../utils/logger.js';
+
+/** Foundation's GravityKit-only catalog route (Foundation >= 1.21). */
+export const FOUNDATION_CATALOG_ROUTE = '/wp-json/gravitykit/v1/abilities';
+
+/** WP core's all-plugins abilities route (WP 6.9+ / abilities-api). */
+export const CORE_ABILITIES_ROUTE = '/wp-json/wp-abilities/v1/abilities';
+
+/** Foundation's ability-name contract: gk-{product}/{action}. */
+const GK_NAME_PATTERN = /^gk-[a-z0-9-]+\//;
 
 /**
  * Determine the HTTP method to use when executing an ability.
@@ -149,57 +152,191 @@ function arrayToProperties(arr) {
 }
 
 /**
- * Default ability namespaces surfaced as MCP tools. Both `gk-gravityview/*`
- * (core GravityView abilities) and `gk-multiple-forms/*` (the Multiple
- * Forms add-on's join surface) share the `gv_*` MCP prefix because
- * they're conceptually one product family from the agent's POV. Slugs
- * are unique across both namespaces (verified manually); a collision
- * would silently shadow one with the other and is worth detecting if
- * we add a third namespace.
+ * Fetch the abilities surface + build MCP tool definitions and handlers.
  *
- * @type {string[]}
- */
-export const DEFAULT_ABILITY_NAMESPACES = ['gk-gravityview', 'gk-multiple-forms'];
-
-/**
- * Fetch the abilities catalog + build MCP tool definitions and
- * handlers in a single pass.
- *
- * Throws when the abilities catalog endpoint is unreachable (the
- * caller decides whether to fall back to legacy tool defs).
+ * Tries the Foundation catalog first (canonical naming + filtering),
+ * falls back to the WP core catalog. Throws only when BOTH are
+ * unreachable — the caller leaves gv_* tools unregistered and retries
+ * on a later call.
  *
  * @param {object} gvClient  GravityViewClient instance — uses its
  *                           authenticated httpClient.
- * @param {string|string[]} [namespaces=DEFAULT_ABILITY_NAMESPACES]
- *   Filter abilities by namespace prefix. Accepts a single string for
- *   backward compatibility or an array.
- * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number }>}
+ * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(gvClient, namespaces = DEFAULT_ABILITY_NAMESPACES) {
-  // gvClient.httpClient is namespaced to /gravityview/v1. The
-  // Abilities API lives at a sibling namespace (/wp-abilities/v1),
-  // so we override baseURL per-request to the WP root rather than
-  // creating a second axios instance (same auth + TLS config).
+export async function loadAbilitiesAsTools(gvClient) {
+  try {
+    const items = await fetchFoundationCatalogItems(gvClient);
+    const entries = catalogItemsToEntries(items);
+
+    if (entries.length > 0) {
+      return buildTools(gvClient, entries, 'foundation-catalog');
+    }
+
+    logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
+  } catch (err) {
+    logger.warn(`Foundation catalog unavailable (${err.message}) — falling back to WP core catalog at ${CORE_ABILITIES_ROUTE}`);
+  }
+
+  const entries = await fetchCoreEntries(gvClient);
+  return buildTools(gvClient, entries, 'wp-core');
+}
+
+/**
+ * Fetch every page of the Foundation GravityKit catalog.
+ *
+ * Pagination per the Foundation contract: `page`/`per_page` params,
+ * `X-WP-TotalPages` response header. MAX_PAGES is a runaway guard, not
+ * a coverage cap — at 100 items/page it allows 2,000 abilities.
+ *
+ * @param {object} gvClient GravityViewClient instance.
+ * @returns {Promise<object[]>} Catalog items (Manager::to_rest_item() shape).
+ */
+async function fetchFoundationCatalogItems(gvClient) {
+  const PER_PAGE = 100;
+  const MAX_PAGES = 20;
+  const items = [];
+
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    // gvClient.httpClient is namespaced to /gravityview/v1 — override
+    // baseURL per-request so the URL resolves at the WP root (same
+    // auth + TLS config, no second axios instance).
+    const response = await gvClient.httpClient.request({
+      method:  'GET',
+      baseURL: gvClient.baseUrl,
+      url:     FOUNDATION_CATALOG_ROUTE,
+      params:  { per_page: PER_PAGE, page },
+    });
+
+    if (!Array.isArray(response.data)) {
+      throw new Error('Unexpected Foundation catalog shape — expected array.');
+    }
+
+    items.push(...response.data);
+
+    const headerTotal = Number(response.headers?.['x-wp-totalpages']);
+    totalPages = Number.isFinite(headerTotal) && headerTotal > 0 ? Math.min(headerTotal, MAX_PAGES) : 1;
+    page += 1;
+  } while (page <= totalPages);
+
+  return items;
+}
+
+/**
+ * Map Foundation catalog items (Manager::to_rest_item() shape) to the
+ * internal tool-entry shape. The catalog is already GravityKit-only and
+ * omits disabled abilities by default; the name-pattern and `enabled`
+ * checks here are defensive only. Items without `mcp_tool_name` are
+ * skipped — the server owns naming, the client never derives.
+ *
+ * @param {object[]} items Foundation catalog items.
+ * @returns {Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>}
+ */
+function catalogItemsToEntries(items) {
+  const entries = [];
+
+  for (const item of items) {
+    if (typeof item?.name !== 'string' || !GK_NAME_PATTERN.test(item.name)) continue;
+    if (item.enabled === false) continue;
+    if (typeof item.mcp_tool_name !== 'string' || item.mcp_tool_name === '') {
+      logger.warn(`Ability ${item.name} has no mcp_tool_name — skipped (the server owns tool naming)`);
+      continue;
+    }
+
+    entries.push({
+      abilityName:    item.name,
+      toolName:       item.mcp_tool_name,
+      description:    item.description || item.label || item.name,
+      rawInputSchema: item.input_schema,
+      annotations:    item.annotations && typeof item.annotations === 'object' ? item.annotations : {},
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * Fetch the WP core abilities catalog and filter to GravityKit abilities.
+ *
+ * Filters on Foundation's stamped metadata
+ * (`meta.gk_registered_by === 'gravitykit'`) — the documented
+ * cross-product contract ("filter on these keys rather than parsing
+ * names"). Naming requires `meta.mcp_tool_name`; abilities without it
+ * are skipped with a warning (the server owns naming).
+ *
+ * Throws when no usable abilities are found so the caller's state stays
+ * null (not sticky-empty) and the per-call self-heal keeps retrying.
+ *
+ * @param {object} gvClient GravityViewClient instance.
+ * @returns {Promise<Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>>}
+ */
+async function fetchCoreEntries(gvClient) {
   const { data } = await gvClient.httpClient.request({
     method:  'GET',
     baseURL: gvClient.baseUrl,
-    url:     '/wp-json/wp-abilities/v1/abilities',
+    url:     CORE_ABILITIES_ROUTE,
   });
+
   if (!Array.isArray(data)) {
     throw new Error('Unexpected Abilities API catalog shape — expected array.');
   }
 
-  const nsList = Array.isArray(namespaces) ? namespaces : [namespaces];
-  const ours = data.filter(
-    (a) => typeof a?.name === 'string' && nsList.some((ns) => a.name.startsWith(ns + '/')),
-  );
+  const entries = [];
 
+  for (const ability of data) {
+    if (typeof ability?.name !== 'string') continue;
+
+    const meta = ability.meta && typeof ability.meta === 'object' ? ability.meta : {};
+    if (meta.gk_registered_by !== 'gravitykit') continue;
+
+    if (typeof meta.mcp_tool_name !== 'string' || meta.mcp_tool_name === '') {
+      logger.warn(`Ability ${ability.name} has no meta.mcp_tool_name — skipped (the server owns tool naming)`);
+      continue;
+    }
+
+    entries.push({
+      abilityName:    ability.name,
+      toolName:       meta.mcp_tool_name,
+      description:    ability.description || ability.label || ability.name,
+      rawInputSchema: ability.input_schema,
+      annotations:    meta.annotations && typeof meta.annotations === 'object' ? meta.annotations : {},
+    });
+  }
+
+  if (entries.length === 0) {
+    throw new Error('No usable GravityKit abilities in the WP core catalog (missing gk_registered_by stamp or mcp_tool_name).');
+  }
+
+  return entries;
+}
+
+/**
+ * Build MCP tool definitions + handlers from normalized entries.
+ *
+ * Collision guard: with naming delegated to the server and filtering no
+ * longer namespace-bound, two abilities could map to one tool name. The
+ * first wins; later collisions are logged and skipped — never silently
+ * shadowed.
+ *
+ * @param {object} gvClient GravityViewClient instance.
+ * @param {Array}  entries  Normalized tool entries.
+ * @param {string} source   Which catalog produced the entries.
+ * @returns {{ definitions: object[], handlers: Record<string, Function>, count: number, source: string }}
+ */
+function buildTools(gvClient, entries, source) {
   const definitions = [];
   const handlers = {};
+  const claimedBy = new Map();
 
-  for (const ability of ours) {
-    const toolName = abilityNameToToolName(ability.name);
-    const annotations = ability?.meta?.annotations || {};
+  for (const entry of entries) {
+    const existing = claimedBy.get(entry.toolName);
+    if (existing) {
+      logger.warn(`Tool-name collision: "${entry.toolName}" from ${entry.abilityName} clashes with ${existing} — skipping ${entry.abilityName}`);
+      continue;
+    }
+    claimedBy.set(entry.toolName, entry.abilityName);
 
     // MCP tool definition. `normalizeInputSchema()` guarantees the
     // shape MCP's Zod validator expects:
@@ -208,32 +345,29 @@ export async function loadAbilitiesAsTools(gvClient, namespaces = DEFAULT_ABILIT
     // (top-level or under `properties`) fail `tools/list` validation —
     // see the helper's docblock for the two shapes we coerce.
     definitions.push({
-      name: toolName,
-      description: ability.description || ability.label || ability.name,
-      inputSchema: normalizeInputSchema(ability.input_schema),
+      name: entry.toolName,
+      description: entry.description,
+      inputSchema: normalizeInputSchema(entry.rawInputSchema),
     });
 
     // Closure captures the ability name + method so the dispatcher
-    // doesn't need to re-resolve them at call time. The server-side
-    // ability registry no longer exposes any "delete the whole View"
-    // ability — the most destructive surface left is removing a
-    // single field/widget/row, which is part of normal authoring
-    // (and reversible by re-adding). For status-level changes the
-    // caller uses gv_set_view_status with status='trash', gated by
-    // delete_post on the WP side.
-    const abilityName  = ability.name;
-    const method       = methodForAbility(annotations);
-    handlers[toolName] = async (params) => executeAbility(gvClient, abilityName, method, params || {});
+    // doesn't need to re-resolve them at call time. Destructive
+    // gating lives server-side: each ability's permission_callback
+    // (e.g. delete_post for view-delete) plus Foundation's
+    // per-ability enable/disable toggles.
+    const abilityName = entry.abilityName;
+    const method      = methodForAbility(entry.annotations);
+    handlers[entry.toolName] = async (params) => executeAbility(gvClient, abilityName, method, params || {});
   }
 
-  return { definitions, handlers, count: ours.length };
+  return { definitions, handlers, count: definitions.length, source };
 }
 
 /**
  * Execute one ability via `/wp-abilities/v1/abilities/{name}/run`.
  *
  * Encoding rules per the Abilities API spec:
- *   - GET / DELETE: input rides on a `?input=<URL-encoded JSON>` query arg
+ *   - GET / DELETE: input rides on bracketed query params
  *   - POST:         input rides in the JSON body as `{input: ...}`
  *
  * Errors propagate verbatim from the server so the MCP runtime can
