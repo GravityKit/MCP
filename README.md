@@ -21,7 +21,7 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 ### Prerequisites
 - Node.js 18+
 - WordPress with Gravity Forms 2.5+
-- HTTPS-enabled WordPress site (required for authentication)
+- WordPress site over HTTPS (recommended) — local `http://` dev sites (localhost, `*.test`, `*.local`) work too
 
 ### Installation
 
@@ -37,11 +37,31 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
    cp .env.example .env
    ```
 
-3. **Configure credentials** in `.env`:
+3. **Enable the Gravity Forms REST API** (one-time, required for any credential type):
+   - Go to **Forms → Settings → REST API** and check **Enable access to the API** — Gravity Forms doesn't register its REST routes without it.
+
+4. **Create credentials** in WordPress (pick one):
+
+   **Application password (recommended):**
+   - Go to **Users → Profile → Application Passwords**
+   - Name it (e.g. `GravityKit MCP`) and click **Add New Application Password**
+   - Copy the generated password. Your username + this password are your credentials, and access follows your WordPress capabilities. On sites running GravityKit Foundation, the same credential also powers the GravityKit product tools.
+
+   **Gravity Forms API key (for scoped access, e.g. a read-only key):**
+   - On the same **Forms → Settings → REST API** screen, click **Add Key**
+   - Choose the user and permission level, then save the Consumer Key (`ck_…`) and Secret (`cs_…`)
+
+5. **Configure credentials** in `.env`:
    ```env
-   GRAVITY_FORMS_CONSUMER_KEY=your_key_here
-   GRAVITY_FORMS_CONSUMER_SECRET=your_secret_here
    GRAVITY_FORMS_BASE_URL=https://yoursite.com
+
+   # Application password:
+   GRAVITY_FORMS_CONSUMER_KEY=your_wp_username
+   GRAVITY_FORMS_CONSUMER_SECRET="xxxx xxxx xxxx xxxx xxxx xxxx"
+
+   # …or a Gravity Forms API key:
+   # GRAVITY_FORMS_CONSUMER_KEY=ck_your_key
+   # GRAVITY_FORMS_CONSUMER_SECRET=cs_your_secret
    ```
 
    **For local development** (Laravel Valet, MAMP, etc.):
@@ -50,12 +70,7 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
    GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true
    ```
 
-4. **Generate API credentials** in WordPress:
-   - Go to **Forms → Settings → REST API**
-   - Click **Add Key**
-   - Save the Consumer Key and Secret
-
-5. **Add to Claude Desktop**
+6. **Add to Claude Desktop**
 
    Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
    ```json
@@ -65,8 +80,8 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
          "command": "node",
          "args": ["/path/to/MCP/src/index.js"],
          "env": {
-           "GRAVITY_FORMS_CONSUMER_KEY": "your_key",
-           "GRAVITY_FORMS_CONSUMER_SECRET": "your_secret",
+           "GRAVITY_FORMS_CONSUMER_KEY": "your_wp_username",
+           "GRAVITY_FORMS_CONSUMER_SECRET": "xxxx xxxx xxxx xxxx xxxx xxxx",
            "GRAVITY_FORMS_BASE_URL": "https://yoursite.com"
          }
        }
@@ -150,12 +165,13 @@ await mcp.call('gf_submit_form_data', {
 ## Configuration
 
 ### Required Environment Variables
-- `GRAVITY_FORMS_CONSUMER_KEY`    - API consumer key
-- `GRAVITY_FORMS_CONSUMER_SECRET` - API consumer secret
+- `GRAVITY_FORMS_CONSUMER_KEY`    - WordPress username (app-password setup) or GF consumer key (`ck_…`)
+- `GRAVITY_FORMS_CONSUMER_SECRET` - Application password or GF consumer secret (`cs_…`)
 - `GRAVITY_FORMS_BASE_URL`        - WordPress site URL
 
 ### Optional Settings
-- `GRAVITY_FORMS_AUTH_METHOD=basic`    - Auth method: `basic` (recommended) or `oauth`/`oauth1`
+- `GRAVITY_FORMS_AUTH_METHOD`          - Override auto-selection: `basic` or `oauth`/`oauth1` (normally leave unset)
+- `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false` - Allow Basic auth to a REMOTE plain-HTTP host (credentials visible to the network)
 - `GRAVITY_FORMS_ALLOW_DELETE=false`   - Enable delete operations
 - `GRAVITY_FORMS_TIMEOUT=30000`        - Request timeout (ms)
 - `GRAVITY_FORMS_MAX_RETRIES=3`        - Max retry attempts for failed requests
@@ -164,9 +180,14 @@ await mcp.call('gf_submit_form_data', {
 
 ### Authentication Flow
 
-The server uses **Basic Authentication** by default (recommended for Gravity Forms v2). If the site uses HTTP instead of HTTPS, Basic Auth cannot be used and the server **silently falls back to OAuth 1.0a**. Set `GRAVITY_FORMS_AUTH_METHOD=oauth` to force OAuth 1.0a.
+The client picks the right transport from the shape of your credentials — you normally don't configure anything:
 
-Both methods use the same Consumer Key and Consumer Secret generated in WordPress admin under Forms > Settings > REST API.
+- **Application password** (username + app password) → **Basic Authentication** over HTTPS or any local URL (localhost, `*.test`, `*.local`). WordPress core authenticates the user; Gravity Forms enforces their capabilities.
+- **Gravity Forms key pair** (`ck_…`/`cs_…`) over HTTPS → **Basic Authentication**.
+- **Gravity Forms key pair** over plain HTTP → **OAuth 1.0a**, automatically — Gravity Forms only accepts key-pair Basic auth over HTTPS, so OAuth is the only transport that works there.
+- **Remote plain-HTTP host** → OAuth for key pairs; Basic requires the explicit `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true` opt-in and logs a warning.
+
+Set `GRAVITY_FORMS_AUTH_METHOD` only to override the auto-selection. Whatever the transport, access is limited to the WordPress user's capabilities (or the API key's permission level).
 
 ## Test Environment Configuration
 

@@ -91,7 +91,7 @@ MCP/
 
 **GravityFormsClient** (`gravity-forms-client.js`): Single class wrapping all API endpoints. Each method uses `validateAndCall(toolName, input, apiCall)` pattern — validates input via `ValidationFactory`, then executes the HTTP call. Update operations (forms, entries, feeds) fetch-then-merge to preserve existing data. Responses return minimal payloads — just the essential data without redundant metadata.
 
-**AuthManager** (`config/auth.js`): Selects between `BasicAuthHandler` (primary, requires HTTPS) and `OAuth1Handler` (fallback). Auto-falls-back to OAuth if HTTPS isn't available. Auth headers injected via axios request interceptor.
+**AuthManager** (`config/auth.js`): Credential-aware selection between `BasicAuthHandler` and `OAuth1Handler` — app-password creds get Basic (HTTPS or local URLs); `ck_`/`cs_` key pairs get Basic on HTTPS, OAuth on plain HTTP (matching the GF server's `is_ssl()` gate for key Basic auth). Explicit `GRAVITY_FORMS_AUTH_METHOD` overrides. Auth headers injected via axios request interceptor.
 
 **ValidationFactory** (`config/validation.js`): Central validation dispatcher. `validateToolInput(toolName, input)` routes to domain-specific validators. Composable rule chains (`validation-chain.js`) for reusable validation logic.
 
@@ -286,9 +286,14 @@ npm run inspect        # Debug with MCP Inspector
 ### Required Environment
 
 ```
-GRAVITY_FORMS_CONSUMER_KEY=ck_...    # From WP Admin > Forms > Settings > REST API
-GRAVITY_FORMS_CONSUMER_SECRET=cs_... # Same location
 GRAVITY_FORMS_BASE_URL=https://...   # WordPress site URL (no trailing slash)
+# Recommended — WordPress application password (Users > Profile):
+GRAVITY_FORMS_CONSUMER_KEY=wp_username
+GRAVITY_FORMS_CONSUMER_SECRET="xxxx xxxx xxxx xxxx xxxx xxxx"
+# Or a Gravity Forms API key (Forms > Settings > REST API), e.g. read-only:
+# GRAVITY_FORMS_CONSUMER_KEY=ck_...
+# GRAVITY_FORMS_CONSUMER_SECRET=cs_...
+# Either way: check "Enable access to the API" on Forms > Settings > REST API once.
 ```
 
 Shorthand aliases `GF_CONSUMER_KEY`, `GF_CONSUMER_SECRET`, `GF_URL` are also supported (resolved in `test-config.js`).
@@ -348,7 +353,7 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 2. **Stdout is reserved for JSON-RPC.** In MCP mode, ALL logging must go to stderr. Using `console.log` will corrupt the JSON-RPC transport. The `logger.js` utility handles this, but any new code must use `logger.info/error/warn` instead of `console.log`. — `utils/logger.js:14-32`
 
-3. **Auth fallback is silent.** If Basic Auth fails because the site uses HTTP (not HTTPS), `AuthManager` silently falls back to OAuth 1.0a. Only warns in non-test mode. This can cause confusing auth failures if OAuth credentials aren't properly configured. — `config/auth.js:250-267`
+3. **Auth method is credential-aware.** `AuthManager` picks the transport from the credential shape: app-password creds (username + application password) use Basic over HTTPS or local URLs; `ck_`/`cs_` key pairs use Basic over HTTPS and OAuth 1.0a over plain HTTP (Gravity Forms only checks key-pair Basic auth when `is_ssl()`). An explicit `GRAVITY_FORMS_AUTH_METHOD` is always honored — including `basic` over remote HTTP, so don't set it in `.env` "just in case". Remote-HTTP Basic without an explicit method needs `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true`. — `config/auth.js`
 
 4. **Update operations fetch-then-merge.** `updateForm`, `updateEntry`, and `updateFeed` all GET the existing resource first, merge updates, then PUT. This prevents data loss but means two HTTP calls per update. If the resource is modified between GET and PUT, the intermediate change is overwritten. — `gravity-forms-client.js:262-278`
 
