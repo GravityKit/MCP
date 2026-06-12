@@ -7,18 +7,22 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { FieldManager } from '../field-operations/field-manager.js';
 
-// Mock dependencies
+// Mock dependencies. Mirrors the GravityFormsClient contract FieldManager
+// actually consumes: getForm() resolves { form } and replaceForm() does a
+// direct PUT resolving { form } (see field-manager.js).
 const createMockApiClient = () => ({
-  getForm: async (formId) => ({
-    id: formId,
-    title: 'Test Form',
-    fields: [
-      { id: 1, type: 'text', label: 'Name' },
-      { id: 2, type: 'email', label: 'Email' },
-      { id: 3, type: 'textarea', label: 'Message' }
-    ]
+  getForm: async () => ({
+    form: {
+      id: 1,
+      title: 'Test Form',
+      fields: [
+        { id: 1, type: 'text', label: 'Name' },
+        { id: 2, type: 'email', label: 'Email' },
+        { id: 3, type: 'textarea', label: 'Message' }
+      ]
+    }
   }),
-  updateForm: async (form) => ({ form })
+  replaceForm: async (formId, form) => ({ form })
 });
 
 const createMockRegistry = () => ({
