@@ -7,8 +7,10 @@
  *   1. Foundation catalog — `/wp-json/gravitykit/v1/abilities`.
  *      The canonical contract: server-side GravityKit filtering
  *      (`gk_registered_by === 'gravitykit'`), server-owned tool naming
- *      (`mcp_tool_name`, derived from Foundation's per-product
- *      MCP_TOOL_PREFIXES map), and disabled abilities already omitted.
+ *      (`mcp_tool_name`, from each product's required `mcp_prefix` declared
+ *      on Foundation's `gk/foundation/abilities/products` filter, falling
+ *      back to the full product slug), and disabled abilities already
+ *      omitted.
  *      Any GravityKit product that registers abilities through Foundation
  *      appears here automatically — no client-side allow-list.
  *   2. WP core catalog — `/wp-json/wp-abilities/v1/abilities`.
@@ -22,7 +24,9 @@
  *      gv_* call (self-healing).
  *
  * Tool naming is owned by the SERVER on both paths: Foundation's
- * `mcp_tool_name` (Manager::get_mcp_tool_name() + MCP_TOOL_PREFIXES).
+ * `mcp_tool_name` (Manager::get_mcp_tool_name() — declared `mcp_prefix`
+ * or the full-product-slug fallback), stamped into ability meta so the
+ * WP core catalog carries it too.
  * The client never invents names — abilities arriving without
  * `mcp_tool_name` are skipped with a warning, so a naming gap is
  * visible instead of silently diverging between connections.
