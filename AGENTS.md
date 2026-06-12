@@ -301,7 +301,8 @@ Shorthand aliases `GF_CONSUMER_KEY`, `GF_CONSUMER_SECRET`, `GF_URL` are also sup
 ### Optional Environment
 
 ```
-GRAVITY_FORMS_AUTH_METHOD=basic       # 'basic' (default) or 'oauth'/'oauth1'
+# GRAVITY_FORMS_AUTH_METHOD=basic     # Override auto-selection only (see Gotcha #3)
+# GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false  # Basic to a REMOTE plain-HTTP host
 GRAVITY_FORMS_ALLOW_DELETE=false      # Must be 'true' to enable delete operations
 GRAVITY_FORMS_TIMEOUT=30000           # Request timeout in ms
 GRAVITY_FORMS_MAX_RETRIES=3           # Max retry attempts
