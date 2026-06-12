@@ -338,3 +338,37 @@ test('FieldManager - deleteField', async (t) => {
     assert.ok(result.actions_taken.includes('Dependencies cleaned up'));
   });
 });
+test('FieldManager - normalizeLayoutProperties', async (t) => {
+  const manager = new FieldManager(createMockApiClient(), createMockRegistry(), createMockValidator());
+
+  await t.test('valid 8-char hex layoutGroupId passes through unchanged', () => {
+    const field = { layoutGroupId: 'a1b2c3d4' };
+    manager.normalizeLayoutProperties(field, 7);
+    assert.strictEqual(field.layoutGroupId, 'a1b2c3d4');
+  });
+
+  await t.test('friendly layoutGroupId hashes to stable 8-char hex per form', () => {
+    const first = manager.normalizeLayoutProperties({ layoutGroupId: 'name-row' }, 7);
+    const second = manager.normalizeLayoutProperties({ layoutGroupId: 'name-row' }, 7);
+    assert.match(first.layoutGroupId, /^[0-9a-f]{8}$/);
+    assert.strictEqual(first.layoutGroupId, second.layoutGroupId, 'same name + form must share a row');
+    const otherForm = manager.normalizeLayoutProperties({ layoutGroupId: 'name-row' }, 8);
+    assert.notStrictEqual(first.layoutGroupId, otherForm.layoutGroupId, 'different forms must not collide');
+  });
+
+  await t.test('layoutGridColumnSpan clamps to the 1-12 editor grid', () => {
+    assert.strictEqual(manager.normalizeLayoutProperties({ layoutGridColumnSpan: 20 }, 1).layoutGridColumnSpan, 12);
+    assert.strictEqual(manager.normalizeLayoutProperties({ layoutGridColumnSpan: 0 }, 1).layoutGridColumnSpan, 1);
+    assert.strictEqual(manager.normalizeLayoutProperties({ layoutGridColumnSpan: '6' }, 1).layoutGridColumnSpan, 6);
+  });
+
+  await t.test('non-numeric layoutGridColumnSpan is dropped for the editor to assign', () => {
+    const field = manager.normalizeLayoutProperties({ layoutGridColumnSpan: 'wide' }, 1);
+    assert.strictEqual('layoutGridColumnSpan' in field, false);
+  });
+
+  await t.test('empty and missing layoutGroupId are left alone', () => {
+    assert.strictEqual(manager.normalizeLayoutProperties({ layoutGroupId: '' }, 1).layoutGroupId, '');
+    assert.strictEqual('layoutGroupId' in manager.normalizeLayoutProperties({}, 1), false);
+  });
+});

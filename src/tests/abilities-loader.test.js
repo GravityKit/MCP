@@ -381,6 +381,41 @@ suite.test('catalog path: tool-name collision — first wins, later skipped, nev
   TestAssert.equal(run.url, '/wp-json/wp-abilities/v1/abilities/gk-gravityview/views-list/run', 'handler must stay bound to the first claimant');
 });
 
+suite.test('coexistence: Gravity Forms own abilities (feature-abilities-api) are never surfaced', async () => {
+  // Exact shape GF's branch registers (GF_Abilities_Registry::definition):
+  // gravityforms/* namespace, meta.mcp + annotations + show_in_rest:true,
+  // and NO gk_registered_by stamp. show_in_rest means these DO appear in
+  // the WP core catalog our fallback reads — the metadata filter is the
+  // only thing keeping them out.
+  const catalog = [
+    ...syntheticCatalog(),
+    {
+      name: 'gravityforms/forms-list',
+      label: 'List Forms',
+      description: 'Lists Gravity Forms forms.',
+      input_schema: { type: 'object', properties: {} },
+      meta: {
+        mcp: { public: true },
+        annotations: { readonly: true, destructive: false, idempotent: true },
+        show_in_rest: true,
+      },
+    },
+    {
+      // GF add-on convention uses a second slash.
+      name: 'gravityforms/myaddon/my-action',
+      description: 'Add-on ability.',
+      input_schema: { type: 'object', properties: {} },
+      meta: { mcp: { public: true }, annotations: {}, show_in_rest: true },
+    },
+  ];
+  const { definitions, source } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  TestAssert.equal(source, 'wp-core');
+  const names = definitions.map((d) => d.name);
+  TestAssert.isTrue(!names.some((n) => n.includes('forms_list')), 'GF core abilities must not become tools');
+  TestAssert.isTrue(!names.some((n) => n.includes('my_action')), 'GF add-on abilities must not become tools');
+  TestAssert.equal(definitions.length, 3, 'only the gk_registered_by-stamped abilities surface');
+});
+
 suite.test('reserved names: catalog tools can never shadow the built-in gf_* contract', async () => {
   const colliding = [
     {

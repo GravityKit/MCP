@@ -33,7 +33,7 @@
  *
  * Handlers execute abilities through `/wp-abilities/v1/abilities/{name}/run`
  * with the HTTP method derived from the ability's annotations
- * (`readonly` → GET, `destructive` → DELETE, otherwise POST).
+ * (`readonly` → GET, `destructive`+`idempotent` → DELETE, otherwise POST).
  */
 
 import logger from '../utils/logger.js';
