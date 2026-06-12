@@ -10,18 +10,40 @@ import crypto from 'crypto';
 import logger from '../utils/logger.js';
 
 /**
+ * True for URLs whose traffic never leaves the machine / LAN dev box:
+ * localhost, *.localhost, 127.0.0.0/8, [::1], and the conventional dev
+ * TLDs *.test and *.local. Same idea WordPress core applies when it
+ * allows application passwords without HTTPS in local environments.
+ */
+export function isLocalUrl(baseUrl) {
+  try {
+    const { hostname } = new URL(baseUrl);
+    return hostname === 'localhost'
+      || hostname === '[::1]'
+      || hostname === '::1'
+      || hostname.endsWith('.localhost')
+      || hostname.startsWith('127.')
+      || hostname.endsWith('.test')
+      || hostname.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Basic Authentication Handler (PRIMARY METHOD)
- * Simple and secure authentication using Consumer Key/Secret over HTTPS
- * Recommended for Gravity Forms v2 REST API
+ * Simple authentication using Consumer Key/Secret. Requires HTTPS for
+ * remote hosts; allowed over plain HTTP for local URLs or when the
+ * caller explicitly opts in (credentials ride base64-encoded on every
+ * request, so an untrusted network must not see them in the clear).
  */
 export class BasicAuthHandler {
-  constructor(consumerKey, consumerSecret, baseUrl) {
+  constructor(consumerKey, consumerSecret, baseUrl, { allowHttp = false } = {}) {
     this.consumerKey = consumerKey;
     this.consumerSecret = consumerSecret;
     this.baseUrl = baseUrl;
 
-    // Validate HTTPS for Basic Auth security
-    if (!this.baseUrl.startsWith('https://')) {
+    if (!this.baseUrl.startsWith('https://') && !allowHttp) {
       throw new Error('Basic Authentication requires HTTPS connection for security');
     }
   }
@@ -278,14 +300,51 @@ export class AuthManager {
           GRAVITY_FORMS_BASE_URL
         );
       } else {
-        if (this.config.GRAVITY_FORMS_DEBUG === 'true') {
-          logger.info('🔐 Using Basic Authentication (Recommended for Gravity Forms v2)');
+        const isHttps = GRAVITY_FORMS_BASE_URL.startsWith('https://');
+        const explicitBasic = this.config.GRAVITY_FORMS_AUTH_METHOD?.toLowerCase() === 'basic';
+        // GF's own key pairs are always ck_/cs_-prefixed (GFWebAPI
+        // rand_hash generator). The GF server only CHECKS key-pair Basic
+        // auth over SSL (class-gf-rest-authentication.php: if (is_ssl())),
+        // so on plain HTTP a key pair must sign with OAuth 1.0a — Basic
+        // would silently authenticate as nobody. WordPress application
+        // passwords (username + app password) authenticate through WP
+        // core instead and DO work over Basic on local HTTP.
+        const isGfKeyPair = /^ck_/.test(GRAVITY_FORMS_CONSUMER_KEY || '')
+          && /^cs_/.test(GRAVITY_FORMS_CONSUMER_SECRET || '');
+
+        if (!isHttps && isGfKeyPair && !explicitBasic) {
+          if (this.config.GRAVITY_FORMS_DEBUG === 'true') {
+            logger.info('🔐 Consumer key pair over HTTP — using OAuth 1.0a (Gravity Forms only accepts key-pair Basic auth over HTTPS)');
+          }
+          this.authHandler = new OAuth1Handler(
+            GRAVITY_FORMS_CONSUMER_KEY,
+            GRAVITY_FORMS_CONSUMER_SECRET,
+            GRAVITY_FORMS_BASE_URL
+          );
+        } else {
+          if (this.config.GRAVITY_FORMS_DEBUG === 'true') {
+            logger.info('🔐 Using Basic Authentication (Recommended for Gravity Forms v2)');
+          }
+          // Basic over plain HTTP is allowed when the traffic can't
+          // leave the machine (localhost / *.test / *.local), when the
+          // user explicitly chose basic, or via the env opt-in — the
+          // silent default on a remote http:// URL still falls back to
+          // OAuth below.
+          const allowHttp = isLocalUrl(GRAVITY_FORMS_BASE_URL)
+            || explicitBasic
+            || this.config.GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH === 'true';
+
+          if (allowHttp && !isHttps && !isLocalUrl(GRAVITY_FORMS_BASE_URL)) {
+            logger.warn('⚠️  Basic Authentication over plain HTTP to a remote host — credentials are visible to the network. Use HTTPS when possible.');
+          }
+
+          this.authHandler = new BasicAuthHandler(
+            GRAVITY_FORMS_CONSUMER_KEY,
+            GRAVITY_FORMS_CONSUMER_SECRET,
+            GRAVITY_FORMS_BASE_URL,
+            { allowHttp }
+          );
         }
-        this.authHandler = new BasicAuthHandler(
-          GRAVITY_FORMS_CONSUMER_KEY,
-          GRAVITY_FORMS_CONSUMER_SECRET,
-          GRAVITY_FORMS_BASE_URL
-        );
       }
     } catch (error) {
       // Fallback to OAuth if Basic Auth fails (e.g., HTTP instead of HTTPS)

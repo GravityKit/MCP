@@ -183,7 +183,21 @@ suite.test('AuthManager: Should use OAuth when specified', () => {
   TestAssert.isFalse(info.recommended);
 });
 
-suite.test('AuthManager: Should fallback to OAuth for HTTP URLs', () => {
+suite.test('AuthManager: remote HTTP with default method falls back to OAuth', () => {
+  const config = {
+    ...testEnv,
+    GRAVITY_FORMS_BASE_URL: 'http://insecure.com'
+  };
+  delete config.GRAVITY_FORMS_AUTH_METHOD;
+
+  const manager = new AuthManager(config);
+  const info = manager.getAuthInfo();
+
+  TestAssert.equal(info.method, 'OAuth 1.0a');
+  TestAssert.isFalse(info.secure);
+});
+
+suite.test('AuthManager: explicit basic is honored over remote HTTP', () => {
   const config = {
     ...testEnv,
     GRAVITY_FORMS_BASE_URL: 'http://insecure.com',
@@ -193,8 +207,37 @@ suite.test('AuthManager: Should fallback to OAuth for HTTP URLs', () => {
   const manager = new AuthManager(config);
   const info = manager.getAuthInfo();
 
-  TestAssert.equal(info.method, 'OAuth 1.0a');
+  TestAssert.equal(info.method, 'Basic Authentication');
   TestAssert.isFalse(info.secure);
+});
+
+suite.test('AuthManager: ck_/cs_ key pair over HTTP auto-selects OAuth (GF only checks key Basic over SSL)', () => {
+  for (const baseUrl of ['http://localhost:8893', 'http://dev.test', 'http://remote.example.com']) {
+    const config = { ...testEnv, GRAVITY_FORMS_BASE_URL: baseUrl };
+    delete config.GRAVITY_FORMS_AUTH_METHOD; // ck_test_key / cs_test_secret from testEnv
+
+    const manager = new AuthManager(config);
+    const info = manager.getAuthInfo();
+
+    TestAssert.equal(info.method, 'OAuth 1.0a', `${baseUrl} with a key pair should sign with OAuth`);
+  }
+});
+
+suite.test('AuthManager: app-password credentials get Basic on local HTTP (WP core auth path)', () => {
+  for (const baseUrl of ['http://localhost:8893', 'http://dev.test', 'http://127.0.0.1:8080', 'http://mysite.local']) {
+    const config = {
+      ...testEnv,
+      GRAVITY_FORMS_BASE_URL: baseUrl,
+      GRAVITY_FORMS_CONSUMER_KEY: 'admin',
+      GRAVITY_FORMS_CONSUMER_SECRET: 'abcd efgh ijkl mnop qrst uvwx'
+    };
+    delete config.GRAVITY_FORMS_AUTH_METHOD;
+
+    const manager = new AuthManager(config);
+    const info = manager.getAuthInfo();
+
+    TestAssert.equal(info.method, 'Basic Authentication', `${baseUrl} with app-password creds should use Basic`);
+  }
 });
 
 suite.test('AuthManager: Should remove trailing slash from base URL', () => {

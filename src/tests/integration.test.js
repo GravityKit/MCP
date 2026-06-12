@@ -51,7 +51,9 @@ suite.beforeAll(async () => {
     GRAVITY_FORMS_CONSUMER_KEY: process.env.GRAVITY_FORMS_TEST_CONSUMER_KEY,
     GRAVITY_FORMS_CONSUMER_SECRET: process.env.GRAVITY_FORMS_TEST_CONSUMER_SECRET,
     GRAVITY_FORMS_BASE_URL: process.env.GRAVITY_FORMS_TEST_BASE_URL,
-    GRAVITY_FORMS_AUTH_METHOD: process.env.GRAVITY_FORMS_AUTH_METHOD || 'basic',
+    // Leave unset for credential-aware auto-selection; an explicit
+    // method (TEST_ variant wins) is passed through as-is.
+    GRAVITY_FORMS_AUTH_METHOD: process.env.GRAVITY_FORMS_TEST_AUTH_METHOD || process.env.GRAVITY_FORMS_AUTH_METHOD,
     GRAVITY_FORMS_ALLOW_DELETE: 'true' // Enable for cleanup
   });
 
@@ -708,6 +710,70 @@ suite.test('Integration: Test entries pagination with paging parameters', async 
       }
     }
   }
+});
+
+
+// ===================================================================
+// Security: deny-paths. Every auth method must REJECT requests that
+// are unauthenticated, carry bad credentials, lack GF capabilities,
+// or exceed their key's permission level.
+// ===================================================================
+
+suite.test('Security: unauthenticated request is denied', async () => {
+  const response = await fetch(`${process.env.GRAVITY_FORMS_TEST_BASE_URL}/wp-json/gf/v2/forms`);
+  TestAssert.isTrue(
+    response.status === 401 || response.status === 403,
+    `Unauthenticated /forms must be 401/403, got ${response.status}`
+  );
+});
+
+suite.test('Security: authenticated user WITHOUT GF capabilities is denied', async () => {
+  const user = process.env.GRAVITY_FORMS_TEST_LOWPRIV_USER;
+  const pass = process.env.GRAVITY_FORMS_TEST_LOWPRIV_APP_PASSWORD;
+  if (!user || !pass) {
+    console.log('  Skipping - set GRAVITY_FORMS_TEST_LOWPRIV_USER / _APP_PASSWORD (e.g. a subscriber app password)');
+    return;
+  }
+
+  const auth = Buffer.from(`${user}:${pass}`).toString('base64');
+  const response = await fetch(`${process.env.GRAVITY_FORMS_TEST_BASE_URL}/wp-json/gf/v2/forms`, {
+    headers: { Authorization: `Basic ${auth}` }
+  });
+  TestAssert.isTrue(
+    response.status === 401 || response.status === 403,
+    `Subscriber on /forms must be 401/403, got ${response.status}`
+  );
+});
+
+suite.test('Security: read-only API key cannot write', async () => {
+  const roKey = process.env.GRAVITY_FORMS_TEST_READONLY_CONSUMER_KEY;
+  const roSecret = process.env.GRAVITY_FORMS_TEST_READONLY_CONSUMER_SECRET;
+  if (!roKey || !roSecret) {
+    console.log('  Skipping - set GRAVITY_FORMS_TEST_READONLY_CONSUMER_KEY / _SECRET (a key with "read" permissions)');
+    return;
+  }
+
+  // No AUTH_METHOD: credential-aware auto-selection picks the right
+  // transport for the key pair (OAuth on http, Basic on https).
+  const roClient = new GravityFormsClient({
+    GRAVITY_FORMS_BASE_URL: process.env.GRAVITY_FORMS_TEST_BASE_URL,
+    GRAVITY_FORMS_CONSUMER_KEY: roKey,
+    GRAVITY_FORMS_CONSUMER_SECRET: roSecret
+  });
+  await roClient.initialize().catch(() => {});
+
+  // Reads must work… (GF /forms returns an ID-keyed object, not an array)
+  const listed = await roClient.listForms({});
+  TestAssert.isTrue(!!listed.forms && typeof listed.forms === 'object', 'read-only key should list forms');
+
+  // …writes must not.
+  let writeDenied = false;
+  try {
+    await roClient.createForm({ title: 'TEST_should_never_exist' });
+  } catch (e) {
+    writeDenied = true;
+  }
+  TestAssert.isTrue(writeDenied, 'read-only key must be denied on createForm');
 });
 
 // Run tests if executed directly
