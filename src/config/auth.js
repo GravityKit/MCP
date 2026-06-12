@@ -70,6 +70,44 @@ export class BasicAuthHandler {
 }
 
 /**
+ * Strict RFC 3986 percent-encoding (OAuth 1.0a requires it; WordPress
+ * verifies signatures with PHP's rawurlencode, which also encodes
+ * !'()* — encodeURIComponent alone leaves them bare and the
+ * signatures diverge).
+ */
+export function rfc3986Encode(value) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+/**
+ * Flatten nested params into the bracket-index pairs PHP parses them
+ * back into: { include: [3, 5] } → [['include[0]','3'], ['include[1]','5']],
+ * { paging: { page_size: 2 } } → [['paging[page_size]','2']].
+ *
+ * Both the OAuth signature base AND the wire serializer use this, so
+ * what we sign is byte-for-byte what Gravity Forms' server-side
+ * signature check reconstructs from $_GET. (The released 2.1.1 bug:
+ * the signature stringified arrays as "3" while axios sent include[]=3
+ * — every OAuth GET with array params failed with invalid signature.)
+ */
+export function flattenParams(params, prefix = '') {
+  const pairs = [];
+  if (params === null || params === undefined) return pairs;
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined) continue;
+    const name = prefix ? `${prefix}[${key}]` : key;
+
+    if (Array.isArray(value) || (typeof value === 'object')) {
+      pairs.push(...flattenParams(value, name));
+    } else {
+      pairs.push([name, String(value)]);
+    }
+  }
+  return pairs;
+}
+
+/**
  * OAuth 1.0a Authentication Handler (SECONDARY METHOD)
  * More complex but provides additional security features
  * Included for environments requiring OAuth workflow
@@ -91,31 +129,34 @@ export class OAuth1Handler {
       throw new Error('Invalid OAuth parameters: method, url, timestamp, and nonce are required');
     }
 
-    // Combine all parameters
-    const allParams = {
-      ...params,
-      oauth_consumer_key: this.consumerKey,
-      oauth_timestamp: timestamp,
-      oauth_nonce: nonce,
-      oauth_signature_method: 'HMAC-SHA1',
-      oauth_version: '1.0'
-    };
+    // Flatten request params to the same bracket-index pairs PHP will
+    // parse from the query string, then add the oauth_* protocol params.
+    const pairs = [
+      ...flattenParams(params),
+      ['oauth_consumer_key', this.consumerKey],
+      ['oauth_timestamp', timestamp],
+      ['oauth_nonce', nonce],
+      ['oauth_signature_method', 'HMAC-SHA1'],
+      ['oauth_version', '1.0'],
+    ];
 
-    // Create parameter string
-    const paramString = Object.keys(allParams)
-      .sort()
-      .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(allParams[key])}`)
+    // RFC 5849 §3.4.1.3.2: encode first, then sort by encoded name
+    // (ties broken by encoded value), then join.
+    const paramString = pairs
+      .map(([key, value]) => [rfc3986Encode(key), rfc3986Encode(value)])
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))
+      .map((pair) => pair.join('='))
       .join('&');
 
     // Create signature base string
     const baseString = [
       method.toUpperCase(),
-      encodeURIComponent(url),
-      encodeURIComponent(paramString)
+      rfc3986Encode(url),
+      rfc3986Encode(paramString)
     ].join('&');
 
     // Create signing key
-    const signingKey = `${encodeURIComponent(this.consumerSecret)}&`;
+    const signingKey = `${rfc3986Encode(this.consumerSecret)}&`;
 
     // Generate signature
     const signature = crypto
