@@ -439,7 +439,7 @@ suite.test('reserved names: catalog tools can never shadow the built-in gf_* con
   ];
   const stub = buildCatalogStubGvClient([colliding]);
   const { definitions, handlers, count } = await loadAbilitiesAsTools(stub, {
-    reservedNames: new Set(['gf_list_forms', 'gv_reload_abilities']),
+    reservedNames: new Set(['gf_list_forms', 'gk_reload_abilities']),
   });
   TestAssert.equal(count, 1, 'reserved-name claimant must be skipped');
   TestAssert.deepEqual(definitions.map((d) => d.name), ['gv_views_list']);
