@@ -147,7 +147,7 @@ GET/list methods return just the data:
 { entries: responseData, total_count }              // gf_list_entries
 { entry: responseData }             // gf_get_entry
 { feed: responseData }              // gf_get_feed, gf_create_feed, gf_update_feed, gf_patch_feed
-{ feeds: responseData }             // gf_list_feeds, gf_list_form_feeds
+{ feeds: responseData }             // gf_list_feeds (pass form_id to scope to one form)
 ```
 
 Mutation methods return minimal confirmation:
