@@ -43,7 +43,7 @@ suite.test('Constructor: throws without a base URL', () => {
 suite.test('Constructor: throws without credentials', () => {
   TestAssert.throws(
     () => new GravityViewInspectorClient({ GRAVITYKIT_WP_URL: 'https://example.com' }),
-    'WordPress credentials'
+    'requires credentials'
   );
 });
 
