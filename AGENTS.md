@@ -2,6 +2,15 @@
 
 > MCP server providing 26 tools for full Gravity Forms REST API v2 coverage, enabling AI agents to manage forms, entries, feeds, notifications, and fields programmatically.
 
+This is the single canonical doc for the project (agents and humans). `CLAUDE.md` simply re-exports it via `@AGENTS.md`.
+
+## Project Identity
+
+- **Package:** `@gravitykit/mcp` v2.1.0
+- **Type:** Node.js MCP server (ESM)
+- **Purpose:** Full Gravity Forms REST API v2 coverage via 26 MCP tools
+- **Repo:** https://github.com/GravityKit/MCP
+
 ## Quick Start
 
 **What this is:** A Node.js MCP (Model Context Protocol) server that wraps the Gravity Forms REST API v2. It authenticates via Basic Auth (preferred) or OAuth 1.0a and exposes 26 tools for CRUD operations on forms, entries, feeds, notifications, field filters, results, and intelligent field management.
@@ -17,7 +26,8 @@ MCP/
 ├── package.json              # @gravitykit/mcp, ESM, npm scripts
 ├── mcp.json                  # MCP manifest (tool catalog, auth config)
 ├── .env.example              # All env vars documented
-├── CLAUDE.md                 # Project docs for AI context
+├── AGENTS.md                 # Canonical agent + developer docs (this file)
+├── CLAUDE.md                 # Claude Code entry point — re-exports AGENTS.md (@AGENTS.md)
 ├── src/
 │   ├── index.js              # Server bootstrap, tool registration, handler routing
 │   ├── gravity-forms-client.js  # GravityFormsClient: HTTP client, all API methods
@@ -378,7 +388,7 @@ What ships to npm is governed solely by the **`files` allowlist** in `package.js
 
 1. **Update `CHANGELOG.md`** — add a new `## [X.Y.Z] - YYYY-MM-DD` section with all changes since the last release. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Fixed, Removed).
 2. **Bump `version` in `package.json`**
-3. **Update version in `CLAUDE.md`** (Project Identity → Package line)
+3. **Update version in `AGENTS.md`** (Project Identity → Package line)
 4. **Add link** at bottom of `CHANGELOG.md`: `[X.Y.Z]: https://github.com/GravityKit/MCP/releases/tag/vX.Y.Z`
 5. **Commit**: `git commit -m "chore(release): bump version to X.Y.Z"`
 6. **Tag**: `git tag vX.Y.Z`
@@ -390,7 +400,7 @@ Skipping any step (especially CHANGELOG) will leave the release history incomple
 
 ## Related Resources
 
-- **CLAUDE.md** — Concise project identity and critical rules
+- **CLAUDE.md** — Claude Code entry point; re-exports this file via `@AGENTS.md`
 - **README.md** — User-facing setup and usage guide
 - **.env.example** — Complete environment variable reference
 - **mcp.json** — MCP manifest (tool catalog, auth requirements)

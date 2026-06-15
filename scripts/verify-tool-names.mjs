@@ -79,8 +79,8 @@ const surfaces = [
   ['demo-abilities.mjs  (ability names)', read('demo-abilities.mjs'), ABIL_RE],
   ['AGENTS.md', read('AGENTS.md'), TOOL_RE],
   ['README.md', read('README.md'), TOOL_RE],
-  ['CLAUDE.md', read('CLAUDE.md'), TOOL_RE],
   ['mcp.json', read('mcp.json'), TOOL_RE],
+  // CLAUDE.md re-exports AGENTS.md (@AGENTS.md) — already covered above.
 ];
 
 let problems = 0;
