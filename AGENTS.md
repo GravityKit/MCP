@@ -1,6 +1,6 @@
 # AGENTS.md — GravityKit MCP
 
-> MCP server providing 26 tools for full Gravity Forms REST API v2 coverage, enabling AI agents to manage forms, entries, feeds, notifications, and fields programmatically.
+> MCP server for Gravity Forms (primary) and GravityKit products (secondary). It exposes 26 always-on Gravity Forms tools plus a dynamic set of GravityKit product tools generated from the connected site's Foundation Abilities catalog — GravityView is the only GravityKit product implemented so far.
 
 This is the single canonical doc for the project (agents and humans). `CLAUDE.md` simply re-exports it via `@AGENTS.md`.
 
@@ -8,15 +8,20 @@ This is the single canonical doc for the project (agents and humans). `CLAUDE.md
 
 - **Package:** `@gravitykit/mcp` v2.1.0
 - **Type:** Node.js MCP server (ESM)
-- **Purpose:** Full Gravity Forms REST API v2 coverage via 26 MCP tools
+- **Purpose:** Full Gravity Forms REST API v2 coverage (26 Gravity Forms tools), plus dynamic GravityKit product tools (GravityView so far) via the WordPress Abilities API
 - **Repo:** https://github.com/GravityKit/MCP
 
 ## Quick Start
 
-**What this is:** A Node.js MCP (Model Context Protocol) server that wraps the Gravity Forms REST API v2. It authenticates via Basic Auth (preferred) or OAuth 1.0a and exposes 26 tools for CRUD operations on forms, entries, feeds, notifications, field filters, results, and intelligent field management.
+**What this is:** A Node.js MCP (Model Context Protocol) server with two independent capability planes:
+
+- **Plane A — Gravity Forms (`gf_*`), primary.** 26 static tools wrapping the Gravity Forms REST API v2 (forms, entries, feeds, notifications, submissions, field filters, results, and intelligent field management). Always available when Gravity Forms REST credentials work — on any Gravity Forms site.
+- **Plane B — GravityKit (`gv_*`), secondary.** Tools generated at runtime from the connected site's GravityKit Foundation Abilities catalog. They appear only when Foundation is active. GravityView is the only GravityKit product wired up so far (View authoring, fields, widgets, search, layouts). The plane is product-agnostic: any GravityKit product that registers Foundation abilities shows up automatically.
+
+The two planes are independent: a GF-only site gets the full `gf_*` surface with no abilities; a GravityKit site without GF REST keys still gets `gv_*`.
 
 **Main entry point:** `src/index.js`
-**Architecture style:** MCP SDK server with stdio transport, single API client, composable validation
+**Architecture style:** MCP SDK server with stdio transport, one HTTP client per plane, composable validation
 **Key dependency:** `@modelcontextprotocol/sdk` ^1.0.0
 
 ## Repository Map
@@ -29,15 +34,21 @@ MCP/
 ├── AGENTS.md                 # Canonical agent + developer docs (this file)
 ├── CLAUDE.md                 # Claude Code entry point — re-exports AGENTS.md (@AGENTS.md)
 ├── src/
-│   ├── index.js              # Server bootstrap, tool registration, handler routing
-│   ├── gravity-forms-client.js  # GravityFormsClient: HTTP client, all API methods
-│   ├── field-operations/     # Intelligent field management layer
+│   ├── index.js              # Server bootstrap, two-plane init, tool registration, handler routing
+│   ├── gravity-forms-client.js  # GravityFormsClient: GF REST HTTP client, all gf_* API methods
+│   ├── wp-client.js          # WordPressClient: product-agnostic authenticated WP transport (Plane B)
+│   ├── abilities/
+│   │   └── loader.js         # loadAbilitiesAsTools() — turns the live Abilities catalog into gv_* tools
+│   ├── gravityview/          # GravityView test/demo harness (NOT runtime — gv_* come from abilities/)
+│   │   ├── inspector-client.js  # Client for /wp-json/gravityview/v1 (only when DOING_GRAVITYVIEW_TESTS)
+│   │   └── view-validator.js    # Client-side structural + schema-aware validation for the inspector
+│   ├── field-operations/     # Intelligent field management layer (gf_* field tools)
 │   │   ├── index.js          # Factory, tool definitions, handler functions
 │   │   ├── field-manager.js  # FieldManager: CRUD orchestrator
 │   │   ├── field-dependencies.js  # DependencyTracker: conditional logic/merge tag scanning
 │   │   └── field-positioner.js    # PositionEngine: page-aware field positioning
 │   ├── field-definitions/
-│   │   ├── field-registry.js # 44 field types with metadata, validation, storage patterns
+│   │   ├── field-registry.js # 45 field types with metadata, validation, storage patterns
 │   │   └── loader.js         # Registry loader
 │   ├── config/
 │   │   ├── auth.js           # BasicAuthHandler, OAuth1Handler, AuthManager
@@ -61,12 +72,13 @@ MCP/
 │   └── *.test.js             # forms, entries, feeds, fields, validation, submissions, compact, sanitize, …
 ├── scripts/
 │   ├── check-env.js          # Environment validation script
+│   ├── check-docs.mjs        # Doc-freshness guard for AGENTS.md (offline; npm run lint:docs)
+│   ├── verify-tool-names.mjs # Cross-check doc/instruction tool names vs registered tools (needs live site)
+│   ├── stress-abilities.mjs  # Synthetic abilities-loader stress/contract test
 │   ├── setup-test-data.js    # Test data seeding
 │   ├── test-field-ops.js     # Field operations smoke test
 │   ├── test-server-output.js # Server output verification
-│   ├── verify-field-tools.js # Field tool registration check
-│   ├── verify-tool-names.mjs # Cross-check doc/instruction tool names vs registered tools (dev-only, not published)
-│   └── stress-abilities.mjs  # Synthetic abilities-loader stress/contract test
+│   └── verify-field-tools.js # Field tool registration check
 └── .github/workflows/
     ├── publish.yml           # npm publish workflow
     ├── security.yml          # Security scanning
@@ -75,43 +87,50 @@ MCP/
 
 ## Architecture
 
+### Two capability planes
+
+The server registers tools from two independent sources, initialized separately so a failure in one never blocks the other:
+
+- **Plane A — Gravity Forms (`gf_*`).** Static tool definitions in `src/index.js` (`GF_TOOL_DEFINITIONS`) plus the field tools from `src/field-operations/index.js` (`fieldOperationTools`). Backed by `GravityFormsClient` against the GF REST API v2. 26 tools, always present once GF credentials validate.
+- **Plane B — GravityKit (`gv_*`).** Generated at runtime by `src/abilities/loader.js` from the connected site's Abilities catalog, backed by `WordPressClient`. The catalog is fetched in the background after startup; tools appear once it loads (the server advertises `tools.listChanged`). A single built-in tool, `gk_reload_abilities`, forces a re-fetch.
+
 ### Initialization Flow
 
-1. `src/index.js` loads env vars via dotenv (CWD first, then project dir) — `:30-32`
-2. Creates MCP `Server` instance with `tools` capability — `:35-45`
-3. `initializeClient()` constructs `GravityFormsClient` with `process.env` — `:57`
-4. Client creates `AuthManager` which selects Basic or OAuth handler — `config/auth.js:223-268`
-5. Client creates axios instance with auth interceptor — `gravity-forms-client.js:22-85`
-6. `validateRestApiAccess()` tests Forms/Entries/Feeds endpoints — `config/auth.js:301-368`
-7. Field operations initialized: `FieldManager`, `DependencyTracker`, `PositionEngine` — `:64-70`
-8. Server connects to `StdioServerTransport` — `:641-644`
+1. `src/index.js` loads env vars via dotenv (CWD first, then project dir).
+2. Creates the MCP `Server` with `tools.listChanged` capability and the two-plane server instructions.
+3. **Plane A:** `initializeClient()` constructs `GravityFormsClient` from `process.env`; its `AuthManager` selects Basic or OAuth; `validateRestApiAccess()` probes Forms/Entries/Feeds; field operations (`FieldManager`, `DependencyTracker`, `PositionEngine`) are wired up.
+4. **Plane B:** constructs `WordPressClient` and kicks off a fire-and-forget abilities catalog fetch (`loadAbilitiesAsTools`). Startup never blocks on it; failures self-heal on the next `gv_*` call (after a cooldown) or via `gk_reload_abilities`.
+5. Server connects to `StdioServerTransport`.
 
 ### Core Concepts
 
-**GravityFormsClient** (`gravity-forms-client.js`): Single class wrapping all API endpoints. Each method uses `validateAndCall(toolName, input, apiCall)` pattern — validates input via `ValidationFactory`, then executes the HTTP call. Update operations (forms, entries, feeds) fetch-then-merge to preserve existing data. Responses return minimal payloads — just the essential data without redundant metadata.
+**GravityFormsClient** (`gravity-forms-client.js`): Single class wrapping all GF API endpoints. Each method uses the `validateAndCall(toolName, input, apiCall)` pattern — validates input via `ValidationFactory`, then executes the HTTP call. Update operations (forms, entries, feeds) fetch-then-merge to preserve existing data. Returns minimal payloads.
 
-**AuthManager** (`config/auth.js`): Credential-aware selection between `BasicAuthHandler` and `OAuth1Handler` — app-password creds get Basic (HTTPS or local URLs); `ck_`/`cs_` key pairs get Basic on HTTPS, OAuth on plain HTTP (matching the GF server's `is_ssl()` gate for key Basic auth). Explicit `GRAVITY_FORMS_AUTH_METHOD` overrides. Auth headers injected via axios request interceptor.
+**WordPressClient** (`wp-client.js`): Product-agnostic authenticated WordPress transport for Plane B. The abilities loader rides it to reach the Foundation catalog (`/wp-json/gravitykit/v1/...`) and the WP core Abilities API (`/wp-json/wp-abilities/v1/...`). Auth is a WordPress Application Password via HTTP Basic; when `GRAVITYKIT_WP_*` creds aren't set it falls back to `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` (commonly the same WP user + app password).
+
+**Abilities loader** (`abilities/loader.js`): `loadAbilitiesAsTools(wpClient)` builds `gv_*` tool definitions + handlers from the live catalog. Source-preference chain: (1) Foundation catalog `/wp-json/gravitykit/v1/abilities` (server-filtered to GravityKit, server-owned tool names), (2) WP core catalog `/wp-json/wp-abilities/v1/abilities` (filtered client-side on Foundation's stamped `meta.gk_registered_by`), (3) throw if neither is reachable (caller leaves `gv_*` unregistered and retries — self-healing). **Tool names are owned by the server** via each ability's `mcp_tool_name` (from the product's `mcp_prefix`, or the full product slug); abilities without one are skipped with a warning rather than client-invented. Handlers execute abilities at `/wp-abilities/v1/abilities/{name}/run` with the HTTP method derived from annotations (`readonly` → GET, `destructive`+`idempotent` → DELETE, else POST).
+
+**GravityView harness** (`gravityview/inspector-client.js`, `view-validator.js`): The Inspector client and validator target `/wp-json/gravityview/v1` routes that exist only when `DOING_GRAVITYVIEW_TESTS` is defined server-side. They are the integration-test and demo harness — **not** a runtime dependency. Runtime `gv_*` tools come from the abilities loader.
+
+**AuthManager** (`config/auth.js`): Credential-aware selection between `BasicAuthHandler` and `OAuth1Handler` — app-password creds get Basic (HTTPS or local URLs); `ck_`/`cs_` key pairs get Basic on HTTPS, OAuth on plain HTTP (matching the GF server's `is_ssl()` gate for key Basic auth). Explicit `GRAVITY_FORMS_AUTH_METHOD` overrides.
 
 **ValidationFactory** (`config/validation.js`): Central validation dispatcher. `validateToolInput(toolName, input)` routes to domain-specific validators. Composable rule chains (`validation-chain.js`) for reusable validation logic.
 
-**FieldManager** (`field-operations/field-manager.js`): Handles field CRUD within REST API v2 constraints (fields are properties of form objects, not separate endpoints). Generates integer IDs via max+1 pattern, creates compound sub-inputs for address/name/creditcard fields.
+**FieldManager** (`field-operations/field-manager.js`): Handles field CRUD within REST API v2 constraints (fields are properties of form objects, not separate endpoints). Generates integer IDs via max+1, creates compound sub-inputs for address/name/creditcard fields.
 
-**Field Registry** (`field-definitions/field-registry.js`): Metadata for all 44 Gravity Forms field types including categories, storage patterns (simple/compound/special), validation rules, variants, and capability flags.
+**Field Registry** (`field-definitions/field-registry.js`): Metadata for all 45 Gravity Forms field types — categories, storage patterns (simple/compound/special), validation rules, variants, and capability flags.
 
 ### Data Flow
 
 ```
 MCP Client → stdio → Server.CallToolRequestSchema handler
-  → switch(name) routes to handler
-  → wrapHandler() wraps execution:
-    → GravityFormsClient.method(params)
-      → validateAndCall(toolName, input, apiCall)
-        → ValidationFactory.validateToolInput() → validated input
-        → apiCall(validatedInput) → axios HTTP request
-          → auth interceptor adds headers
-          → response interceptor handles errors
-      → minimal result object (no redundant fields)
-    → JSON.stringify(result) → compact MCP content block (no pretty-print)
+  → switch(name):
+      gf_* / field tools → wrapHandler(GravityFormsClient.method)
+                           → validateAndCall → ValidationFactory → axios (auth interceptor)
+                           → minimal result
+      gv_*               → ability handler → WordPressClient → /wp-abilities/v1/.../run
+      gk_reload_abilities → force catalog re-fetch
+  → JSON.stringify(result) → compact MCP content block (no pretty-print)
   ← { content: [{ type: "text", text: "..." }] }
 ```
 
@@ -119,13 +138,15 @@ MCP Client → stdio → Server.CallToolRequestSchema handler
 
 Responses are optimized for minimal token usage:
 
-- **Compact JSON**: `JSON.stringify(result)` — no pretty-printing (no `null, 2`) — `src/index.js:114`
-- **Minimal payloads**: No redundant `message`, `created`/`updated` booleans, or echo-back of input IDs. GET methods return `{ resource: data }`, mutations return only what can't be inferred (e.g., delete returns `{ deleted: true, id, permanently }`)
-- **Summary/detail modes**: `gf_list_field_types` defaults to summary mode (`type`, `label`, `category` only). Pass `detail=true` for full metadata (supports, storage, validation, icon). Pass `include_variants=true` with `detail=true` for variant data.
-- **Compact mode (default on)**: `stripEmpty()` (`utils/compact.js`) recursively removes `null` and `""` values from all responses via `wrapHandler()`. `false` is preserved (semantic meaning). Entry tools also strip plugin-added meta keys (e.g., `gv_revision_*`, `helpscout_conversation_id`) via `stripEntryMeta()`, keeping only core properties and numbered field values. Pass `compact=false` for full raw data.
-- **Concise tool descriptions**: All 28 tool descriptions and property descriptions are terse to reduce tool-list overhead
+- **Compact JSON**: `JSON.stringify(result)` — no pretty-printing (no `null, 2`).
+- **Minimal payloads**: No redundant `message`, `created`/`updated` booleans, or echo-back of input IDs. GET methods return `{ resource: data }`; mutations return only what can't be inferred (e.g., delete returns `{ deleted: true, id, permanently }`).
+- **Summary/detail modes**: `gf_list_field_types` defaults to summary mode (`type`, `label`, `category`). Pass `detail=true` for full metadata; add `include_variants=true` for variant data.
+- **Compact mode (default on)**: `stripEmpty()` (`utils/compact.js`) recursively removes `null` and `""` from all responses. `false` is preserved (semantic meaning). Entry tools also strip plugin-added meta keys (e.g., `gv_revision_*`, `helpscout_conversation_id`) via `stripEntryMeta()`, keeping only core properties and numbered field values. Pass `compact=false` for full raw data.
+- **Terse descriptions**: All tool and property descriptions are kept terse to reduce `tools/list` overhead.
 
 ### Tool Categories
+
+**Plane A — Gravity Forms (`gf_*`), 26 static tools:**
 
 | Category | Tools | Client Methods |
 |----------|-------|----------------|
@@ -135,7 +156,9 @@ Responses are optimized for minimal token usage:
 | Notifications | `gf_send_notifications` | `sendNotifications` |
 | Feeds | `gf_list_feeds`, `gf_get_feed`, `gf_create_feed`, `gf_update_feed`, `gf_patch_feed`, `gf_delete_feed` | `listFeeds`, `getFeed`, `createFeed`, `updateFeed`, `patchFeed`, `deleteFeed` |
 | Utilities | `gf_get_field_filters`, `gf_get_results` | `getFieldFilters`, `getResults` |
-| Field Ops | `gf_add_field`, `gf_update_field`, `gf_delete_field`, `gf_list_field_types` | Handled via `fieldOperationHandlers` → `FieldManager` |
+| Field Ops | `gf_add_field`, `gf_update_field`, `gf_delete_field`, `gf_list_field_types` | via `fieldOperationHandlers` → `FieldManager` |
+
+**Plane B — GravityKit (`gv_*`), dynamic.** Generated from the catalog, so the exact set depends on the connected site's GravityKit products and versions — discover at runtime, don't hard-code. GravityView currently contributes tool families for View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`, …), fields (`gv_view_field_add`/`patch`/`move`/`remove`), grid rows, widgets, search fields, and discovery/schema (`gv_layouts_list`, `gv_widgets_list`, `gv_field_type_schema_get`, `gv_available_fields_get`, …). Plus the built-in `gk_reload_abilities`. Use the `gv_*_list` discovery tools and `gv_field_type_schema_get` to introspect what's available; the server `instructions` string documents the GravityView authoring flow. To re-verify that prose tool names still match the live catalog, run `npm run verify:tool-names` (see Releasing).
 
 ### Response Shapes
 
@@ -163,21 +186,21 @@ Mutation methods return minimal confirmation:
 ### File & Class Naming
 
 - Files: `kebab-case.js` (e.g., `field-manager.js`, `gravity-forms-client.js`)
-- Classes: `PascalCase` (e.g., `GravityFormsClient`, `FieldManager`, `AuthManager`)
-- Exports: Named exports for classes, default export for primary class per file
-- Test files: `{module-name}.test.js` alongside or in `tests/` directory
+- Classes: `PascalCase` (e.g., `GravityFormsClient`, `FieldManager`, `WordPressClient`)
+- Exports: Named exports for classes, default export for the primary class per file
+- Test files: `{module-name}.test.js` in the top-level `test/` directory
 
 ### Module System
 
 - ESM throughout (`"type": "module"` in package.json)
 - All imports use `.js` extension (required for ESM)
-- `__dirname` shimmed via `fileURLToPath(import.meta.url)` in `src/index.js:25-26`
+- `__dirname` shimmed via `fileURLToPath(import.meta.url)` where needed
 
 ### Error Handling Pattern
 
-All tool handlers use `wrapHandler()` (`src/index.js:99-125`):
+All tool handlers use `wrapHandler()` in `src/index.js`:
 - Checks client initialization
-- Wraps result in MCP content blocks `{ content: [{ type: "text", text: JSON.stringify(result) }] }`
+- Wraps the result in MCP content blocks `{ content: [{ type: "text", text: JSON.stringify(result) }] }`
 - Catches errors → `createErrorResponse()` with sanitized details
 - Error details pass through `sanitize()` to mask credentials
 
@@ -202,17 +225,17 @@ await this.httpClient.put(`/resource/${id}`, merged);
 
 ### Delete Safety
 
-All delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.allowDelete` first, controlled by `GRAVITY_FORMS_ALLOW_DELETE=true` env var. Without it, deletes throw immediately.
+All GF delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.allowDelete` first, controlled by `GRAVITY_FORMS_ALLOW_DELETE=true`. Without it, deletes throw immediately.
 
 ### Logging
 
-`utils/logger.js` routes all logs to stderr in MCP mode (keeps stdout clean for JSON-RPC). In test mode, uses console.log. Sensitive data masked via `utils/sanitize.js`.
+`utils/logger.js` routes all logs to stderr in MCP mode (keeps stdout clean for JSON-RPC). In test mode it uses console.log. Sensitive data is masked via `utils/sanitize.js`. Never use `console.log` in server code.
 
 ## Extension Patterns
 
-### Adding a New Tool
+### Adding a New Gravity Forms Tool
 
-1. **Define the tool schema** in `src/index.js` inside the `ListToolsRequestSchema` handler (`:131-519`). Add to the tools array with concise descriptions:
+1. **Define the tool schema** in `src/index.js` (in `GF_TOOL_DEFINITIONS`, surfaced by the `ListToolsRequestSchema` handler) with a concise description:
    ```javascript
    {
      name: 'gf_new_tool',
@@ -220,31 +243,14 @@ All delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.al
      inputSchema: { type: 'object', properties: {...}, required: [...] }
    }
    ```
+2. **Add the client method** in `gravity-forms-client.js` using `validateAndCall`, returning minimal data.
+3. **Add validation** in `config/validation.js` inside `ValidationFactory.validateToolInput()`.
+4. **Add the handler route** in the `CallToolRequestSchema` switch in `src/index.js`.
+5. **Add tests** in `test/`, importing the source under test as `../src/…` (see `forms.test.js`).
 
-2. **Add the client method** in `gravity-forms-client.js` using `validateAndCall`. Return minimal data:
-   ```javascript
-   async newToolMethod(params) {
-     return this.validateAndCall('gf_new_tool', params, async (validated) => {
-       const response = await this.httpClient.get('/endpoint');
-       return { data: response.data };  // No message, no echo-back IDs
-     });
-   }
-   ```
+### Adding GravityKit (`gv_*`) Tools
 
-3. **Add validation** in `config/validation.js` inside `ValidationFactory.validateToolInput()` (`:463-628`):
-   ```javascript
-   case 'gf_new_tool':
-     BaseValidator.validateRequired(input, ['required_field']);
-     return { required_field: BaseValidator.validateId(input.required_field) };
-   ```
-
-4. **Add the handler route** in `src/index.js` inside the `CallToolRequestSchema` handler switch (`:537-628`):
-   ```javascript
-   case 'gf_new_tool':
-     return wrapHandler(() => gravityFormsClient.newToolMethod(params))();
-   ```
-
-5. **Add tests** — create test in `test/` following existing patterns (see `forms.test.js` for reference). Import source under test as `../src/…`.
+`gv_*` tools are **not** defined in this repo — they come from the connected site's Foundation Abilities catalog. To add or change them, register/modify abilities in the relevant GravityKit product (the server stamps each ability's `mcp_tool_name`); the loader picks them up automatically. After a catalog change, run `gk_reload_abilities` (live) or `npm run verify:tool-names` to confirm names.
 
 ### Adding a New Field Type to the Registry
 
@@ -261,8 +267,7 @@ newfield: {
   variants: { default: { label: 'Default', settings: {} } }
 }
 ```
-
-For compound fields (multi-input like address/name), set `storage.type: 'compound'` and add sub-input generation logic in `field-manager.js:generateSubInputs()` (`:206-267`).
+For compound fields (multi-input like address/name), set `storage.type: 'compound'` and add sub-input generation logic in `field-manager.js` (`generateSubInputs()`).
 
 ### Adding a New Validation Rule
 
@@ -282,7 +287,7 @@ npm run dev            # Dev with auto-reload
 npm run inspect        # Debug with MCP Inspector
 ```
 
-### Required Environment
+### Required Environment (Plane A — Gravity Forms)
 
 ```
 GRAVITY_FORMS_BASE_URL=https://...   # WordPress site URL (no trailing slash)
@@ -296,6 +301,17 @@ GRAVITY_FORMS_CONSUMER_SECRET="xxxx xxxx xxxx xxxx xxxx xxxx"
 ```
 
 Shorthand aliases `GF_CONSUMER_KEY`, `GF_CONSUMER_SECRET`, `GF_URL` are also supported (resolved in `test-config.js`).
+
+### GravityKit Environment (Plane B — abilities)
+
+```
+# Optional — only needed for gv_* tools. Falls back to GRAVITY_FORMS_* when unset.
+GRAVITYKIT_WP_URL=https://...        # WordPress site URL (usually same as GF)
+GRAVITYKIT_WP_USERNAME=wp_username
+GRAVITYKIT_WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
+```
+
+`WordPressClient` resolves the base URL from `GRAVITYKIT_WP_URL` or `GRAVITY_FORMS_BASE_URL`, and credentials from `GRAVITYKIT_WP_*` or the `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` fallback. On most single-site setups the GF credentials already double as the WP app password, so no extra config is needed.
 
 ### Optional Environment
 
@@ -322,9 +338,7 @@ GRAVITY_FORMS_TEST_TIMEOUT=           # Override timeout for test site
 GRAVITYKIT_MCP_TEST_MODE=true         # Enable test mode (remaps TEST_* vars)
 ```
 
-Shorthand aliases: `TEST_GF_URL`, `TEST_GF_CONSUMER_KEY`, `TEST_GF_CONSUMER_SECRET`, `TEST_WP_USER`, `TEST_WP_PASSWORD`.
-
-Legacy: `GRAVITYMCP_TEST_MODE` and `GRAVITY_FORMS_TEST_URL` are also supported. Test mode also activates when `NODE_ENV=test`.
+Shorthand aliases: `TEST_GF_URL`, `TEST_GF_CONSUMER_KEY`, `TEST_GF_CONSUMER_SECRET`, `TEST_WP_USER`, `TEST_WP_PASSWORD`. Legacy: `GRAVITYMCP_TEST_MODE` and `GRAVITY_FORMS_TEST_URL` are also supported. Test mode also activates when `NODE_ENV=test`.
 
 ### Testing
 
@@ -335,13 +349,12 @@ npm run test:forms     # Forms endpoint tests
 npm run test:entries   # Entries endpoint tests
 npm run test:feeds     # Feeds endpoint tests
 npm run test:tools     # Tool registration validation
+npm run test:views     # GravityView inspector/validator tests
 npm run test:all       # Run everything sequentially
 npm test               # Integration tests (requires live API)
 ```
 
-Tests use a custom runner (`test/run.js`), not Jest/Mocha. Test helpers in `test/helpers.js` provide mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`).
-
-For integration tests, set `GRAVITY_FORMS_TEST_*` env vars pointing to a test WordPress site. Test forms are prefixed with `TEST_` and auto-cleaned via `TestFormManager`.
+Tests use a custom runner (`test/run.js`), not Jest/Mocha. Test helpers in `test/helpers.js` provide mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`). For integration tests, set `GRAVITY_FORMS_TEST_*` env vars pointing to a test WordPress site; test forms are prefixed with `TEST_` and auto-cleaned via `TestFormManager`.
 
 ### Building
 
@@ -349,29 +362,31 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 ## Gotchas
 
-1. **Fields are form properties, not separate endpoints.** The Gravity Forms REST API has no direct field CRUD endpoints. All field operations require fetching the entire form, modifying the fields array, then PUT-ing the whole form back. This is why `FieldManager` exists as a layer on top of `GravityFormsClient`. — `field-manager.js:31-56`
+1. **Fields are form properties, not separate endpoints.** The Gravity Forms REST API has no direct field CRUD endpoints. All field operations fetch the entire form, modify the fields array, then PUT the whole form back. This is why `FieldManager` exists as a layer on top of `GravityFormsClient`.
 
-2. **Stdout is reserved for JSON-RPC.** In MCP mode, ALL logging must go to stderr. Using `console.log` will corrupt the JSON-RPC transport. The `logger.js` utility handles this, but any new code must use `logger.info/error/warn` instead of `console.log`. — `utils/logger.js:14-32`
+2. **Stdout is reserved for JSON-RPC.** In MCP mode, ALL logging must go to stderr. `console.log` corrupts the transport. Use `logger.info/error/warn`.
 
-3. **Auth method is credential-aware.** `AuthManager` picks the transport from the credential shape: app-password creds (username + application password) use Basic over HTTPS or local URLs; `ck_`/`cs_` key pairs use Basic over HTTPS and OAuth 1.0a over plain HTTP (Gravity Forms only checks key-pair Basic auth when `is_ssl()`). An explicit `GRAVITY_FORMS_AUTH_METHOD` is always honored — including `basic` over remote HTTP, so don't set it in `.env` "just in case". Remote-HTTP Basic without an explicit method needs `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true`. — `config/auth.js`
+3. **Auth method is credential-aware.** `AuthManager` picks the transport from the credential shape: app-password creds use Basic over HTTPS or local URLs; `ck_`/`cs_` key pairs use Basic over HTTPS and OAuth 1.0a over plain HTTP (Gravity Forms only checks key-pair Basic auth when `is_ssl()`). An explicit `GRAVITY_FORMS_AUTH_METHOD` is always honored — including `basic` over remote HTTP, so don't set it in `.env` "just in case". Remote-HTTP Basic without an explicit method needs `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true`.
 
-4. **Update operations fetch-then-merge.** `updateForm`, `updateEntry`, and `updateFeed` all GET the existing resource first, merge updates, then PUT. This prevents data loss but means two HTTP calls per update. If the resource is modified between GET and PUT, the intermediate change is overwritten. — `gravity-forms-client.js:262-278`
+4. **Update operations fetch-then-merge.** `updateForm`, `updateEntry`, and `updateFeed` GET the existing resource, merge, then PUT — two HTTP calls per update. If the resource changes between GET and PUT, the intermediate change is overwritten.
 
-5. **Field ID generation uses max+1.** If a field with ID 10 is deleted, the next field gets ID 11, not 10. IDs are never reused within a form. — `field-manager.js:173-182`
+5. **Field ID generation uses max+1.** If field ID 10 is deleted, the next field gets ID 11, not 10. IDs are never reused within a form.
 
-6. **Compound field sub-input IDs use dot notation.** Address field 5 has sub-inputs `5.1` (street), `5.2` (line 2), etc. These IDs are strings, not numbers. Entry data uses these dot-notation keys. — `field-manager.js:206-267`
+6. **Compound field sub-input IDs use dot notation.** Address field 5 has sub-inputs `5.1` (street), `5.2` (line 2), etc. These IDs are strings, not numbers. Entry data uses these dot-notation keys.
 
-7. **Delete operations are disabled by default.** `GRAVITY_FORMS_ALLOW_DELETE=true` must be explicitly set. Without it, `deleteForm`, `deleteEntry`, and `deleteFeed` throw immediately. This is intentional safety. — `gravity-forms-client.js:88, 292-294`
+7. **Delete operations are disabled by default.** `GRAVITY_FORMS_ALLOW_DELETE=true` must be set explicitly, or `deleteForm`/`deleteEntry`/`deleteFeed` throw. Intentional safety.
 
-8. **The `mcp.json` manifest may be stale.** The `ListToolsRequestSchema` handler in `index.js` plus `fieldOperationTools` in `field-operations/index.js` are the source of truth (22 + 4 = 26 tools total). — `src/index.js` + `src/field-operations/index.js`
+8. **`mcp.json` may be stale.** The runtime source of truth is `GF_TOOL_DEFINITIONS` + the `ListToolsRequestSchema` handler in `src/index.js`, `fieldOperationTools` in `field-operations/index.js` (26 `gf_*` tools), the built-in `gk_reload_abilities`, and the dynamic `gv_*` tools from the abilities loader.
 
-9. **Self-signed certs for local dev.** Set `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true` to bypass certificate validation for local WordPress environments (Laravel Valet, Local WP, etc.). Never enable in production. — `gravity-forms-client.js:31-33`
+9. **Self-signed certs for local dev.** Set `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true` to bypass certificate validation for local WordPress (Laravel Valet, Local WP, etc.). Never in production.
 
-10. **Validation has legacy and new patterns.** The validation system has a `BaseValidator` legacy layer wrapping newer `ValidationChain` and domain-specific validators. Both paths are active. New code should use the chain system in `validation-chain.js`. — `config/validation.js:21-260`
+10. **Validation has legacy and new patterns.** A `BaseValidator` legacy layer wraps the newer `ValidationChain` and domain validators. Both paths are active. New code should use the chain system in `validation-chain.js`.
 
-11. **`gf_list_field_types` defaults to summary mode.** Returns only `type`, `label`, `category` per field type. Pass `detail=true` for full metadata (supports, storage, validation). Pass `include_variants=true` with `detail=true` for variant data. This prevents accidentally dumping thousands of tokens for all 44 field types. — `field-operations/index.js:142-211`
+11. **`gf_list_field_types` defaults to summary mode.** Returns only `type`, `label`, `category`. Pass `detail=true` for full metadata; add `include_variants=true` for variants. Prevents dumping thousands of tokens for all 45 field types.
 
-12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_BASE_URL` → `GRAVITY_FORMS_BASE_URL` (and consumer key/secret). The rest of the client and AuthManager work unchanged. — `config/test-config.js:60-95`, `gravity-forms-client.js:16`
+12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_*` → `GRAVITY_FORMS_*`. The rest of the client and AuthManager work unchanged.
+
+13. **`gv_*` tools load asynchronously and self-heal.** The abilities catalog is fetched in the background after startup, so `gv_*` tools may be absent for a moment (the server emits a `tools/listChanged` once they arrive). If a catalog fetch fails, it retries after a cooldown or immediately on `gk_reload_abilities`. The `src/gravityview/` Inspector client is a test/demo harness only — runtime `gv_*` come from the abilities loader.
 
 ## Packaging
 
@@ -379,7 +394,7 @@ What ships to npm is governed solely by the **`files` allowlist** in `package.js
 
 - **Ships:** `src/` (runtime), `mcp.json`, `.env.example`, `README.md`, `LICENSE`, `CLAUDE.md`, `AGENTS.md`.
 - **Excluded by omission:** `test/` (tests are top-level, not under `src/`), `scripts/` (dev tooling), `.github/`, `package-lock.json`.
-- **`npm run lint:package`** runs [publint](https://publint.dev) to validate package correctness; **`prepublishOnly`** runs the offline test suites + publint, so a broken or mis-packaged build can't be published. It deliberately omits the live integration test (`npm test`) to avoid hitting a real site during publish.
+- **`npm run lint:package`** runs [publint](https://publint.dev) to validate package correctness; **`npm run lint:docs`** runs the offline doc-freshness guard (`scripts/check-docs.mjs`). **`prepublishOnly`** runs the offline test suites + both linters, so a broken, mis-packaged, or stale-documented build can't be published. It deliberately omits the live integration test (`npm test`) to avoid hitting a real site during publish.
 - **Verify before publishing:** `npm pack --dry-run` lists exactly what will ship.
 
 ## Releasing
@@ -394,9 +409,11 @@ What ships to npm is governed solely by the **`files` allowlist** in `package.js
 6. **Tag**: `git tag vX.Y.Z`
 7. **Push**: `git push origin main --tags`
 
-Skipping any step (especially CHANGELOG) will leave the release history incomplete for future developers and AI agents.
+Skipping any step (especially CHANGELOG) leaves the release history incomplete.
 
-**Before tagging, run `npm run verify:tool-names` against a live site.** The `gv_*` tools are generated from the installed GravityView/Foundation Abilities catalog, so a catalog rename can silently leave the server `instructions` string, README, or the demo referencing tools that no longer exist. The script cross-checks every `gf_`/`gv_` name in prose against what the server actually registers and exits non-zero on a mismatch. Requires WordPress credentials in the environment (see Required Environment). Dev-only — not shipped in the npm package.
+**Before tagging:**
+- Run **`npm run lint:docs`** — the offline doc-freshness guard (repo-map coverage, tool/field counts, no line citations). `prepublishOnly` runs it too.
+- Run **`npm run verify:tool-names` against a live site** — the `gv_*` tools are generated from the installed GravityView/Foundation Abilities catalog, so a catalog rename can silently leave the server `instructions` string, README, or the demo referencing tools that no longer exist. The script cross-checks every `gf_`/`gv_` name in prose against what the server registers and exits non-zero on a mismatch. Needs WordPress credentials (see GravityKit Environment). Dev-only — not shipped in the npm package.
 
 ## Related Resources
 

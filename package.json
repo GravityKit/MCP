@@ -30,7 +30,8 @@
     "test:all": "npm run test:unit && npm run test:field-ops && npm run test:auth && npm run test:forms && npm run test:entries && npm run test:feeds && npm run test:submissions && npm run test:validation && npm run test:field-validation && npm run test:tools && npm run test:views && npm test",
     "test:coverage": "echo 'Running all tests with coverage analysis' && npm run test:all",
     "lint:package": "publint",
-    "prepublishOnly": "npm run test:unit && npm run test:field-ops && npm run test:field-validation && npm run test:views && publint"
+    "lint:docs": "node scripts/check-docs.mjs",
+    "prepublishOnly": "npm run test:unit && npm run test:field-ops && npm run test:field-validation && npm run test:views && npm run lint:package && npm run lint:docs"
   },
   "keywords": [
     "mcp",
