@@ -653,15 +653,15 @@ export class GravityFormsClient {
     return this.validateAndCall('gf_list_feeds', params, async (validated) => {
       const response = await this.httpClient.get('/feeds', { params: validated });
 
-      // A site with no feeds returns a serialized WP_Error
-      // ({ errors: { not_found: ["Feed not found"] } }) with HTTP 200
-      // instead of an empty collection — normalize to [] so callers
-      // always get an array.
+      // Gravity Forms signals "zero feeds" as a serialized WP_Error with
+      // HTTP 200 (not_found = none match; missing_table = no feed add-on has
+      // ever run). Normalize any HTTP-200 WP_Error to [] so callers always
+      // get an array; real failures arrive as non-200 and throw before here.
       const data = response.data;
-      const isEmptyNotFound = data && !Array.isArray(data) && data.errors?.not_found;
+      const isEmptyWpError = data && !Array.isArray(data) && !!data.errors;
 
       return {
-        feeds: isEmptyNotFound ? [] : data
+        feeds: isEmptyWpError ? [] : data
       };
     });
   }

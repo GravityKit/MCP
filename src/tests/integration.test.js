@@ -375,19 +375,8 @@ suite.test('Integration: List available feeds', async () => {
 });
 
 suite.test('Integration: Create test feed (if MailChimp available)', async () => {
-  // First check if MailChimp addon is available by trying to list its feeds
-  let mailchimpAvailable = false;
-  try {
-    const feeds = await client.listFeeds({ addon: 'gravityformsmailchimp' });
-    // If we get here without error, addon might be available
-    mailchimpAvailable = !feeds.error || !feeds.error.includes('not installed');
-  } catch (error) {
-    // Addon check failed, likely not available
-    mailchimpAvailable = false;
-  }
-
-  if (!mailchimpAvailable) {
-    console.log('  MailChimp addon not installed - skipping feed test');
+  if (!testFormId) {
+    console.log('  No test form available - skipping feed creation');
     return;
   }
 
@@ -403,7 +392,21 @@ suite.test('Integration: Create test feed (if MailChimp available)', async () =>
     }
   };
 
-  const result = await client.createFeed(feedData);
+  // Attempt creation and skip (don't fail) when the feed add-on or its
+  // infrastructure isn't present: a fresh Gravity Forms install has no
+  // wp_gf_addon_feed table, and MailChimp may not be installed at all.
+  let result;
+  try {
+    result = await client.createFeed(feedData);
+  } catch (error) {
+    const msg = error.message || '';
+    const unavailable = /table does not exist|missing_table|not installed|not active|invalid add-?on|add-?on .*not (registered|found)/i.test(msg);
+    if (unavailable) {
+      console.log(`  MailChimp feed add-on not available - skipping (${msg})`);
+      return;
+    }
+    throw error;
+  }
 
   TestAssert.isNotNull(result.feed, 'Feed should be created');
   TestAssert.isNotNull(result.feed.id, 'Should return feed ID');
