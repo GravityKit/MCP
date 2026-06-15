@@ -500,7 +500,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_create_entry',
-    description: 'Create an entry',
+    description: 'Create an entry. Checkbox/multiselect arrays auto-normalized.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -520,7 +520,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_entry',
-    description: 'Update an entry',
+    description: 'Update an entry. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

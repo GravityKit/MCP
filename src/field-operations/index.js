@@ -177,12 +177,23 @@ export const fieldOperationHandlers = {
           validation: def.validation
         }));
       } else {
-        // Summary mode (default) — minimal tokens
-        fieldTypes = entries.map(([type, def]) => ({
-          type,
-          label: def.label,
-          category: def.category
-        }));
+        // Summary mode (default) — minimal tokens, with entry input hints
+        const inputHints = {
+          checkbox: 'array: ["val1","val2"] — auto-matched to sub-inputs',
+          multiselect: 'array: ["val1","val2"] — commas in values get split',
+          select: 'string: "value"',
+          radio: 'string: "value"',
+          list: 'array: ["a","b"] or [{Col1:"a",Col2:"b"}] for multi-col',
+          name: 'dot-notation: {"1.3":"First","1.6":"Last"}',
+          address: 'dot-notation: {"2.1":"Street","2.3":"City","2.4":"State","2.5":"ZIP"}',
+          consent: 'dot-notation: {"5.1":"1","5.2":"text","5.3":"revision"}',
+          chainedselect: 'dot-notation: {"1.1":"Level1","1.2":"Level2"}',
+        };
+        fieldTypes = entries.map(([type, def]) => {
+          const entry = { type, label: def.label, category: def.category };
+          if (inputHints[type]) entry.entry_input = inputHints[type];
+          return entry;
+        });
       }
 
       return {
