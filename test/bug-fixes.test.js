@@ -12,8 +12,8 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const srcDir = join(__dirname, '..');
-const projectDir = join(__dirname, '..', '..');
+const srcDir = join(__dirname, '..', 'src');
+const projectDir = join(__dirname, '..');
 
 const suite = new TestRunner('Bug Fix Regression Tests');
 
@@ -200,7 +200,7 @@ suite.test('Bug #5: Delete tools have destructiveHint: true', () => {
 // =================================
 
 suite.test('Bug #7: validateField strips _variant and _meta from output', async () => {
-  const { FieldAwareValidator } = await import('../config/field-validation.js');
+  const { FieldAwareValidator } = await import('../src/config/field-validation.js');
 
   const field = {
     id: 1,
@@ -215,7 +215,7 @@ suite.test('Bug #7: validateField strips _variant and _meta from output', async 
 });
 
 suite.test('Bug #7: validateFormFields strips _variant and _meta from all fields', async () => {
-  const { FieldAwareValidator } = await import('../config/field-validation.js');
+  const { FieldAwareValidator } = await import('../src/config/field-validation.js');
 
   const fields = [
     { id: 1, type: 'text', label: 'Text Field' },
@@ -234,7 +234,7 @@ suite.test('Bug #7: validateFormFields strips _variant and _meta from all fields
 // =================================
 
 suite.test('Bug #8: gf_add_field throws errors instead of swallowing them', async () => {
-  const { fieldOperationHandlers } = await import('../field-operations/index.js');
+  const { fieldOperationHandlers } = await import('../src/field-operations/index.js');
 
   // Create a mock fieldManager that throws
   const mockFieldOps = {
@@ -261,7 +261,7 @@ suite.test('Bug #8: gf_add_field throws errors instead of swallowing them', asyn
 });
 
 suite.test('Bug #8: gf_update_field throws errors instead of swallowing them', async () => {
-  const { fieldOperationHandlers } = await import('../field-operations/index.js');
+  const { fieldOperationHandlers } = await import('../src/field-operations/index.js');
 
   const mockFieldOps = {
     fieldManager: {
@@ -283,7 +283,7 @@ suite.test('Bug #8: gf_update_field throws errors instead of swallowing them', a
 });
 
 suite.test('Bug #8: gf_delete_field throws errors instead of swallowing them', async () => {
-  const { fieldOperationHandlers } = await import('../field-operations/index.js');
+  const { fieldOperationHandlers } = await import('../src/field-operations/index.js');
 
   const mockFieldOps = {
     fieldManager: {
@@ -309,7 +309,7 @@ suite.test('Bug #8: gf_delete_field throws errors instead of swallowing them', a
 // =================================
 
 suite.test('Bug #9: Name field registry has correct sub-input mapping', async () => {
-  const { fieldRegistry } = await import('../field-definitions/field-registry.js');
+  const { fieldRegistry } = await import('../src/field-definitions/field-registry.js');
 
   const nameField = fieldRegistry.name;
   TestAssert.exists(nameField, 'Name field should exist in registry');
@@ -325,7 +325,7 @@ suite.test('Bug #9: Name field registry has correct sub-input mapping', async ()
 });
 
 suite.test('Bug #9: generateCompoundInputs matches registry for name field', async () => {
-  const { generateCompoundInputs } = await import('../field-definitions/field-registry.js');
+  const { generateCompoundInputs } = await import('../src/field-definitions/field-registry.js');
 
   const field = { id: 5, type: 'name', nameFormat: 'advanced' };
   const inputs = generateCompoundInputs(field);
@@ -410,8 +410,8 @@ suite.test('Bug #23: mcp.json version matches package.json version', () => {
 // =================================
 
 suite.test('Bug #24: Filtering by "conditional" feature returns >0 results', async () => {
-  const { fieldOperationHandlers } = await import('../field-operations/index.js');
-  const fieldRegistry = (await import('../field-definitions/field-registry.js')).default;
+  const { fieldOperationHandlers } = await import('../src/field-operations/index.js');
+  const fieldRegistry = (await import('../src/field-definitions/field-registry.js')).default;
 
   const result = await fieldOperationHandlers.gf_list_field_types(
     { feature: 'conditional' },

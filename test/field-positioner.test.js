@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { PositionEngine } from '../field-operations/field-positioner.js';
+import { PositionEngine } from '../src/field-operations/field-positioner.js';
 
 // Create test fields with page breaks
 const createTestFields = () => [

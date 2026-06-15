@@ -3,10 +3,10 @@
  * Tests real-world scenarios from user perspective
  */
 
-import { fieldOperationHandlers } from '../field-operations/index.js';
-import { testConfig, TestFormManager } from '../config/test-config.js';
-import GravityFormsClient from '../gravity-forms-client.js';
-import FieldAwareValidator from '../config/field-validation.js';
+import { fieldOperationHandlers } from '../src/field-operations/index.js';
+import { testConfig, TestFormManager } from '../src/config/test-config.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
+import FieldAwareValidator from '../src/config/field-validation.js';
 
 console.log('🎭 Field Operations E2E Test Scenarios\n');
 

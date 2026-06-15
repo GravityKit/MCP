@@ -3,7 +3,7 @@
  * Tests all 6 entries management tools with comprehensive coverage
  */
 
-import GravityFormsClient from '../gravity-forms-client.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
 import {
   TestRunner,
   TestAssert,

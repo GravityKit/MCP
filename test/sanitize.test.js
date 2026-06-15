@@ -4,7 +4,7 @@
  */
 
 import { TestRunner, TestAssert } from './helpers.js';
-import { sanitize, sanitizeUrl, sanitizeHeaders } from '../utils/sanitize.js';
+import { sanitize, sanitizeUrl, sanitizeHeaders } from '../src/utils/sanitize.js';
 
 const suite = new TestRunner('Sanitization Tests');
 

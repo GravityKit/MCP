@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { FieldManager } from '../field-operations/field-manager.js';
+import { FieldManager } from '../src/field-operations/field-manager.js';
 
 // Mock dependencies. Mirrors the GravityFormsClient contract FieldManager
 // actually consumes: getForm() resolves { form } and replaceForm() does a

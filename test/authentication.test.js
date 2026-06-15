@@ -3,7 +3,7 @@
  * Tests Basic Auth (primary) and OAuth 1.0a (secondary) authentication methods
  */
 
-import { AuthManager, BasicAuthHandler, OAuth1Handler, validateRestApiAccess } from '../config/auth.js';
+import { AuthManager, BasicAuthHandler, OAuth1Handler, validateRestApiAccess } from '../src/config/auth.js';
 import { TestRunner, TestAssert, MockHttpClient, MockResponse, setupTestEnvironment } from './helpers.js';
 
 const suite = new TestRunner('Authentication Tests');

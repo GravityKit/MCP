@@ -9,7 +9,7 @@
  */
 
 import { TestRunner, TestAssert, wait } from './helpers.js';
-import ResourceMutex, { resourceMutex } from '../utils/mutex.js';
+import ResourceMutex, { resourceMutex } from '../src/utils/mutex.js';
 
 const suite = new TestRunner('Mutex & Concurrency Tests');
 

@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { DependencyTracker } from '../field-operations/field-dependencies.js';
+import { DependencyTracker } from '../src/field-operations/field-dependencies.js';
 
 // Sample form with various dependencies
 const createTestForm = () => ({

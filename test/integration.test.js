@@ -4,9 +4,9 @@
  */
 
 import dotenv from 'dotenv';
-import GravityFormsClient from '../gravity-forms-client.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
 import { TestRunner, TestAssert } from './helpers.js';
-import { validateRestApiAccess } from '../config/auth.js';
+import { validateRestApiAccess } from '../src/config/auth.js';
 
 // Set test mode to suppress initialization messages to stderr
 process.env.GRAVITY_FORMS_TEST_MODE = 'true';

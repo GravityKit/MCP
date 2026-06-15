@@ -3,7 +3,7 @@
  * Tests all 6 forms management tools with happy path, edge cases, and failure modes
  */
 
-import GravityFormsClient from '../gravity-forms-client.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
 import {
   TestRunner,
   TestAssert,

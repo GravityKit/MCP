@@ -10,7 +10,7 @@
  * option/quiz/survey/poll checkbox variants, multiselect, radio fallback.
  */
 
-import GravityFormsClient from '../gravity-forms-client.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
 import {
   TestRunner,
   TestAssert,

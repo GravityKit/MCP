@@ -3,7 +3,7 @@
  * Tests all 7 add-on feed management tools
  */
 
-import GravityFormsClient from '../gravity-forms-client.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
 import {
   TestRunner,
   TestAssert,

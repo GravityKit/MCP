@@ -3,11 +3,11 @@
  * Tests the complete flow from MCP tool calls to API interactions
  */
 
-import { fieldOperationHandlers } from '../field-operations/index.js';
-import { testConfig, TestFormManager } from '../config/test-config.js';
-import GravityFormsClient from '../gravity-forms-client.js';
-import fieldRegistry from '../field-definitions/field-registry.js';
-import FieldAwareValidator from '../config/field-validation.js';
+import { fieldOperationHandlers } from '../src/field-operations/index.js';
+import { testConfig, TestFormManager } from '../src/config/test-config.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
+import fieldRegistry from '../src/field-definitions/field-registry.js';
+import FieldAwareValidator from '../src/config/field-validation.js';
 
 console.log('🧪 Field Operations Integration Tests\n');
 

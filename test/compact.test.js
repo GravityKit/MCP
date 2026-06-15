@@ -7,7 +7,7 @@
  * Preserves: false, 0, "0"
  */
 
-import { stripEmpty, stripEntryMeta, stripEntryMetaFromResponse } from '../utils/compact.js';
+import { stripEmpty, stripEntryMeta, stripEntryMetaFromResponse } from '../src/utils/compact.js';
 import { TestRunner, TestAssert } from './helpers.js';
 
 const runner = new TestRunner('Compact Utility Tests');

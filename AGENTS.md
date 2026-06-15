@@ -38,36 +38,25 @@ MCP/
 │   │   ├── validators.js     # Domain-specific validators (forms, entries, feeds, etc.)
 │   │   ├── field-validation.js  # FieldAwareValidator for field-specific rules
 │   │   └── test-config.js    # Dual test/live environment config, TestFormManager
-│   ├── utils/
-│   │   ├── compact.js        # stripEmpty() — recursive null/empty/false stripping for token optimization
-│   │   ├── logger.js         # MCP-safe logger (stderr in MCP mode, console in test)
-│   │   └── sanitize.js       # Credential masking for safe logging
-│   └── tests/
-│       ├── run.js            # Test runner
-│       ├── helpers.js        # Mock data generators, test utilities
-│       ├── integration.test.js          # Live API integration tests
-│       ├── server-tools.test.js         # Tool registration validation
-│       ├── forms.test.js                # Forms endpoint tests
-│       ├── entries.test.js              # Entries endpoint tests
-│       ├── feeds.test.js                # Feeds endpoint tests
-│       ├── submissions.test.js          # Submission pipeline tests
-│       ├── authentication.test.js       # Auth method tests
-│       ├── validation.test.js           # Input validation tests
-│       ├── field-validation.test.js     # Field-specific validation
-│       ├── field-manager.test.js        # FieldManager unit tests
-│       ├── field-dependencies.test.js   # DependencyTracker tests
-│       ├── field-positioner.test.js     # PositionEngine tests
-│       ├── field-registry.test.js       # Field registry tests
-│       ├── field-operations-e2e.test.js # Field operations E2E
-│       ├── field-operations-integration.test.js # Field ops integration
-│       ├── compact.test.js             # stripEmpty compact utility tests
-│       └── sanitize.test.js            # Sanitization tests
+│   └── utils/
+│       ├── compact.js        # stripEmpty() — recursive null/empty/false stripping for token optimization
+│       ├── logger.js         # MCP-safe logger (stderr in MCP mode, console in test)
+│       └── sanitize.js       # Credential masking for safe logging
+├── test/                     # Test suites — top-level, NOT published (see Packaging)
+│   ├── run.js                # Custom test runner (npm run test:unit)
+│   ├── helpers.js            # Mock data generators, test utilities
+│   ├── integration.test.js   # Live API integration tests (npm test)
+│   ├── views.test.js, views-stress.test.js   # GravityView inspector + abilities coverage
+│   ├── abilities-loader.test.js              # Abilities catalog → gv_* tool generation
+│   └── *.test.js             # forms, entries, feeds, fields, validation, submissions, compact, sanitize, …
 ├── scripts/
 │   ├── check-env.js          # Environment validation script
 │   ├── setup-test-data.js    # Test data seeding
 │   ├── test-field-ops.js     # Field operations smoke test
 │   ├── test-server-output.js # Server output verification
-│   └── verify-field-tools.js # Field tool registration check
+│   ├── verify-field-tools.js # Field tool registration check
+│   ├── verify-tool-names.mjs # Cross-check doc/instruction tool names vs registered tools (dev-only, not published)
+│   └── stress-abilities.mjs  # Synthetic abilities-loader stress/contract test
 └── .github/workflows/
     ├── publish.yml           # npm publish workflow
     ├── security.yml          # Security scanning
@@ -245,7 +234,7 @@ All delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.al
      return wrapHandler(() => gravityFormsClient.newToolMethod(params))();
    ```
 
-5. **Add tests** — create test in `src/tests/` following existing patterns (see `forms.test.js` for reference).
+5. **Add tests** — create test in `test/` following existing patterns (see `forms.test.js` for reference). Import source under test as `../src/…`.
 
 ### Adding a New Field Type to the Registry
 
@@ -340,7 +329,7 @@ npm run test:all       # Run everything sequentially
 npm test               # Integration tests (requires live API)
 ```
 
-Tests use a custom runner (`src/tests/run.js`), not Jest/Mocha. Test helpers in `src/tests/helpers.js` provide mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`).
+Tests use a custom runner (`test/run.js`), not Jest/Mocha. Test helpers in `test/helpers.js` provide mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`).
 
 For integration tests, set `GRAVITY_FORMS_TEST_*` env vars pointing to a test WordPress site. Test forms are prefixed with `TEST_` and auto-cleaned via `TestFormManager`.
 
@@ -374,6 +363,15 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_BASE_URL` → `GRAVITY_FORMS_BASE_URL` (and consumer key/secret). The rest of the client and AuthManager work unchanged. — `config/test-config.js:60-95`, `gravity-forms-client.js:16`
 
+## Packaging
+
+What ships to npm is governed solely by the **`files` allowlist** in `package.json` — there is intentionally **no `.npmignore`** (with a `files` field present npm ignores it, so keeping one is misleading). Allowlist, not denylist: a new file ships only if it matches `files`.
+
+- **Ships:** `src/` (runtime), `mcp.json`, `.env.example`, `README.md`, `LICENSE`, `CLAUDE.md`, `AGENTS.md`.
+- **Excluded by omission:** `test/` (tests are top-level, not under `src/`), `scripts/` (dev tooling), `.github/`, `package-lock.json`.
+- **`npm run lint:package`** runs [publint](https://publint.dev) to validate package correctness; **`prepublishOnly`** runs the offline test suites + publint, so a broken or mis-packaged build can't be published. It deliberately omits the live integration test (`npm test`) to avoid hitting a real site during publish.
+- **Verify before publishing:** `npm pack --dry-run` lists exactly what will ship.
+
 ## Releasing
 
 **Every version tag MUST include a CHANGELOG.md update.** Follow this checklist:
@@ -387,6 +385,8 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 7. **Push**: `git push origin main --tags`
 
 Skipping any step (especially CHANGELOG) will leave the release history incomplete for future developers and AI agents.
+
+**Before tagging, run `npm run verify:tool-names` against a live site.** The `gv_*` tools are generated from the installed GravityView/Foundation Abilities catalog, so a catalog rename can silently leave the server `instructions` string, README, or the demo referencing tools that no longer exist. The script cross-checks every `gf_`/`gv_` name in prose against what the server actually registers and exits non-zero on a mismatch. Requires WordPress credentials in the environment (see Required Environment). Dev-only — not shipped in the npm package.
 
 ## Related Resources
 

@@ -57,10 +57,10 @@
 import dotenv from 'dotenv';
 import fs from 'node:fs';
 import path from 'node:path';
-import GravityFormsClient from '../gravity-forms-client.js';
-import { GravityViewInspectorClient } from '../gravityview/inspector-client.js';
-import { ViewValidator } from '../gravityview/view-validator.js';
-import { loadAbilitiesAsTools } from '../abilities/loader.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
+import { GravityViewInspectorClient } from '../src/gravityview/inspector-client.js';
+import { ViewValidator } from '../src/gravityview/view-validator.js';
+import { loadAbilitiesAsTools } from '../src/abilities/loader.js';
 import { TestRunner, TestAssert } from './helpers.js';
 
 dotenv.config();
@@ -2641,7 +2641,7 @@ suite.test('Safety: abilities-loader does NOT add a client-side destructive gate
   // ability registry, so the env-var ratchet served no remaining
   // purpose. Status-level removal still flows through gv_view_status_set
   // and is gated server-side by the WP `delete_post` capability.
-  const { loadAbilitiesAsTools } = await import('../abilities/loader.js');
+  const { loadAbilitiesAsTools } = await import('../src/abilities/loader.js');
   const { handlers } = await loadAbilitiesAsTools(gvClient);
   let msg = '';
   try {

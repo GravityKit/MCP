@@ -7,8 +7,8 @@
  * mode replace/merge, area-key URL encoding).
  */
 
-import { GravityViewInspectorClient } from '../gravityview/inspector-client.js';
-import { ViewValidator } from '../gravityview/view-validator.js';
+import { GravityViewInspectorClient } from '../src/gravityview/inspector-client.js';
+import { ViewValidator } from '../src/gravityview/view-validator.js';
 import {
   TestRunner,
   TestAssert,

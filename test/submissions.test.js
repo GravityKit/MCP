@@ -3,7 +3,7 @@
  * Tests form submission workflow, validation, and notifications
  */
 
-import GravityFormsClient from '../gravity-forms-client.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
 import {
   TestRunner,
   TestAssert,

@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { generateCompoundInputs, isCompoundField, getFieldDefinition } from '../field-definitions/field-registry.js';
+import { generateCompoundInputs, isCompoundField, getFieldDefinition } from '../src/field-definitions/field-registry.js';
 
 test('generateCompoundInputs - address field', async (t) => {
   await t.test('generates US address inputs', () => {

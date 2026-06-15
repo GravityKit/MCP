@@ -5,14 +5,14 @@
  * the field registry to ensure 100% valid structure.
  */
 
-import { FieldAwareValidator } from '../config/field-validation.js';
+import { FieldAwareValidator } from '../src/config/field-validation.js';
 import { 
   fieldRegistry,
   getFieldDefinition,
   isCompoundField,
   isArrayField,
   detectFieldVariant
-} from '../field-definitions/field-registry.js';
+} from '../src/field-definitions/field-registry.js';
 
 // Test runner
 let passedTests = 0;

@@ -3,7 +3,7 @@
  * Tests input validation for all tools and edge cases
  */
 
-import GravityFormsClient from '../gravity-forms-client.js';
+import GravityFormsClient from '../src/gravity-forms-client.js';
 import {
   TestRunner,
   TestAssert,
