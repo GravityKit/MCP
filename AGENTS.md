@@ -6,7 +6,7 @@ This is the single canonical doc for the project (agents and humans). `CLAUDE.md
 
 ## Project Identity
 
-- **Package:** `@gravitykit/mcp` v2.1.0
+- **Package:** `@gravitykit/mcp` v2.2.0
 - **Type:** Node.js MCP server (ESM)
 - **Purpose:** Full Gravity Forms REST API v2 coverage (26 Gravity Forms tools), plus dynamic GravityKit product tools (GravityView so far) via the WordPress Abilities API
 - **Repo:** https://github.com/GravityKit/MCP

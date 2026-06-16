@@ -15,7 +15,7 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 - **Add-on Integration**: Manage feeds for MailChimp, Stripe, PayPal, and more
 - **GravityKit Products**: dynamic tools auto-generated from the site's Foundation abilities catalog — each add-on under its own prefix (GravityView's View authoring is first, using `gv_*`)
 - **Type-Safe**: Comprehensive validation for all operations
-- **Battle-Tested**: Extensive test suite with real-world scenarios
+- **Battle-Tested**: Extensive offline + adversarial hardening suites, plus a self-seeding live harness that runs end-to-end against a real Gravity Forms site
 
 ## Quick Start
 
@@ -68,7 +68,7 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
 Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Gravity Forms credentials are valid — and **GravityKit** — dynamic tools generated from the Foundation catalog when it's active, where each add-on registers tools under its own prefix (GravityView uses `gv_*`). The `gk_reload_abilities` tool reloads the GravityKit catalog. The two planes are independent: a Gravity-Forms-only site lists just `gf_*`; a GravityKit site without Gravity Forms REST keys still lists its product tools.
 
 ### Forms (6 tools)
-- `gf_list_forms`    - List forms with filtering and pagination
+- `gf_list_forms`    - List forms (optionally filter to specific IDs via `include`)
 - `gf_get_form`      - Get complete form configuration
 - `gf_create_form`   - Create new forms with fields
 - `gf_update_form`   - Update existing forms
@@ -76,7 +76,7 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 - `gf_validate_form` - Validate form data
 
 ### Entries (5 tools)
-- `gf_list_entries` - Search entries with advanced filters
+- `gf_list_entries` - List/search entries: pagination (`page_size`/`current_page`/`offset`), sorting (`key`/`direction`/`is_numeric`), field-filter search (`mode` any/all, operators incl. `IN`/`NOT IN`), `include` (fetch by ID, any status), `exclude`, `status`, and multiple forms at once
 - `gf_get_entry`    - Get specific entry details
 - `gf_create_entry` - Create new entries
 - `gf_update_entry` - Update existing entries
@@ -90,7 +90,7 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 
 ### Submissions (2 tools)
 - `gf_submit_form_data`    - Submit forms with full processing
-- `gf_validate_submission` - Validate without submitting
+- `gf_validate_submission` - Validate a submission without creating an entry (returns `validation_messages`)
 
 ### Add-ons (6 tools)
 - `gf_list_feeds`       - List all add-on feeds
@@ -101,7 +101,7 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 - `gf_delete_feed`      - Delete add-on feeds
 
 ### Notifications (1 tool)
-- `gf_send_notifications` - Send a form's notifications for an entry
+- `gf_send_notifications` - Send an entry's notifications — specific IDs, or all for an event
 
 ### Utilities (2 tools)
 - `gf_get_field_filters` - List the available field filters for a form
@@ -113,18 +113,24 @@ When [GravityKit Foundation](https://www.gravitykit.com) is active on the connec
 
 ## Usage Examples
 
-### Search Entries
+### Search & paginate entries
 ```javascript
+// Search + sort + paginate, across one or more forms at once
 await mcp.call('gf_list_entries', {
+  form_ids: [1, 2],
   search: {
     field_filters: [
       { key: "1.3", value: "John", operator: "contains" },
-      { key: "date_created", value: "2024-01-01", operator: ">=" }
+      { key: "id", value: [101, 102, 103], operator: "IN" }   // multi-value membership
     ],
-    mode: "all"
+    mode: "any"                                                // any = OR, all = AND
   },
-  sorting: { key: "date_created", direction: "desc" }
+  sorting: { key: "date_created", direction: "desc", is_numeric: false },
+  paging: { page_size: 25, current_page: 2 }                   // or { offset: 25, page_size: 25 }
 });
+
+// Fetch specific entries by ID (returns any status, including trashed)
+await mcp.call('gf_list_entries', { include: [101, 102] });
 ```
 
 ### Add Fields
@@ -274,11 +280,15 @@ npm run test:all
 
 # Offline suites
 npm run test:unit         # custom-runner unit tests
-npm run test:node         # node:test units (field ops, helpers, ability catalog, …)
+npm run test:node         # node:test units (field ops, helpers, query/wire builders, *-hardening adversarial suites, …)
 npm run test:views        # GravityView inspector / validator
 npm run test:forms        # per-endpoint suites: also test:entries, test:feeds, test:submissions, …
 
-# Live integration (requires test credentials)
+# Live, end-to-end against a real Gravity Forms site (self-seeds its own throwaway
+# forms/entries, then cleans up). Set credentials and run:
+LIVE_GF_URL=https://example.com LIVE_GF_USER=admin LIVE_GF_PW='xxxx xxxx ...' npm run test:live
+
+# Legacy live integration suite
 npm test
 ```
 

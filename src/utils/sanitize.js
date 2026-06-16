@@ -4,13 +4,25 @@
  */
 
 /**
- * Keys that contain sensitive data
+ * Substrings that mark a key as sensitive.
+ *
+ * A key is masked when its lowercased form CONTAINS any of these tokens
+ * (substring match). Tokens are deliberately SHORT so that common secret
+ * field names are caught in full — e.g. `secret` catches `secret`,
+ * `client_secret`, `stripe_secret_key`, `webhook_secret`, `api_secret`;
+ * `password` catches `password`, `app_password`, `wp_password`; `auth`
+ * catches `authorization`. A bare `key` token is intentionally avoided so
+ * innocuous fields like `description`/`public_key_id`/`key` are not masked.
+ *
+ * `oauth_signature` / `bearer` / `credit_card` / `cvv` / `ssn` are kept as
+ * explicit tokens because no shorter token covers them.
  */
 const SENSITIVE_KEYS = [
+  'secret', 'password', 'passwd', 'token',
+  'api_key', 'apikey', 'private_key', 'app_password',
   'consumer_key', 'consumer_secret',
-  'password', 'token', 'authorization',
-  'api_key', 'api_secret', 'bearer',
-  'oauth_signature', 'oauth_token',
+  'authorization', 'auth', 'credential',
+  'oauth_signature', 'bearer',
   'credit_card', 'cvv', 'ssn'
 ];
 
@@ -61,11 +73,19 @@ export function sanitize(obj) {
 export function sanitizeUrl(url) {
   if (!url || typeof url !== 'string') return url;
 
-  // Mask consumer keys and secrets in URLs
+  // Mask consumer keys and secrets in URLs, redact HTTP Basic userinfo, and
+  // mask OAuth credential query params (including oauth_signature/oauth_nonce,
+  // which the named-param rule below does not cover).
   return url
+    // Redact HTTP Basic credentials in the authority: scheme://user:pass@host
+    // → scheme://user:***@host. Keep the username for debuggability; never the
+    // password. (Userinfo runs from "://" up to the LAST "@" before the host.)
+    .replace(/(:\/\/)([^/?#@:]+):([^/?#@]+)@/g, '$1$2:***@')
     .replace(/ck_[a-f0-9]{32}/gi, 'ck_****')
     .replace(/cs_[a-f0-9]{32}/gi, 'cs_****')
-    .replace(/(consumer_key|consumer_secret|api_key|token)=([^&]+)/gi, '$1=****');
+    // Any oauth_* query value (oauth_signature, oauth_nonce, oauth_token, …).
+    .replace(/(oauth_[a-z0-9_]+)=([^&#]+)/gi, '$1=****')
+    .replace(/(consumer_key|consumer_secret|api_key|token)=([^&#]+)/gi, '$1=****');
 }
 
 /**

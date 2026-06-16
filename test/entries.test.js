@@ -164,14 +164,21 @@ suite.test('List Entries: exclude IDs become a GF id "not in" search filter', as
   TestAssert.exists(idFilter, 'exclude should map to an id not-in field_filter');
 });
 
-suite.test('List Entries: include IDs become a GF id "in" search filter', async () => {
-  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [] }));
+suite.test('List Entries: include IDs go out as the native GF include param + keyed response normalizes to a list', async () => {
+  // GF's include fast-path returns entries keyed by id (no entries/total_count wrapper).
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({
+    '11': { id: 11, form_id: 1 },
+    '22': { id: 22, form_id: 1 }
+  }));
 
-  await client.listEntries({ include: [11, 22] });
+  const result = await client.listEntries({ include: [11, 22] });
 
   const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
-  const idFilter = JSON.parse(wire.get('search')).field_filters.find((f) => f.key === 'id' && f.operator === 'in');
-  TestAssert.equal(JSON.stringify(idFilter.value), JSON.stringify([11, 22]));
+  TestAssert.equal(wire.get('include[0]'), '11');
+  TestAssert.equal(wire.get('include[1]'), '22');
+  TestAssert.isFalse(wire.has('search'), 'include uses the native fast-path, not search');
+  TestAssert.lengthOf(result.entries, 2);
+  TestAssert.equal(result.entries[0].id, 11);
 });
 
 suite.test('List Entries: top-level status is folded into search.status', async () => {

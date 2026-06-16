@@ -39,28 +39,47 @@ export function buildEntriesQuery(validated) {
   if (sorting !== undefined) query.sorting = sorting;
   if (paging !== undefined) query.paging = paging;
 
-  // GF /entries has no top-level status/include/exclude. status lives in
-  // search.status; id-based selection maps to field_filters on key 'id'
-  // (operator 'in'/'not in'). Collapse them into the single `search` criteria,
-  // which GF expects JSON-encoded.
-  const criteria = search ? { ...search } : {};
-  const fieldFilters = Array.isArray(criteria.field_filters) ? [...criteria.field_filters] : [];
-
+  // GF /entries has a native `include` fast-path: fetch exactly these entry ids
+  // (any status, in order), bypassing search/sorting/paging/form_ids. Pass it as
+  // the native top-level param so the serializer brackets it (include[0]=…).
   if (Array.isArray(include) && include.length > 0) {
-    fieldFilters.push({ key: 'id', operator: 'in', value: include });
+    query.include = include;
   }
+
+  // GF has no top-level status/exclude param. status lives in search.status;
+  // exclude maps to a field_filter on key 'id' (operator 'not in'). Both ride
+  // the single `search` criteria GF expects JSON-encoded. (When `include` is set,
+  // GF takes the fast-path and ignores search — that is GF's own behavior.)
+  const criteria = search ? { ...search } : {};
+
+  // GF reads the search mode from INSIDE field_filters ($field_filters['mode'],
+  // class-gf-query.php:301), never from a top-level search.mode. Pull it off the
+  // criteria here and re-attach it to field_filters below.
+  const { mode, ...criteriaWithoutMode } = criteria;
+  const finalCriteria = criteriaWithoutMode;
+
+  const fieldFilters = Array.isArray(finalCriteria.field_filters) ? [...finalCriteria.field_filters] : [];
+
   if (Array.isArray(exclude) && exclude.length > 0) {
     fieldFilters.push({ key: 'id', operator: 'not in', value: exclude });
   }
-  if (fieldFilters.length > 0) {
-    criteria.field_filters = fieldFilters;
-  }
-  if (status !== undefined) {
-    criteria.status = status;
+
+  // Attach mode as a `mode` key on field_filters. JSON.stringify drops a named
+  // prop off a JS array, so when mode is present we emit field_filters as an
+  // object ({"0":…,"mode":…}) which json_decodes to the PHP array GF iterates
+  // after reading + unsetting 'mode'. Object index access keeps [0]/[1] valid.
+  if (mode !== undefined) {
+    finalCriteria.field_filters = Object.assign({}, fieldFilters, { mode });
+  } else if (fieldFilters.length > 0) {
+    finalCriteria.field_filters = fieldFilters;
   }
 
-  if (Object.keys(criteria).length > 0) {
-    query.search = JSON.stringify(criteria);
+  if (status !== undefined) {
+    finalCriteria.status = status;
+  }
+
+  if (Object.keys(finalCriteria).length > 0) {
+    query.search = JSON.stringify(finalCriteria);
   }
 
   return query;
@@ -230,6 +249,44 @@ export class GravityFormsClient {
   }
 
   /**
+   * Extract the GF response body + status from a thrown error, regardless of
+   * which layer threw it.
+   *
+   * Two shapes reach a client method's catch block:
+   *   - Raw axios/mock error: `err.response = { status, data }` (the shape axios
+   *     produces, and what the test fake throws — the response interceptor has
+   *     not standardized it yet at this point in some paths).
+   *   - Standardized apiError from handleApiError(): `{ status, details }`.
+   *
+   * @param {Error} error The thrown error.
+   * @returns {{status: (number|undefined), body: any}} The HTTP status and body.
+   */
+  _extractErrorResponse(error) {
+    const status = error?.response?.status ?? error?.status;
+    const body = error?.response?.data ?? error?.details;
+    return { status, body };
+  }
+
+  /**
+   * Whether a thrown error is GF's NORMAL "submission is invalid" response: an
+   * HTTP 400 carrying an `is_valid` flag in the body. GF returns this for a
+   * rejected /submissions or /submissions/validation request
+   * (class-controller-form-submissions.php:115,
+   * class-controller-form-submissions-validation.php:88-90) — it is a valid
+   * result to return, not an error to throw. A 400 WITHOUT an is_valid body
+   * (e.g. a malformed request) is a real error and is NOT matched here.
+   *
+   * @param {Error} error The thrown error.
+   * @returns {any|null} The validation body when this is GF's invalid-submission
+   *   400, otherwise null.
+   */
+  _gfValidationBody(error) {
+    const { status, body } = this._extractErrorResponse(error);
+    const isValidationResult = status === 400 && body && typeof body === 'object' && 'is_valid' in body;
+    return isValidationResult ? body : null;
+  }
+
+  /**
    * Validate tool input and execute API call
    */
   async validateAndCall(toolName, input, apiCall) {
@@ -260,11 +317,23 @@ export class GravityFormsClient {
   async listForms(params = {}) {
     return this.validateAndCall('gf_list_forms', params, async (validated) => {
       const response = await this.httpClient.get('/forms', { params: validated });
+      const forms = response.data;
+
+      // GF returns /forms as an object keyed by id ({ "1": {...} }) and sends NO
+      // X-WP-Total header, so the count is simply how many forms came back.
+      // total_pages would always be bogus (GF doesn't paginate /forms), so it
+      // is fixed at 1.
+      let total_count = 0;
+      if (Array.isArray(forms)) {
+        total_count = forms.length;
+      } else if (forms && typeof forms === 'object') {
+        total_count = Object.keys(forms).length;
+      }
 
       return {
-        forms: response.data,
-        total_count: parseInt(response.headers['x-wp-total'] || '0'),
-        total_pages: parseInt(response.headers['x-wp-totalpages'] || '1')
+        forms,
+        total_count,
+        total_pages: 1
       };
     });
   }
@@ -424,11 +493,34 @@ export class GravityFormsClient {
       const searchParams = buildEntriesQuery(validated);
 
       const response = await this.httpClient.get('/entries', { params: searchParams });
+      const data = response.data;
 
-      return {
-        entries: response.data.entries || response.data,
-        total_count: response.data.total_count || parseInt(response.headers['x-wp-total'] || '0')
-      };
+      // Normalize to ALWAYS return { entries: array, total_count: number };
+      // never fabricate entries or report a count for entries we can't see.
+      // Search path is { entries:[...], total_count }; the include fast-path is
+      // entries keyed by id ({ "123": {...} }) with no wrapper and no X-WP-Total.
+      // Anything malformed (null/''/string/{entries:notArray}) → [] / 0.
+      let entries = [];
+      let total_count = 0;
+
+      const hasArrayEntries = data && Array.isArray(data.entries);
+      const isKeyedObject = data && typeof data === 'object' && !Array.isArray(data) && !('entries' in data);
+
+      if (hasArrayEntries) {
+        entries = data.entries;
+        const headerCount = parseInt(response.headers['x-wp-total'] || '0', 10);
+        total_count = typeof data.total_count === 'number' ? data.total_count : headerCount;
+      } else if (isKeyedObject) {
+        const values = Object.values(data);
+        // Only treat values as entries when they look like entries (objects).
+        const looksLikeEntries = values.length > 0 && values.every(v => v && typeof v === 'object');
+        if (looksLikeEntries) {
+          entries = values;
+          total_count = values.length;
+        }
+      }
+
+      return { entries, total_count };
     });
   }
 
@@ -623,15 +715,28 @@ export class GravityFormsClient {
     return this.validateAndCall('gf_submit_form_data', params, async (validated) => {
       const { form_id, ...submissionData } = validated;
 
-      const response = await this.httpClient.post(`/forms/${form_id}/submissions`, submissionData);
+      // GF returns HTTP 400 {is_valid:false, validation_messages, …} on a
+      // REJECTED submission (class-controller-form-submissions.php:115). That
+      // is a normal "didn't pass validation" result, not a transport error —
+      // catch the 400 and return it. Anything else (401/403/404/500, or a 400
+      // without an is_valid body) is a real error and re-throws.
+      let body;
+      try {
+        const response = await this.httpClient.post(`/forms/${form_id}/submissions`, submissionData);
+        body = response.data;
+      } catch (error) {
+        const validationBody = this._gfValidationBody(error);
+        if (!validationBody) throw error;
+        body = validationBody;
+      }
 
       return {
-        success: response.data.is_valid || false,
-        entry_id: response.data.entry_id,
-        confirmation_message: response.data.confirmation_message || '',
-        validation_messages: response.data.validation_messages || {},
-        resume_token: response.data.resume_token,
-        resume_url: response.data.resume_url
+        success: body.is_valid || false,
+        entry_id: body.entry_id,
+        confirmation_message: body.confirmation_message || '',
+        validation_messages: body.validation_messages || {},
+        resume_token: body.resume_token,
+        resume_url: body.resume_url
       };
     });
   }
@@ -643,15 +748,26 @@ export class GravityFormsClient {
     return this.validateAndCall('gf_validate_submission', params, async (validated) => {
       const { form_id, ...submissionData } = validated;
 
-      const response = await this.httpClient.post(`/forms/${form_id}/submissions`, {
-        ...submissionData,
-        validation_only: true
-      });
+      // Dedicated validation route: GF validates WITHOUT creating an entry or
+      // firing notifications/feeds. A validation_only flag on /submissions is
+      // ignored by GF (it really submits), so it must not be used.
+      // GF returns the NORMAL "invalid" case as HTTP 400 with an is_valid body
+      // (validation controller :88-90) — caught below as a result, not an error.
+      let body;
+      try {
+        const response = await this.httpClient.post(`/forms/${form_id}/submissions/validation`, submissionData);
+        body = response.data;
+      } catch (error) {
+        const validationBody = this._gfValidationBody(error);
+        if (!validationBody) throw error;
+        body = validationBody;
+      }
 
       return {
-        valid: response.data.is_valid || false,
-        validation_messages: response.data.validation_messages || {},
-        field_errors: response.data.field_errors || []
+        valid: body.is_valid || false,
+        validation_messages: body.validation_messages || {},
+        page_number: body.page_number,
+        source_page_number: body.source_page_number
       };
     });
   }
@@ -665,18 +781,32 @@ export class GravityFormsClient {
    */
   async sendNotifications(params) {
     return this.validateAndCall('gf_send_notifications', params, async (validated) => {
-      const { entry_id, notification_ids } = validated;
+      const { entry_id, notification_ids, event } = validated;
 
-      const requestData = {};
-      if (notification_ids) {
-        requestData.notification_ids = notification_ids;
+      // GF reads `_notifications` (comma-separated ids) and `_event` as query
+      // params. An EMPTY _notifications string makes GF send ALL notifications
+      // for the event (dangerous), so only send it with real ids: drop null/
+      // empty/non-string ids. If the caller asked for specific ids but they ALL
+      // drop out, throw rather than silently fall through to "send all".
+      // Omitting notification_ids entirely is the legitimate "send all" request.
+      const queryParams = {};
+      const callerSuppliedIds = Array.isArray(notification_ids) && notification_ids.length > 0;
+      if (callerSuppliedIds) {
+        const validIds = notification_ids.filter(id => typeof id === 'string' && id.trim() !== '');
+        if (validIds.length === 0) {
+          throw new Error('notification_ids contained no valid notification id (all were null/empty/non-string)');
+        }
+        queryParams._notifications = validIds.join(',');
+      }
+      if (event) {
+        queryParams._event = event;
       }
 
-      const response = await this.httpClient.post(`/entries/${entry_id}/notifications`, requestData);
+      const response = await this.httpClient.post(`/entries/${entry_id}/notifications`, {}, { params: queryParams });
 
       return {
         sent: true,
-        notifications_sent: response.data.notifications_sent || []
+        notifications_sent: Array.isArray(response.data) ? response.data : []
       };
     });
   }

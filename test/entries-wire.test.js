@@ -77,7 +77,14 @@ test("GF's view: search reconstructs as a JSON STRING that json_decodes to crite
   const criteria = { field_filters: [{ key: '1', value: 'John', operator: 'contains' }], mode: 'all' };
   const view = phpView({ search: criteria });
   assert.equal(typeof view.search, 'string', 'GF json_decodes a string search param');
-  assert.deepEqual(JSON.parse(view.search), criteria);
+  // GF reads the search mode from $field_filters['mode'] (class-gf-query.php:301),
+  // so the builder moves search.mode INTO field_filters. The decoded shape is
+  // therefore { field_filters: { 0: <filter>, mode: 'all' } } — the PHP array GF
+  // iterates after reading + unset('mode'), NOT the original top-level-mode input.
+  const decoded = JSON.parse(view.search);
+  assert.equal(decoded.field_filters.mode, 'all');
+  assert.ok(!('mode' in decoded), 'mode must not stay at the search top level');
+  assert.deepEqual(decoded.field_filters['0'], { key: '1', value: 'John', operator: 'contains' });
   assert.ok(view['search[field_filters][0][key]'] === undefined, 'search must not bracket-explode');
 });
 
@@ -101,11 +108,17 @@ test('search JSON survives encode → urldecode round-trip with hostile characte
     .split('&')
     .map((p) => p.split('='))
     .find(([k]) => k === 'search')[1];
-  // PHP urldecode() reverses percent-encoding; the decoded value must be the
-  // exact JSON we serialized, and must round-trip back to the criteria object.
+  // PHP urldecode() reverses percent-encoding; the decoded value must round-trip
+  // to the criteria the BUILDER produces — search.mode is moved into
+  // field_filters (GF reads $field_filters[mode]), so the expected shape carries
+  // mode on field_filters, not at the search top level. This test pins the
+  // hostile-character encoding round-trip, independent of mode placement.
+  const expected = {
+    field_filters: Object.assign({}, criteria.field_filters, { mode: criteria.mode }),
+  };
   const decoded = decodeURIComponent(wireValue);
-  assert.equal(decoded, JSON.stringify(criteria));
-  assert.deepEqual(JSON.parse(decoded), criteria);
+  assert.equal(decoded, JSON.stringify(expected));
+  assert.deepEqual(JSON.parse(decoded), expected);
 });
 
 test('brackets are single-encoded on the wire (no %255B double-encoding)', () => {
@@ -160,10 +173,9 @@ test('full path: ValidationFactory → buildEntriesQuery → wire is GF-correct'
   assert.equal(view.sorting.key, 'date_created');
   assert.equal(view.sorting.direction, 'desc');
   assert.equal(view.form_ids['0'], '129');
-  const decoded = JSON.parse(view.search);
-  assert.equal(decoded.status, 'active');
-  assert.ok(decoded.field_filters.some((f) => f.key === 'id' && f.operator === 'in'));
-  assert.ok(view.status === undefined && view.include === undefined, 'no GF-unknown top-level params leak');
+  assert.deepEqual(view.include, { 0: '1', 1: '2', 2: '3' }); // native include param
+  assert.equal(JSON.parse(view.search).status, 'active');
+  assert.ok(view.status === undefined, 'no GF-unknown top-level params leak');
 });
 
 // --- Querying MULTIPLE forms at once (GF accepts form_ids as an array) ---
@@ -230,8 +242,9 @@ test('combinatorial sweep: all 128 param subsets honour the GF contract', () => 
     const raw = serialize(buildEntriesQuery(input));
     const view = phpParse(raw);
 
-    // GF-unknown top-level params must NEVER leak onto the wire.
-    for (const bad of ['status', 'include', 'exclude']) {
+    // GF-unknown top-level params must NEVER leak onto the wire. (include IS a
+    // native GF /entries param, so it is allowed top-level.)
+    for (const bad of ['status', 'exclude']) {
       assert.ok(view[bad] === undefined, `${bad} must never be a top-level param — ${label}`);
     }
     // paging/sorting must ALWAYS be bracketed arrays, never a bare scalar value.
@@ -250,14 +263,24 @@ test('combinatorial sweep: all 128 param subsets honour the GF contract', () => 
     if ('form_ids' in input) {
       assert.deepEqual(Object.values(view.form_ids), ['1', '2', '3'], `form_ids must survive intact — ${label}`);
     }
+    if ('include' in input) {
+      assert.deepEqual(Object.values(view.include), ['10', '11'], `include must be the native param — ${label}`);
+    } else {
+      assert.ok(view.include === undefined, `no include param when not requested — ${label}`);
+    }
 
-    const wantsSearch = ['search', 'status', 'include', 'exclude'].some((k) => k in input);
+    const wantsSearch = ['search', 'status', 'exclude'].some((k) => k in input);
     if (wantsSearch) {
       assert.equal(typeof view.search, 'string', `search must be a JSON string — ${label}`);
       const decoded = JSON.parse(view.search); // throws if the JSON is malformed
       if ('status' in input) assert.equal(decoded.status, 'active', `status must fold into search — ${label}`);
-      if ('include' in input) assert.ok(decoded.field_filters.some((f) => f.key === 'id' && f.operator === 'in'), `include → id in — ${label}`);
-      if ('exclude' in input) assert.ok(decoded.field_filters.some((f) => f.key === 'id' && f.operator === 'not in'), `exclude → id not in — ${label}`);
+      if ('exclude' in input) {
+        // field_filters is an array when no mode is set, an object ({0:…,mode:…})
+        // when the search subset carries a mode — Object.values handles both.
+        const filters = Object.values(decoded.field_filters || {}).filter((f) => f && typeof f === 'object');
+        assert.ok(filters.some((f) => f.key === 'id' && f.operator === 'not in'), `exclude → id not in — ${label}`);
+        if ('search' in input) assert.equal(decoded.field_filters.mode, 'all', `mode rides on field_filters — ${label}`);
+      }
     } else {
       assert.ok(view.search === undefined, `no search param when none requested — ${label}`);
     }

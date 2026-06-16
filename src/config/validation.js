@@ -97,18 +97,31 @@ export class BaseValidator {
       throw new Error('Field filter must have a key');
     }
 
-    if (value === undefined) {
+    // Reject null the same as a missing value. Previously only `=== undefined`
+    // was checked, so value:null slipped through and serialized to the literal
+    // text "null" (String(null)), matching entries whose value is the word "null".
+    if (value === undefined || value === null) {
       throw new Error('Field filter must have a value');
     }
 
-    if (operator && !getEnumValues('fieldOperators').includes(operator)) {
-      throw new Error(`Invalid operator: ${operator}. Valid operators: ${getEnumValues('fieldOperators').join(', ')}`);
+    // GF normalizes operators case-insensitively (IN/in/In all match), so accept
+    // any case rather than rejecting valid GF operators.
+    const validOperators = getEnumValues('fieldOperators');
+    if (operator && !validOperators.some((o) => o.toLowerCase() === String(operator).toLowerCase())) {
+      throw new Error(`Invalid operator: ${operator}. Valid operators: ${validOperators.join(', ')}`);
     }
 
+    const resolvedOperator = operator || 'IS';
+    // GF membership operators (in / not in / notin) match against an ARRAY;
+    // String()-flattening to "1,2,3" makes GF match the literal joined string,
+    // and the NOTIN alias hitting String() drives GF's in_array(null) 500.
+    // Keep the array for these; scalars stay strings.
+    const multiValueAliases = ['in', 'not in', 'notin'];
+    const isMultiValue = multiValueAliases.includes(String(resolvedOperator).toLowerCase());
     return {
       key: String(key),
-      value: String(value),
-      operator: operator || 'IS'
+      value: isMultiValue && Array.isArray(value) ? value.map(String) : String(value),
+      operator: resolvedOperator
     };
   }
 
@@ -170,6 +183,13 @@ export class BaseValidator {
         throw new Error(`Invalid sort direction: ${sortingParams.direction}. Valid directions: ${getEnumValues('sortDirection').join(', ')}`);
       }
       validated.direction = sortingParams.direction.toLowerCase();
+    }
+
+    // GF reads sorting.is_numeric to force numeric ordering on a field
+    // (class-gf-rest-controller.php:64-66, class-gf-query.php:177). Pass it
+    // through, coerced to a boolean, only when explicitly provided.
+    if (sortingParams.is_numeric !== undefined) {
+      validated.is_numeric = Boolean(sortingParams.is_numeric);
     }
 
     return validated;
@@ -347,7 +367,11 @@ export class EntriesValidator extends BaseValidator {
   static validateListEntriesParams(params) {
     const validated = {};
 
-    Object.assign(validated, this.validatePagination(params));
+    // NOTE: GF's /entries endpoint paginates ONLY via the `paging` object
+    // (paging[page_size], paging[offset], paging[current_page]) — it has no
+    // top-level page/per_page params (class-gf-rest-controller.php parse_entry_search_params).
+    // Emitting page/per_page here leaked them to the wire as no-op params, so
+    // they are intentionally NOT merged in. Entry paging is the `paging` block below.
 
     if (params.form_ids !== undefined) {
       validated.form_ids = this.validateArray(params.form_ids, 'form_ids');
@@ -397,8 +421,26 @@ export class EntriesValidator extends BaseValidator {
         paging.page_size = pageSize;
       }
 
-      if (params.paging.current_page) {
+      // current_page must be a positive integer. Use `!== undefined` (not the
+      // falsy `if (current_page)`) so current_page:0 reaches validateId and is
+      // rejected consistently with -1 instead of being silently dropped.
+      if (params.paging.current_page !== undefined) {
         paging.current_page = this.validateId(params.paging.current_page, 'current_page');
+      }
+
+      // GF reads paging.offset when current_page is absent
+      // (class-gf-rest-controller.php:75). Keep it through when provided; it must
+      // be a non-negative integer (offset:0 is valid). validateId rejects 0/negatives,
+      // so validate offset explicitly: 0 allowed, negatives/non-integers rejected.
+      if (params.paging.offset !== undefined) {
+        const offset = params.paging.offset;
+        const isNonNegInt =
+          (typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0) ||
+          (typeof offset === 'string' && /^\d+$/.test(offset));
+        if (!isNonNegInt) {
+          throw new Error('offset must be a non-negative integer');
+        }
+        paging.offset = Number(offset);
       }
 
       validated.paging = paging;
@@ -466,29 +508,17 @@ export class ValidationFactory {
     try {
       switch (toolName) {
         case 'gf_list_forms':
-          // Special handling for forms - it has limited parameters
+          // GF's /forms endpoint honors ONLY `include` server-side
+          // (class-controller-forms.php get_items reads $request['include'];
+          // get_collection_params declares only page/per_page/search). `status`,
+          // `active`, and `exclude` are NOT read by GF — forwarding them was a
+          // no-op that misleadingly advertised support, so drop them here.
           const validated = {};
           if (input.include !== undefined) {
             validated.include = BaseValidator.validateArray(input.include, 'include');
             if (validated.include.length > 0) {
               validated.include = BaseValidator.validateIds(validated.include, 'include');
             }
-          }
-          if (input.active !== undefined) {
-            validated.active = BaseValidator.validateBoolean(input.active, 'active');
-          }
-          if (input.exclude !== undefined) {
-            validated.exclude = BaseValidator.validateArray(input.exclude, 'exclude');
-            if (validated.exclude.length > 0) {
-              validated.exclude = BaseValidator.validateIds(validated.exclude, 'exclude');
-            }
-          }
-          if (input.status !== undefined) {
-            const validStatuses = ['active', 'inactive', 'trash'];
-            if (!validStatuses.includes(input.status)) {
-              throw new Error(`status must be one of: ${validStatuses.join(', ')}`);
-            }
-            validated.status = input.status;
           }
           return validated;
 
@@ -600,8 +630,11 @@ export class ValidationFactory {
           };
 
         case 'gf_send_notifications':
-          // Check required field for legacy compatibility
-          if (!input || !input.entry_id) {
+          // Check presence (not falsiness) so entry_id:0 falls through to the
+          // positiveInteger rule and yields "must be a positive integer" rather
+          // than the misleading "entry_id is required". Truly-missing/null still
+          // reports required.
+          if (!input || input.entry_id === undefined || input.entry_id === null) {
             throw new Error('entry_id is required');
           }
           return ChainNotificationsValidator.validateSendNotificationsParams(input);

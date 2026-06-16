@@ -76,12 +76,11 @@ test('status → folded into search.status (GF has no top-level status param)', 
   assert.equal(JSON.parse(w.get('search')).status, 'spam');
 });
 
-test('include → search.field_filters {key:id, operator:in}', () => {
+test('include → native GF include param (fetch-by-id fast path), not a search filter', () => {
   const w = wire(buildEntriesQuery({ include: [101, 102] }));
-  assert.ok(!w.has('include') && !w.has('include[0]'), 'include is not a GF entries param');
-  const idFilter = JSON.parse(w.get('search')).field_filters.find((f) => f.key === 'id');
-  assert.equal(idFilter.operator, 'in');
-  assert.deepEqual(idFilter.value, [101, 102]);
+  assert.equal(w.get('include[0]'), '101');
+  assert.equal(w.get('include[1]'), '102');
+  assert.ok(!w.has('search'), 'include uses the native fast-path, not search field_filters');
 });
 
 test('exclude → search.field_filters {key:id, operator:not in}', () => {
@@ -91,12 +90,16 @@ test('exclude → search.field_filters {key:id, operator:not in}', () => {
   assert.deepEqual(idFilter.value, [7]);
 });
 
-test('include merges into existing search.field_filters (append, do not clobber)', () => {
+test('exclude merges into existing search.field_filters (append, do not clobber)', () => {
   const search = { field_filters: [{ key: '1', value: 'x', operator: 'is' }], mode: 'all' };
-  const filters = JSON.parse(wire(buildEntriesQuery({ search, include: [5] })).get('search')).field_filters;
+  const ff = JSON.parse(wire(buildEntriesQuery({ search, exclude: [5] })).get('search')).field_filters;
+  // mode present → field_filters is an object ({"0":…,"1":…,"mode":"all"}).
+  // Iterate the actual filter entries (objects), excluding the mode string.
+  const filters = Object.values(ff).filter((f) => f && typeof f === 'object');
+  assert.equal(ff.mode, 'all', 'mode preserved on field_filters');
   assert.equal(filters.length, 2);
   assert.ok(filters.some((f) => f.key === '1'), 'original filter preserved');
-  assert.ok(filters.some((f) => f.key === 'id' && f.operator === 'in'), 'id filter appended');
+  assert.ok(filters.some((f) => f.key === 'id' && f.operator === 'not in'), 'exclude id filter appended');
 });
 
 test('no filters → no `search` param emitted', () => {
@@ -147,9 +150,14 @@ test('sorting by a numeric field id (e.g. "1") serializes the key verbatim', () 
 
 // --- search / status interplay ---
 
-test('search mode is preserved (all/any) through the builder', () => {
+test('search mode rides inside field_filters (GF reads $field_filters[mode]), not search top-level', () => {
   const w = wire(buildEntriesQuery({ search: { field_filters: [{ key: '1', value: 'x', operator: 'is' }], mode: 'any' } }));
-  assert.equal(JSON.parse(w.get('search')).mode, 'any');
+  const parsed = JSON.parse(w.get('search'));
+  // GF reads the search mode from $search_criteria['field_filters']['mode']
+  // (class-gf-query.php:301), so it must be a key ON field_filters, not on the
+  // search object. field_filters serializes as an object ({"0":…,"mode":…}).
+  assert.equal(parsed.field_filters.mode, 'any');
+  assert.ok(!('mode' in parsed), 'mode must NOT sit at the search top level — GF ignores it there');
 });
 
 test('top-level status overrides a status already inside search', () => {
@@ -169,16 +177,25 @@ test('search alone does NOT force a status (GF defaults it to active)', () => {
 
 // --- include / exclude combinations ---
 
-test('include + exclude together produce two id field_filters (in and not in)', () => {
-  const ff = JSON.parse(wire(buildEntriesQuery({ include: [1, 2], exclude: [9] })).get('search')).field_filters;
-  assert.ok(ff.some((f) => f.key === 'id' && f.operator === 'in'));
+test('include + exclude together: include is native, exclude is a not-in field_filter', () => {
+  const w = wire(buildEntriesQuery({ include: [1, 2], exclude: [9] }));
+  assert.equal(w.get('include[0]'), '1');
+  assert.equal(w.get('include[1]'), '2');
+  const ff = JSON.parse(w.get('search')).field_filters;
   assert.ok(ff.some((f) => f.key === 'id' && f.operator === 'not in'));
+  assert.ok(!ff.some((f) => f.operator === 'in'), 'include must NOT become a search filter');
 });
 
-test('include + exclude + existing search field_filters all coexist', () => {
+test('include (native) + exclude + existing search field_filters coexist correctly', () => {
   const search = { field_filters: [{ key: '2', value: 'a', operator: 'is' }], mode: 'all' };
-  const ff = JSON.parse(wire(buildEntriesQuery({ search, include: [5], exclude: [6] })).get('search')).field_filters;
-  assert.equal(ff.length, 3);
+  const w = wire(buildEntriesQuery({ search, include: [5], exclude: [6] }));
+  assert.equal(w.get('include[0]'), '5');
+  // mode present → field_filters is an object; iterate its filter entries.
+  const ffObj = JSON.parse(w.get('search')).field_filters;
+  const ff = Object.values(ffObj).filter((f) => f && typeof f === 'object');
+  assert.equal(ff.length, 2); // original + exclude not-in
+  assert.ok(ff.some((f) => f.key === '2'));
+  assert.ok(ff.some((f) => f.key === 'id' && f.operator === 'not in'));
 });
 
 test('empty include/exclude arrays add no field_filters and emit no search', () => {
@@ -213,10 +230,14 @@ test('kitchen sink: every param together serializes to its correct GF shape', ()
   assert.equal(w.get('paging[page_size]'), '50');
   assert.equal(w.get('paging[current_page]'), '4');
   assert.equal(w.get('sorting[key]'), 'date_created');
+  assert.equal(w.get('include[0]'), '10'); // native include param
   const s = JSON.parse(w.get('search'));
   assert.equal(s.status, 'active');
-  assert.equal(s.field_filters.length, 3); // original + include + exclude
-  assert.ok(!w.has('status') && !w.has('include[0]') && !w.has('exclude[0]'), 'no GF-unknown top-level params');
+  // mode present → field_filters is an object carrying mode + numeric filters.
+  assert.equal(s.field_filters.mode, 'all');
+  const ff = Object.values(s.field_filters).filter((f) => f && typeof f === 'object');
+  assert.equal(ff.length, 2); // original + exclude not-in
+  assert.ok(!w.has('status') && !w.has('exclude[0]'), 'no GF-unknown top-level params');
 });
 
 // --- purity / safety ---
@@ -241,6 +262,15 @@ test('empty input yields an empty query (no params at all)', () => {
 
 // --- real validator path composition ---
 
+test('search field_filter accepts lowercase in/not in operators (GF is case-insensitive)', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', {
+    search: { field_filters: [{ key: 'id', operator: 'in', value: [2, 4, 6] }] }
+  });
+  const ff = validated.search.field_filters[0];
+  assert.equal(ff.operator, 'in');
+  assert.deepEqual(ff.value, ['2', '4', '6'], 'multi-value array preserved, not flattened to a scalar');
+});
+
 test('ValidationFactory(gf_list_entries) → buildEntriesQuery preserves the GF contract', () => {
   const validated = ValidationFactory.validateToolInput('gf_list_entries', {
     paging: { page_size: 25, current_page: 3 },
@@ -253,5 +283,6 @@ test('ValidationFactory(gf_list_entries) → buildEntriesQuery preserves the GF 
   assert.equal(w.get('paging[current_page]'), '3');
   assert.equal(w.get('sorting[key]'), 'date_created');
   assert.equal(w.get('form_ids[0]'), '129');
-  assert.ok(JSON.parse(w.get('search')).field_filters.some((f) => f.key === 'id' && f.operator === 'in'));
+  assert.equal(w.get('include[0]'), '1');
+  assert.equal(w.get('include[1]'), '2');
 });

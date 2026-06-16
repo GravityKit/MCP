@@ -471,14 +471,16 @@ const GF_TOOL_DEFINITIONS = [
             direction: {
               type: 'string',
               enum: ['asc', 'desc', 'ASC', 'DESC']
-            }
+            },
+            is_numeric: { type: 'boolean', description: 'Sort key numerically' }
           }
         },
         paging: {
           type: 'object',
           properties: {
             page_size: { type: 'number' },
-            current_page: { type: 'number' }
+            current_page: { type: 'number' },
+            offset: { type: 'integer', description: 'Entry offset' }
           }
         },
         compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
@@ -590,8 +592,12 @@ const GF_TOOL_DEFINITIONS = [
         entry_id: { type: 'number', description: 'Entry ID' },
         notification_ids: {
           type: 'array',
-          items: { type: 'string' },
-          description: 'Notification IDs to send'
+          items: { type: 'string', description: 'A non-empty notification id' },
+          description: 'Notification IDs to send (omit to send all for the event)'
+        },
+        event: {
+          type: 'string',
+          description: 'Notification event (default: form_submission)'
         }
       },
       required: ['entry_id']

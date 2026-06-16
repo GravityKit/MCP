@@ -206,12 +206,10 @@ suite.test('Type Validation: Booleans', async () => {
     'Force parameter should be boolean'
   );
 
-  // Active parameter should be boolean
-  await TestAssert.throwsAsync(
-    () => client.listForms({ active: 'true' }),
-    'must be a boolean',
-    'Active parameter should be boolean'
-  );
+  // `active` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
+  // `include` server-side. It is dropped, not validated — so it must not throw.
+  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
+  await client.listForms({ active: 'true' });
 });
 
 suite.test('Type Validation: Arrays', async () => {
@@ -222,12 +220,10 @@ suite.test('Type Validation: Arrays', async () => {
     'Include parameter should be array'
   );
 
-  // Exclude parameter should be array
-  await TestAssert.throwsAsync(
-    () => client.listForms({ exclude: '4,5,6' }),
-    'must be an array',
-    'Exclude parameter should be array'
-  );
+  // `exclude` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
+  // `include` server-side. It is dropped, not validated — so it must not throw.
+  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
+  await client.listForms({ exclude: '4,5,6' });
 
   // Form fields should be array
   await TestAssert.throwsAsync(
@@ -262,19 +258,12 @@ suite.test('Type Validation: Objects', async () => {
 // =================================
 
 suite.test('Enum Validation: Status values', async () => {
-  // Form status values
-  await TestAssert.throwsAsync(
-    () => client.listForms({ status: 'invalid-status' }),
-    'must be one of',
-    'Status should validate against enum'
-  );
-
+  // `status` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
+  // `include` server-side. It is dropped, not validated — even an invalid value
+  // must not throw, because the param never reaches GF.
   mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
-
-  // Valid status values should work
+  await client.listForms({ status: 'invalid-status' });
   await client.listForms({ status: 'active' });
-  await client.listForms({ status: 'inactive' });
-  await client.listForms({ status: 'trash' });
 });
 
 suite.test('Enum Validation: Search operators', async () => {

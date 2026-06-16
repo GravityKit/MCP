@@ -279,13 +279,29 @@ export class PositiveIntegerRule extends ValidationRule {
     if (value === undefined || value === null) {
       return value;
     }
-    
-    const num = Number(value);
-    
-    if (isNaN(num) || !Number.isInteger(num) || num <= 0) {
+
+    // GF types these as integers and 400s anything that isn't an integer-formatted
+    // value. `Number(value)` is far too lax: it coerces JS-hex ("0x10" -> 16),
+    // booleans (true -> 1), scientific notation, and silently rounds values past
+    // Number.MAX_SAFE_INTEGER. Accept ONLY genuine integers:
+    //  - a number that is a safe, positive integer, OR
+    //  - a string of decimal digits only (/^\d+$/) that parses to a safe, positive int.
+    let num;
+    if (typeof value === 'number') {
+      num = value;
+    } else if (typeof value === 'string' && /^\d+$/.test(value)) {
+      num = Number(value);
+    } else {
       throw new Error(this.getError(fieldName));
     }
-    
+
+    const isGenuineInteger =
+      Number.isInteger(num) && Number.isSafeInteger(num) && num > 0;
+
+    if (!isGenuineInteger) {
+      throw new Error(this.getError(fieldName));
+    }
+
     return num;
   }
 }

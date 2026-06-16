@@ -5,6 +5,33 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-06-16
+
+A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity Forms 2.10.3 source and a live GF site (self-seeding `npm run test:live` harness).
+
+### Fixed
+- **`gf_list_entries` pagination, sorting, and exclude were silently ignored.** `paging`/`sorting` were JSON-encoded, but GF reads them as bracketed array query params, so it fell back to the first 10 entries (page 1) and `id`/`DESC`. They are now serialized to GF's actual wire contract — pagination, sorting, and multi-form (`form_ids`) queries work. (#4)
+- **`gf_validate_submission` performed a real submission and threw on invalid input.** It POSTed to `/submissions` with an ignored `validation_only` flag and the HTTP client threw on GF's normal `400 {is_valid:false}` response. It now uses the dedicated `/forms/{id}/submissions/validation` route and returns `{valid, validation_messages, page_number}` **without creating an entry**.
+- **`gf_submit_form_data`** returns `{success:false, validation_messages}` on a rejected submission instead of discarding the messages.
+- **`gf_send_notifications` never sent.** It posted a `notification_ids` body array, but GF reads `_notifications` (comma-separated) and `_event` as query params and returns a bare array. Request/response shapes corrected; null/empty IDs are rejected rather than silently triggering "send all".
+- **`gf_list_forms` `total_count` was always 0** (it read an `X-WP-Total` header GF doesn't send for `/forms`); it now reflects the number of forms returned.
+- **`search.mode` (any/all) was ignored** — it was placed at the search-object top level, but GF reads it inside `field_filters`; OR/AND now apply.
+- **`field_filters` `IN`/`NOT IN`/`NOTIN` with array values were flattened to a scalar** (broke membership matching; `NOTIN` caused a PHP fatal 500). Array values are preserved.
+- **ID validation silently coerced bad input** — hex strings (`"0x10"`→16), booleans (`true`→1), scientific notation, and integers beyond `MAX_SAFE_INTEGER` produced wrong-but-valid IDs. These are now rejected.
+- **`gf_list_entries` response normalization** always returns an entries array and a numeric `total_count` (no more `null`/empty-string/fabricated entries on unexpected bodies).
+- Field-filter operator validation is case-insensitive (matches GF); `value: null` is rejected instead of matching the literal text `"null"`; `entry_id: 0` reports "must be a positive integer".
+
+### Added
+- **`gf_list_entries`** now supports and advertises GF's native `include` (fetch-by-ID, returns entries of **any** status), `paging.offset`, `sorting.is_numeric`, and querying multiple forms at once.
+- Self-seeding live end-to-end test harness (`npm run test:live`) that provisions its own throwaway forms/entries against a real Gravity Forms site and tears them down.
+- Adversarial `*-hardening` test suites (client, validation, sanitize, schema) covering hostile and edge-case input.
+
+### Changed
+- `include` uses GF's native fast-path (any status); `exclude` maps to an `id NOT IN` search filter. `gf_list_forms` no longer accepts the `status`/`active`/`exclude` params that GF's `/forms` endpoint ignores.
+
+### Security
+- `sanitize()` now masks common secret field names (`secret`, `client_secret`, `private_key`, `*_secret_key`, `password`); `sanitizeUrl()` masks `oauth_signature` and HTTP Basic `user:pass@` credentials in logged URLs.
+
 ## [2.1.0] - 2026-03-31
 
 ### Fixed
@@ -167,6 +194,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.2.0]: https://github.com/GravityKit/MCP/releases/tag/v2.2.0
 [2.1.0]: https://github.com/GravityKit/MCP/releases/tag/v2.1.0
 [2.0.0]: https://github.com/GravityKit/MCP/releases/tag/v2.0.0
 [1.4.1]: https://github.com/GravityKit/MCP/releases/tag/v1.4.1
