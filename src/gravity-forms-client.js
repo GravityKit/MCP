@@ -52,9 +52,9 @@ export function buildEntriesQuery(validated) {
   // GF takes the fast-path and ignores search — that is GF's own behavior.)
   const criteria = search ? { ...search } : {};
 
-  // GF reads the search mode from INSIDE field_filters ($field_filters['mode'],
-  // class-gf-query.php:301), never from a top-level search.mode. Pull it off the
-  // criteria here and re-attach it to field_filters below.
+  // GF reads the search mode from INSIDE field_filters ($field_filters['mode']),
+  // never from a top-level search.mode. Pull it off the criteria here and
+  // re-attach it to field_filters below.
   const { mode, ...criteriaWithoutMode } = criteria;
   const finalCriteria = criteriaWithoutMode;
 
@@ -270,9 +270,7 @@ export class GravityFormsClient {
   /**
    * Whether a thrown error is GF's NORMAL "submission is invalid" response: an
    * HTTP 400 carrying an `is_valid` flag in the body. GF returns this for a
-   * rejected /submissions or /submissions/validation request
-   * (class-controller-form-submissions.php:115,
-   * class-controller-form-submissions-validation.php:88-90) — it is a valid
+   * rejected /submissions or /submissions/validation request — it is a valid
    * result to return, not an error to throw. A 400 WITHOUT an is_valid body
    * (e.g. a malformed request) is a real error and is NOT matched here.
    *
@@ -469,14 +467,26 @@ export class GravityFormsClient {
     return this.validateAndCall('gf_validate_form', params, async (validated) => {
       const { form_id, ...submissionData } = validated;
 
-      const response = await this.httpClient.post(`/forms/${form_id}/submissions`, {
-        ...submissionData,
-        validation_only: true
-      });
+      // Dedicated validation route — validate WITHOUT creating an entry. POSTing
+      // {validation_only:true} to /submissions does NOT validate: GF ignores the
+      // body flag (it reads the `_validate_only` query param) and really submits,
+      // creating an entry and firing notifications/feeds. GF returns the normal
+      // "invalid" case as HTTP 400 with an is_valid body — caught as a result.
+      let body;
+      try {
+        const response = await this.httpClient.post(`/forms/${form_id}/submissions/validation`, submissionData);
+        body = response.data;
+      } catch (error) {
+        const validationBody = this._gfValidationBody(error);
+        if (!validationBody) throw error;
+        body = validationBody;
+      }
 
       return {
-        valid: response.data.is_valid || false,
-        validation_messages: response.data.validation_messages || {}
+        valid: body.is_valid || false,
+        validation_messages: body.validation_messages || {},
+        page_number: body.page_number,
+        source_page_number: body.source_page_number
       };
     });
   }
@@ -716,8 +726,8 @@ export class GravityFormsClient {
       const { form_id, ...submissionData } = validated;
 
       // GF returns HTTP 400 {is_valid:false, validation_messages, …} on a
-      // REJECTED submission (class-controller-form-submissions.php:115). That
-      // is a normal "didn't pass validation" result, not a transport error —
+      // REJECTED submission. That is a normal "didn't pass validation" result,
+      // not a transport error —
       // catch the 400 and return it. Anything else (401/403/404/500, or a 400
       // without an is_valid body) is a real error and re-throws.
       let body;

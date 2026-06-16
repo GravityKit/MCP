@@ -80,15 +80,28 @@ suite.test('Submit Form: Should include field values', async () => {
     form_id: 1,
     input_1: 'Jane Smith',
     input_2: 'jane@example.com',
-    field_values: {
-      utm_source: 'google',
-      utm_campaign: 'summer2024',
-      referrer: 'https://example.com'
-    }
+    // Submission values are the input_N keys above. field_values is GF
+    // dynamic-population data — a query string (or array), not an object.
+    field_values: 'utm_source=google&utm_campaign=summer2024'
   });
 
   TestAssert.isTrue(result.success);
   TestAssert.equal(result.entry_id, 600);
+
+  // Valid shape reaches the wire: input_N values + the field_values string.
+  const body = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.equal(body.input_1, 'Jane Smith');
+  TestAssert.equal(body.field_values, 'utm_source=google&utm_campaign=summer2024');
+});
+
+suite.test('Submit Form: rejects a field_values OBJECT (GF wants a string/array)', async () => {
+  // Invalid shape — GF declares field_values as ['string','array'] and 400s an
+  // object. The client must reject it up front rather than send a 400-bound body.
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, field_values: { '1': 'x' } }),
+    'field_values',
+    'object field_values must be rejected'
+  );
 });
 
 suite.test('Submit Form: Should handle multi-page form submission', async () => {
@@ -243,12 +256,45 @@ suite.test('Validate Submission: format failures come back in validation_message
   TestAssert.includes(result.validation_messages['5'], 'URL');
 });
 
+// gf_validate_form is the sibling of gf_validate_submission and must behave the
+// same way: validate WITHOUT creating an entry. It previously POSTed
+// {validation_only:true} to /submissions — a flag GF ignores — so it really
+// submitted (created an entry + fired notifications/feeds). It must use the
+// dedicated /submissions/validation route and return GF's 400 invalid body.
+suite.test('Validate Form: posts to the dedicated /validation route, never the submit route (no entry created)', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions/validation', new MockResponse({
+    is_valid: true,
+    validation_messages: {},
+    page_number: 0
+  }));
+
+  const result = await client.validateForm({ form_id: 1, input_1: 'John Doe' });
+
+  const req = mockHttpClient.getRequests().find(r => r.method === 'POST');
+  TestAssert.equal(req.path, '/forms/1/submissions/validation');
+  TestAssert.isFalse('validation_only' in (req.config.data || {}), 'must not send a validation_only flag');
+  TestAssert.isTrue(result.valid);
+});
+
+suite.test('Validate Form: returns validation_messages on an invalid (400) submission instead of throwing', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions/validation', new MockResponse({
+    is_valid: false,
+    validation_messages: { '1': 'This field is required.' },
+    page_number: 1
+  }, 400));
+
+  const result = await client.validateForm({ form_id: 1, input_2: 'x' });
+
+  TestAssert.isFalse(result.valid);
+  TestAssert.equal(result.validation_messages['1'], 'This field is required.');
+});
+
 // =================================
 // SEND NOTIFICATIONS TESTS
 // =================================
 
 suite.test('Send Notifications: no ids → send all-by-event; reads GF bare-array response', async () => {
-  // GF returns a bare array of sent notification ids (test-entry-notifications.php:34).
+  // GF returns a bare array of sent notification ids.
   mockHttpClient.setMockResponse('POST', '/entries/100/notifications', new MockResponse(
     ['admin_notification', 'user_notification']
   ));

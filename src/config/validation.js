@@ -97,9 +97,9 @@ export class BaseValidator {
       throw new Error('Field filter must have a key');
     }
 
-    // Reject null the same as a missing value. Previously only `=== undefined`
-    // was checked, so value:null slipped through and serialized to the literal
-    // text "null" (String(null)), matching entries whose value is the word "null".
+    // Reject null the same as a missing value — otherwise String(null) puts the
+    // literal text "null" on the wire, matching entries whose value is the word
+    // "null".
     if (value === undefined || value === null) {
       throw new Error('Field filter must have a value');
     }
@@ -185,11 +185,12 @@ export class BaseValidator {
       validated.direction = sortingParams.direction.toLowerCase();
     }
 
-    // GF reads sorting.is_numeric to force numeric ordering on a field
-    // (class-gf-rest-controller.php:64-66, class-gf-query.php:177). Pass it
-    // through, coerced to a boolean, only when explicitly provided.
-    if (sortingParams.is_numeric !== undefined) {
-      validated.is_numeric = Boolean(sortingParams.is_numeric);
+    // GF forces numeric ordering when sorting.is_numeric is truthy, and never
+    // intvals it — so the string "false" is truthy too and emitting
+    // is_numeric=false would wrongly force numeric. Only carry it when truthy;
+    // omit otherwise (GF's default ordering for the field is non-numeric/lexical).
+    if (sortingParams.is_numeric) {
+      validated.is_numeric = true;
     }
 
     return validated;
@@ -428,10 +429,10 @@ export class EntriesValidator extends BaseValidator {
         paging.current_page = this.validateId(params.paging.current_page, 'current_page');
       }
 
-      // GF reads paging.offset when current_page is absent
-      // (class-gf-rest-controller.php:75). Keep it through when provided; it must
-      // be a non-negative integer (offset:0 is valid). validateId rejects 0/negatives,
-      // so validate offset explicitly: 0 allowed, negatives/non-integers rejected.
+      // GF reads paging.offset when current_page is absent. Keep it through when
+      // provided; it must be a non-negative integer (offset:0 is valid).
+      // validateId rejects 0/negatives, so validate offset explicitly here:
+      // 0 allowed, negatives and non-integers rejected.
       if (params.paging.offset !== undefined) {
         const offset = params.paging.offset;
         const isNonNegInt =
@@ -553,8 +554,17 @@ export class ValidationFactory {
               subValidated[key] = String(input[key]);
             }
           });
-          if (input.field_values && typeof input.field_values !== 'object') {
-            throw new Error('field_values must be an object');
+          // GF declares field_values as type ['string','array'] — it is GF
+          // dynamic-population data (GFAPI::submit_form's 3rd arg), NOT the
+          // submitted values. Submitted values are the input_N keys above. An
+          // object is rejected by GF's own arg validation (HTTP 400), so reject
+          // it here with a message that points to the right place.
+          if (
+            input.field_values !== undefined &&
+            typeof input.field_values !== 'string' &&
+            !Array.isArray(input.field_values)
+          ) {
+            throw new Error('field_values must be a string (e.g. "p1=a&p2=b") or array — it is GF dynamic-population data, not submission values; pass field values as input_N keys (e.g. input_1)');
           }
           return subValidated;
 

@@ -1,22 +1,16 @@
 /**
- * Adversarial / edge-case validation hardening tests.
- *
- * These pin GF-faithful behavior for the validation layer against inputs that
- * the previous implementation silently mishandled (lax integer coercion,
- * dropped sorting.is_numeric / paging.offset, page/per_page wire leak, the
- * NOTIN multi-value alias, value:null serialization, entry_id:0, current_page
- * consistency, and forwarding of no-op /forms params).
+ * Adversarial / edge-case validation tests for the gf_* input layer. They pin
+ * GF-faithful behavior for inputs that are easy to mishandle: integer-id
+ * coercion, sorting.is_numeric, paging.offset, top-level page/per_page, the
+ * NOTIN multi-value alias, value:null filters, entry_id 0, current_page bounds,
+ * and the no-op /forms params.
  *
  * Run directly: node --test test/validation-hardening.test.js
  *
- * GF source references (gravityforms 2.10.3):
- *  - sorting.is_numeric: includes/webapi/v2/includes/controllers/class-gf-rest-controller.php:64-66
- *                        includes/query/class-gf-query.php:177
- *  - paging.offset:      class-gf-rest-controller.php:75
- *  - top-level paging:   GF /entries uses paging[...] only, not page/per_page
- *  - NOTIN alias:        includes/query/class-gf-query.php:336 (case 'NOTIN' -> NIN)
- *  - /forms params:      includes/webapi/v2/includes/controllers/class-controller-forms.php:88
- *                        (only `include` is read; status/active/exclude are no-ops)
+ * Contract sources in Gravity Forms:
+ *  - sorting.is_numeric / paging.offset: parse_entry_search_params (class-gf-rest-controller.php) feeds GF_Query (class-gf-query.php).
+ *  - NOTIN alias: GF_Query's filter-operator switch (case 'NOTIN').
+ *  - /forms: get_items (class-controller-forms.php) reads only `include`; status/active/exclude are no-ops.
  */
 
 import test from 'node:test';
@@ -37,7 +31,7 @@ const validate = (tool, input) => ValidationFactory.validateToolInput(tool, inpu
 // or a string of decimal digits (/^\d+$/).
 // ---------------------------------------------------------------------------
 
-test('Fix1: rejects JS-hex string "0x10" as include id', () => {
+test('rejects JS-hex string "0x10" as include id', () => {
   assert.throws(
     () => validate('gf_list_entries', { include: ['0x10'] }),
     /positive integer/,
@@ -45,7 +39,7 @@ test('Fix1: rejects JS-hex string "0x10" as include id', () => {
   );
 });
 
-test('Fix1: rejects boolean true as include id', () => {
+test('rejects boolean true as include id', () => {
   assert.throws(
     () => validate('gf_list_entries', { include: [true] }),
     /positive integer/,
@@ -53,7 +47,7 @@ test('Fix1: rejects boolean true as include id', () => {
   );
 });
 
-test('Fix1: rejects JS-hex string "0x2" as form_ids id', () => {
+test('rejects JS-hex string "0x2" as form_ids id', () => {
   assert.throws(
     () => validate('gf_list_entries', { form_ids: ['0x2'] }),
     /positive integer/,
@@ -61,7 +55,7 @@ test('Fix1: rejects JS-hex string "0x2" as form_ids id', () => {
   );
 });
 
-test('Fix1: rejects scientific-notation literal 1e21 (float > 2^53)', () => {
+test('rejects scientific-notation literal 1e21 (float > 2^53)', () => {
   assert.throws(
     () => validate('gf_list_entries', { include: [1e21] }),
     /positive integer/,
@@ -69,7 +63,7 @@ test('Fix1: rejects scientific-notation literal 1e21 (float > 2^53)', () => {
   );
 });
 
-test('Fix1: rejects integer beyond MAX_SAFE_INTEGER (silent rounding)', () => {
+test('rejects integer beyond MAX_SAFE_INTEGER (silent rounding)', () => {
   assert.throws(
     () => validate('gf_list_entries', { include: [9007199254740993] }),
     /positive integer/,
@@ -77,7 +71,7 @@ test('Fix1: rejects integer beyond MAX_SAFE_INTEGER (silent rounding)', () => {
   );
 });
 
-test('Fix1: rejects form_id:true on entry create', () => {
+test('rejects form_id:true on entry create', () => {
   assert.throws(
     () => validate('gf_create_entry', { form_id: true }),
     /positive integer/,
@@ -85,7 +79,7 @@ test('Fix1: rejects form_id:true on entry create', () => {
   );
 });
 
-test('Fix1: validateId rejects boolean / hex / unsafe directly', () => {
+test('validateId rejects boolean / hex / unsafe directly', () => {
   assert.throws(() => BaseValidator.validateId(true, 'id'), /positive integer/);
   assert.throws(() => BaseValidator.validateId('0x10', 'id'), /positive integer/);
   assert.throws(() => BaseValidator.validateId(1e21, 'id'), /positive integer/);
@@ -94,7 +88,7 @@ test('Fix1: validateId rejects boolean / hex / unsafe directly', () => {
   assert.throws(() => BaseValidator.validateId(' 5', 'id'), /positive integer/);
 });
 
-test('Fix1: genuine integers still accepted (numbers and decimal strings)', () => {
+test('genuine integers still accepted (numbers and decimal strings)', () => {
   assert.equal(BaseValidator.validateId(5, 'id'), 5);
   assert.equal(BaseValidator.validateId('5', 'id'), 5);
   assert.equal(BaseValidator.validateId(Number.MAX_SAFE_INTEGER, 'id'), Number.MAX_SAFE_INTEGER);
@@ -106,45 +100,55 @@ test('Fix1: genuine integers still accepted (numbers and decimal strings)', () =
 // Fix 2 — validateSorting drops is_numeric (GF reads sorting.is_numeric)
 // ---------------------------------------------------------------------------
 
-test('Fix2: sorting.is_numeric (true) is preserved as boolean', () => {
+test('sorting.is_numeric (true) is preserved as boolean', () => {
   const out = BaseValidator.validateSorting({ key: '4', direction: 'asc', is_numeric: true });
   assert.equal(out.is_numeric, true);
   assert.equal(out.key, '4');
   assert.equal(out.direction, 'asc');
 });
 
-test('Fix2: sorting.is_numeric coerces truthy/falsy to boolean', () => {
+test('truthy is_numeric → true; falsy is_numeric is OMITTED (not sent as false)', () => {
+  // GF never intvals sorting.is_numeric — any non-empty string is truthy, so
+  // is_numeric=false on the wire ("false") would still force numeric ordering.
+  // The only wire-safe "not numeric" is to omit it; GF defaults to lexical.
   assert.equal(BaseValidator.validateSorting({ key: '4', is_numeric: 1 }).is_numeric, true);
-  assert.equal(BaseValidator.validateSorting({ key: '4', is_numeric: 0 }).is_numeric, false);
-  assert.equal(BaseValidator.validateSorting({ key: '4', is_numeric: false }).is_numeric, false);
+  assert.ok(!('is_numeric' in BaseValidator.validateSorting({ key: '4', is_numeric: 0 })), 'is_numeric:0 must be omitted');
+  assert.ok(!('is_numeric' in BaseValidator.validateSorting({ key: '4', is_numeric: false })), 'is_numeric:false must be omitted');
 });
 
-test('Fix2: sorting without is_numeric does not invent the key', () => {
+test('sorting without is_numeric does not invent the key', () => {
   const out = BaseValidator.validateSorting({ key: '4', direction: 'desc' });
   assert.ok(!('is_numeric' in out), 'is_numeric must be absent when not provided');
 });
 
-test('Fix2: is_numeric flows through gf_list_entries validator', () => {
+test('is_numeric flows through gf_list_entries validator', () => {
   const out = validate('gf_list_entries', { sorting: { key: '4', direction: 'asc', is_numeric: true } });
   assert.equal(out.sorting.is_numeric, true);
+});
+
+test('is_numeric:false never reaches the wire (full path)', () => {
+  const out = validate('gf_list_entries', { sorting: { key: '4', direction: 'asc', is_numeric: false } });
+  assert.ok(!('is_numeric' in out.sorting), 'validator drops is_numeric:false');
+  const q = buildEntriesQuery(out);
+  assert.ok(!('is_numeric' in (q.sorting || {})), 'is_numeric:false absent from the wire query');
 });
 
 // ---------------------------------------------------------------------------
 // Fix 3 — paging.offset is dropped
 // ---------------------------------------------------------------------------
 
-test('Fix3: paging.offset is kept when provided', () => {
+test('paging.offset is kept when provided', () => {
   const out = validate('gf_list_entries', { paging: { page_size: 20, offset: 40 } });
   assert.equal(out.paging.offset, 40);
   assert.equal(out.paging.page_size, 20);
 });
 
-test('Fix3: offset:0 is kept (a valid offset)', () => {
+test('offset:0 is kept (a valid offset)', () => {
   const out = validate('gf_list_entries', { paging: { page_size: 20, offset: 0 } });
   assert.equal(out.paging.offset, 0);
 });
 
-test('Fix3: negative / non-integer offset is rejected', () => {
+test('negative / non-integer offset is rejected', () => {
   assert.throws(
     () => validate('gf_list_entries', { paging: { offset: -5 } }),
     /offset/,
@@ -162,13 +166,13 @@ test('Fix3: negative / non-integer offset is rejected', () => {
 // (GF /entries uses paging[...] only)
 // ---------------------------------------------------------------------------
 
-test('Fix4: validateListEntriesParams does not emit page/per_page', () => {
+test('validateListEntriesParams does not emit page/per_page', () => {
   const out = validate('gf_list_entries', { page: 2, per_page: 25 });
   assert.ok(!('page' in out), 'page must not be emitted');
   assert.ok(!('per_page' in out), 'per_page must not be emitted');
 });
 
-test('Fix4: buildEntriesQuery never puts page/per_page on the wire', () => {
+test('buildEntriesQuery never puts page/per_page on the wire', () => {
   const validated = validate('gf_list_entries', { page: 3, per_page: 10, paging: { page_size: 10, current_page: 3 } });
   const query = buildEntriesQuery(validated);
   assert.ok(!('page' in query), 'page must not be on the wire');
@@ -180,13 +184,13 @@ test('Fix4: buildEntriesQuery never puts page/per_page on the wire', () => {
 // Fix 5 — NOTIN multi-value alias must preserve the array
 // ---------------------------------------------------------------------------
 
-test('Fix5: NOTIN with an array preserves the array (no String() flatten)', () => {
+test('NOTIN with an array preserves the array (no String() flatten)', () => {
   const out = BaseValidator.validateFieldFilter({ key: '1', operator: 'NOTIN', value: [1, 2, 3] });
   assert.ok(Array.isArray(out.value), 'NOTIN value must stay an array');
   assert.deepEqual(out.value, ['1', '2', '3']);
 });
 
-test('Fix5: all GF multi-value aliases keep the array (any case)', () => {
+test('all GF multi-value aliases keep the array (any case)', () => {
   // GF's filter-operator switch (class-gf-query.php) accepts these membership
   // aliases — IN, NOT IN, and NOTIN (any case). The literal "NIN" is an internal
   // GF_Query_Condition constant, NOT a user-facing filter operator, so it is not
@@ -198,7 +202,7 @@ test('Fix5: all GF multi-value aliases keep the array (any case)', () => {
   }
 });
 
-test('Fix5: literal "NIN" is rejected (not a GF filter operator)', () => {
+test('literal "NIN" is rejected (not a GF filter operator)', () => {
   assert.throws(
     () => BaseValidator.validateFieldFilter({ key: '1', operator: 'NIN', value: [1, 2] }),
     /Invalid operator/,
@@ -206,7 +210,7 @@ test('Fix5: literal "NIN" is rejected (not a GF filter operator)', () => {
   );
 });
 
-test('Fix5: scalar operators still flatten to a string', () => {
+test('scalar operators still flatten to a string', () => {
   const out = BaseValidator.validateFieldFilter({ key: '1', operator: 'IS', value: 'hello' });
   assert.equal(out.value, 'hello');
   assert.equal(typeof out.value, 'string');
@@ -216,7 +220,7 @@ test('Fix5: scalar operators still flatten to a string', () => {
 // Fix 6 — value:null is rejected (was serialized to "null")
 // ---------------------------------------------------------------------------
 
-test('Fix6: field filter value:null is rejected like missing value', () => {
+test('field filter value:null is rejected like missing value', () => {
   assert.throws(
     () => BaseValidator.validateFieldFilter({ key: '1', operator: 'IS', value: null }),
     /value/,
@@ -224,7 +228,7 @@ test('Fix6: field filter value:null is rejected like missing value', () => {
   );
 });
 
-test('Fix6: value:null never serializes to the literal "null"', () => {
+test('value:null never serializes to the literal "null"', () => {
   let serialized;
   try {
     serialized = BaseValidator.validateFieldFilter({ key: '1', value: null });
@@ -238,7 +242,7 @@ test('Fix6: value:null never serializes to the literal "null"', () => {
 // Fix 7 — gf_send_notifications entry_id:0 -> "positive integer", not "required"
 // ---------------------------------------------------------------------------
 
-test('Fix7: entry_id:0 yields a positive-integer error, not "required"', () => {
+test('entry_id:0 yields a positive-integer error, not "required"', () => {
   assert.throws(
     () => validate('gf_send_notifications', { entry_id: 0 }),
     /positive integer/,
@@ -246,12 +250,12 @@ test('Fix7: entry_id:0 yields a positive-integer error, not "required"', () => {
   );
 });
 
-test('Fix7: entry_id present-but-invalid keeps existing positive-integer errors', () => {
+test('entry_id present-but-invalid keeps existing positive-integer errors', () => {
   assert.throws(() => validate('gf_send_notifications', { entry_id: -1 }), /positive integer/);
   assert.throws(() => validate('gf_send_notifications', { entry_id: 'abc' }), /positive integer/);
 });
 
-test('Fix7: truly-missing entry_id still says required', () => {
+test('truly-missing entry_id still says required', () => {
   assert.throws(() => validate('gf_send_notifications', {}), /entry_id is required/);
   assert.throws(() => validate('gf_send_notifications', { entry_id: null }), /entry_id is required/);
 });
@@ -260,7 +264,7 @@ test('Fix7: truly-missing entry_id still says required', () => {
 // Fix 8 — current_page consistency: 0 rejected like -1
 // ---------------------------------------------------------------------------
 
-test('Fix8: current_page:0 is rejected (consistent with -1)', () => {
+test('current_page:0 is rejected (consistent with -1)', () => {
   assert.throws(
     () => validate('gf_list_entries', { paging: { current_page: 0 } }),
     /current_page|positive integer/,
@@ -268,14 +272,14 @@ test('Fix8: current_page:0 is rejected (consistent with -1)', () => {
   );
 });
 
-test('Fix8: current_page:-1 is rejected', () => {
+test('current_page:-1 is rejected', () => {
   assert.throws(
     () => validate('gf_list_entries', { paging: { current_page: -1 } }),
     /current_page|positive integer/
   );
 });
 
-test('Fix8: current_page:1 is accepted', () => {
+test('current_page:1 is accepted', () => {
   const out = validate('gf_list_entries', { paging: { page_size: 10, current_page: 1 } });
   assert.equal(out.paging.current_page, 1);
 });
@@ -284,12 +288,12 @@ test('Fix8: current_page:1 is accepted', () => {
 // Fix 9 — gf_list_forms drops status/active/exclude (GF only reads include)
 // ---------------------------------------------------------------------------
 
-test('Fix9: gf_list_forms keeps include only', () => {
+test('gf_list_forms keeps include only', () => {
   const out = validate('gf_list_forms', { include: [1, 2] });
   assert.deepEqual(out.include, [1, 2]);
 });
 
-test('Fix9: gf_list_forms does not forward status/active/exclude', () => {
+test('gf_list_forms does not forward status/active/exclude', () => {
   const out = validate('gf_list_forms', {
     include: [1],
     status: 'active',
@@ -301,10 +305,41 @@ test('Fix9: gf_list_forms does not forward status/active/exclude', () => {
   assert.ok(!('exclude' in out), 'exclude is a GF no-op and must be dropped');
 });
 
-test('Fix9: gf_list_forms still validates include ids', () => {
+test('gf_list_forms still validates include ids', () => {
   assert.throws(
     () => validate('gf_list_forms', { include: ['0x2'] }),
     /positive integer/,
     'include ids still validated'
   );
+});
+
+// --- field_values contract (gf_submit_form_data / gf_validate_form) ---
+// GF declares field_values as type ['string','array'] (dynamic population);
+// submitted values are the separate input_N keys. An object is the wrong shape
+// and GF 400s it.
+test('gf_submit_form_data: field_values must be a GF string|array, not an object', () => {
+  assert.throws(
+    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: { '1': 'x' } }),
+    /field_values/,
+    'an object must be rejected (GF rejects it)'
+  );
+  assert.doesNotThrow(
+    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: 'p1=a&p2=b' }),
+    'a query string must be accepted'
+  );
+  assert.doesNotThrow(
+    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: ['a', 'b'] }),
+    'an array must be accepted'
+  );
+});
+
+test('gf_submit_form_data: submission values pass through as input_N keys', () => {
+  const v = ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, input_1: 'John', input_2: 'j@x.com' });
+  assert.equal(v.input_1, 'John');
+  assert.equal(v.input_2, 'j@x.com');
+});
+
+test('gf_validate_form: field_values object likewise rejected, string accepted', () => {
+  assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: { a: 1 } }), /field_values/);
+  assert.doesNotThrow(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: 'a=1' }));
 });

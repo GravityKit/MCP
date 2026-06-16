@@ -400,12 +400,13 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_validate_form',
-    description: 'Validate form data',
+    description: 'Validate form input. Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3). `field_values` is GF dynamic-population data, not the submitted values.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' }
+        form_id: { type: 'number', description: 'Form ID' },
+        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys.' }
       },
       additionalProperties: true,
       required: ['form_id']
@@ -555,13 +556,13 @@ const GF_TOOL_DEFINITIONS = [
   // Form Submissions (2 tools)
   {
     name: 'gf_submit_form_data',
-    description: 'Submit form data (triggers notifications, confirmations, payment)',
+    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3).',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         form_id: { type: 'number', description: 'Form ID' },
-        field_values: { type: 'object', description: 'Field values' }
+        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys.' }
       },
       additionalProperties: true,
       required: ['form_id']
