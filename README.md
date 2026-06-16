@@ -26,22 +26,12 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 
 ### Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/GravityKit/MCP.git
-   cd MCP
-   npm install
-   ```
+No clone or `npm install` needed — `npx` runs the published package on demand. (To run from a local checkout for development, see [Contributing](#contributing).)
 
-2. **Set up environment**
-   ```bash
-   cp .env.example .env
-   ```
-
-3. **Enable the Gravity Forms REST API** (one-time, required for any credential type):
+1. **Enable the Gravity Forms REST API** (one-time, required for any credential type):
    - Go to **Forms → Settings → REST API** and check **Enable access to the API** — Gravity Forms doesn't register its REST routes without it.
 
-4. **Create credentials** in WordPress (pick one):
+2. **Create credentials** in WordPress (pick one):
 
    **Application password (recommended):**
    - Go to **Users → Profile → Application Passwords**
@@ -52,43 +42,26 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
    - On the same **Forms → Settings → REST API** screen, click **Add Key**
    - Choose the user and permission level, then save the Consumer Key (`ck_…`) and Secret (`cs_…`)
 
-5. **Configure credentials** in `.env`:
-   ```env
-   GRAVITY_FORMS_BASE_URL=https://yoursite.com
-
-   # Application password:
-   GRAVITY_FORMS_CONSUMER_KEY=your_wp_username
-   GRAVITY_FORMS_CONSUMER_SECRET="xxxx xxxx xxxx xxxx xxxx xxxx"
-
-   # …or a Gravity Forms API key:
-   # GRAVITY_FORMS_CONSUMER_KEY=ck_your_key
-   # GRAVITY_FORMS_CONSUMER_SECRET=cs_your_secret
-   ```
-
-   **For local development** (Laravel Valet, MAMP, etc.):
-   ```env
-   # Add this line if using self-signed certificates
-   GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true
-   ```
-
-6. **Add to Claude Desktop**
-
-   Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+3. **Add to your MCP client.** For Claude Desktop, edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
    ```json
    {
      "mcpServers": {
        "gravitykit-mcp": {
-         "command": "node",
-         "args": ["/path/to/MCP/src/index.js"],
+         "command": "npx",
+         "args": ["-y", "@gravitykit/mcp"],
          "env": {
+           "GRAVITY_FORMS_BASE_URL": "https://yoursite.com",
            "GRAVITY_FORMS_CONSUMER_KEY": "your_wp_username",
-           "GRAVITY_FORMS_CONSUMER_SECRET": "xxxx xxxx xxxx xxxx xxxx xxxx",
-           "GRAVITY_FORMS_BASE_URL": "https://yoursite.com"
+           "GRAVITY_FORMS_CONSUMER_SECRET": "xxxx xxxx xxxx xxxx xxxx xxxx"
          }
        }
      }
    }
    ```
+   Then restart Claude Desktop — `npx` fetches and runs `@gravitykit/mcp` on demand. Notes:
+   - Prefer a Gravity Forms key pair? Use `"GRAVITY_FORMS_CONSUMER_KEY": "ck_…"` and `"GRAVITY_FORMS_CONSUMER_SECRET": "cs_…"`.
+   - Local dev with self-signed certs: add `"GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS": "true"` to the `env` block.
+   - Pin a version with `@gravitykit/mcp@x.y.z` if you don't want `npx` tracking latest.
 
 ## Available Tools
 
@@ -177,6 +150,8 @@ await mcp.call('gf_submit_form_data', {
 ```
 
 ## Configuration
+
+Set these as environment variables — in your MCP client's `env` block (the `npx` setup above) or in a `.env` file when running from a local clone.
 
 ### Required Environment Variables
 - `GRAVITY_FORMS_CONSUMER_KEY`    - WordPress username (app-password setup) or GF consumer key (`ck_…`)
@@ -323,12 +298,13 @@ npm test
 
 ### Local Development with Self-Signed Certificates
 
-If you're using a local development environment (Laravel Valet, MAMP, Local WP, etc.) with self-signed SSL certificates, you may encounter authentication errors. To fix this:
+If you're using a local development environment (Laravel Valet, MAMP, Local WP, etc.) with self-signed SSL certificates, you may encounter authentication errors. To fix this, set:
 
-Add to your `.env` file:
-```env
+```
 GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true
 ```
+
+in your MCP client's `env` block (`"GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS": "true"`), or in `.env` when running from a local clone.
 
 **⚠️ Security Warning**: Only disable SSL certificate verification for local development environments. Never use this setting in production!
 
