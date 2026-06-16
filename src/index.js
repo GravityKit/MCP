@@ -194,8 +194,8 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
         const sourceLabel = source === 'foundation-catalog' ? 'gravitykit/v1 catalog' : '/wp-abilities/v1';
         logger.info(`✅ Loaded ${count} GravityKit abilities from ${sourceLabel}`);
         // Tell connected MCP clients to refetch the tool list so the
-        // abilities-derived schemas (e.g. `joins` on view-config-apply,
-        // gk_apply_joins, gk_list_joins) land in their cached catalogue.
+        // freshly loaded ability tools and their schemas land in the
+        // client's cached catalogue.
         server.sendToolListChanged().catch((err) => {
           logger.warn(`tools/list_changed notification failed: ${err.message}`);
         });

@@ -40,3 +40,13 @@ test('collectAbilityNames: single page when only one page exists', async () => {
   const names = await collectAbilityNames(client);
   assert.deepEqual([...names], ['gk-gravityview/layouts-list']);
 });
+
+test('collectAbilityNames: collects every GravityKit product namespace, not just gravityview', async () => {
+  const client = mockClient([[
+    { name: 'gk-gravityview/layouts-list' },
+    { name: 'gk-multiple-forms/list-joins' },
+    { name: 'core/get-site-info' },
+  ]]);
+  const names = await collectAbilityNames(client);
+  assert.deepEqual([...names].sort(), ['gk-gravityview/layouts-list', 'gk-multiple-forms/list-joins']);
+});

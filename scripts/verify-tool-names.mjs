@@ -11,7 +11,8 @@
  *   - gf_* (static): the `name:` props in src/index.js (GF_TOOL_DEFINITIONS)
  *     and src/field-operations/index.js (fieldOperationTools)
  *   - gv_* (dynamic): loaded live from the connected site's catalog
- *   - gk-gravityview/* abilities: the live catalog (for the demo's references)
+ *   - gk-<product>/ abilities (any GravityKit product namespace): the live
+ *     catalog (for the demo's ability-name references)
  *
  * Requires a live WordPress connection (same env as the server):
  *   GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD,
@@ -60,11 +61,16 @@ try {
 }
 
 const authToolNames = new Set([...gfStatic, ...gvDynamic]);
-console.log(`Authoritative: ${gfStatic.size} gf_*  +  ${gvDynamic.size} gv_*  =  ${authToolNames.size} tools; ${abilityNames.size} gk-gravityview/* abilities\n`);
+console.log(`Authoritative: ${gfStatic.size} gf_*  +  ${gvDynamic.size} gv_*  =  ${authToolNames.size} tools; ${abilityNames.size} gk-*/* abilities\n`);
 
 // --- Referenced names per surface ---
+// TOOL_RE is intentionally narrow: gf_ (Gravity Forms) and gv_ (GravityView)
+// are the only product prefixes that currently surface real tools. Matching
+// every `g…_` token would false-positive on prose (e.g. gravityformsaddon_…),
+// so extend this set deliberately when a new product registers an mcp_prefix.
 const TOOL_RE = /\b(g[fv]_[a-z0-9_]+)\b/g;
-const ABIL_RE = /\bgk-gravityview\/[a-z0-9-]+/g;
+// Any GravityKit product ability namespace (gk-gravityview/, gk-multiple-forms/, …).
+const ABIL_RE = /\bgk-[a-z0-9-]+\/[a-z0-9-]+/g;
 
 // The server `instructions` string is what the agent reads — check that line
 // specifically rather than the whole file (which also *defines* the tools).
