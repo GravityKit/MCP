@@ -185,11 +185,17 @@ export class BaseValidator {
       validated.direction = sortingParams.direction.toLowerCase();
     }
 
-    // GF forces numeric ordering when sorting.is_numeric is truthy, and never
-    // intvals it — so the string "false" is truthy too and emitting
-    // is_numeric=false would wrongly force numeric. Only carry it when truthy;
-    // omit otherwise (GF's default ordering for the field is non-numeric/lexical).
-    if (sortingParams.is_numeric) {
+    // GF forces numeric ordering whenever sorting.is_numeric is present and
+    // truthy, and never intvals it — so a JSON string like "false" or "0" (both
+    // truthy in JS) would wrongly force numeric ordering. Interpret it strictly
+    // and carry it only when it genuinely means true; omit otherwise (GF then
+    // uses its default lexical ordering for the field).
+    const rawIsNumeric = sortingParams.is_numeric;
+    const isNumericTrue =
+      rawIsNumeric === true ||
+      rawIsNumeric === 1 ||
+      (typeof rawIsNumeric === 'string' && ['true', '1'].includes(rawIsNumeric.trim().toLowerCase()));
+    if (isNumericTrue) {
       validated.is_numeric = true;
     }
 

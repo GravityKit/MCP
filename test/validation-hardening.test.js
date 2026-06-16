@@ -116,6 +116,16 @@ test('truthy is_numeric → true; falsy is_numeric is OMITTED (not sent as false
   assert.ok(!('is_numeric' in BaseValidator.validateSorting({ key: '4', is_numeric: false })), 'is_numeric:false must be omitted');
 });
 
+test('string is_numeric is interpreted strictly: "true"/"1" → true, "false"/"0" → omitted', () => {
+  // A non-conformant client may send the boolean as a string. "false"/"0" are
+  // truthy in JS, so a naive truthy check would force numeric ordering. Only
+  // true-equivalents carry; everything else is omitted.
+  assert.equal(BaseValidator.validateSorting({ key: '4', is_numeric: 'true' }).is_numeric, true);
+  assert.equal(BaseValidator.validateSorting({ key: '4', is_numeric: '1' }).is_numeric, true);
+  assert.ok(!('is_numeric' in BaseValidator.validateSorting({ key: '4', is_numeric: 'false' })), 'is_numeric:"false" must be omitted');
+  assert.ok(!('is_numeric' in BaseValidator.validateSorting({ key: '4', is_numeric: '0' })), 'is_numeric:"0" must be omitted');
+});
+
 test('sorting without is_numeric does not invent the key', () => {
   const out = BaseValidator.validateSorting({ key: '4', direction: 'desc' });
   assert.ok(!('is_numeric' in out), 'is_numeric must be absent when not provided');
