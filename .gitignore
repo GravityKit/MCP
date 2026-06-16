@@ -65,6 +65,9 @@ test-results/
 test-artifacts/
 tmp/
 
+# Review reports (codex / adversarial output)
+reports/
+
 # MCP specific
 mcp-server.log
 debug.log
