@@ -25,7 +25,7 @@ import { buildEntriesQuery } from '../src/gravity-forms-client.js';
 const validate = (tool, input) => ValidationFactory.validateToolInput(tool, input);
 
 // ---------------------------------------------------------------------------
-// Fix 1 — lax integer coercion (PositiveIntegerRule + BaseValidator.validateId)
+// Lax integer coercion is rejected (PositiveIntegerRule + BaseValidator.validateId)
 // GF types these as integers and 400s non-integer-formatted input. Only genuine
 // integers must be accepted: Number.isInteger && Number.isSafeInteger && > 0,
 // or a string of decimal digits (/^\d+$/).
@@ -97,7 +97,7 @@ test('genuine integers still accepted (numbers and decimal strings)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 2 — validateSorting drops is_numeric (GF reads sorting.is_numeric)
+// validateSorting carries sorting.is_numeric (GF reads it) only when truthy
 // ---------------------------------------------------------------------------
 
 test('sorting.is_numeric (true) is preserved as boolean', () => {
@@ -144,7 +144,7 @@ test('is_numeric:false never reaches the wire (full path)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 3 — paging.offset is dropped
+// paging.offset is carried through (GF reads it when current_page is absent)
 // ---------------------------------------------------------------------------
 
 test('paging.offset is kept when provided', () => {
@@ -172,7 +172,7 @@ test('negative / non-integer offset is rejected', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 4 — top-level page/per_page must not reach the wire for gf_list_entries
+// top-level page/per_page must not reach the wire for gf_list_entries
 // (GF /entries uses paging[...] only)
 // ---------------------------------------------------------------------------
 
@@ -191,7 +191,7 @@ test('buildEntriesQuery never puts page/per_page on the wire', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 5 — NOTIN multi-value alias must preserve the array
+// NOTIN multi-value alias must preserve the array
 // ---------------------------------------------------------------------------
 
 test('NOTIN with an array preserves the array (no String() flatten)', () => {
@@ -227,7 +227,7 @@ test('scalar operators still flatten to a string', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 6 — value:null is rejected (was serialized to "null")
+// value:null is rejected (String(null) would match the literal text "null")
 // ---------------------------------------------------------------------------
 
 test('field filter value:null is rejected like missing value', () => {
@@ -249,7 +249,7 @@ test('value:null never serializes to the literal "null"', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 7 — gf_send_notifications entry_id:0 -> "positive integer", not "required"
+// gf_send_notifications entry_id:0 -> "positive integer", not "required"
 // ---------------------------------------------------------------------------
 
 test('entry_id:0 yields a positive-integer error, not "required"', () => {
@@ -271,7 +271,7 @@ test('truly-missing entry_id still says required', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 8 — current_page consistency: 0 rejected like -1
+// current_page consistency: 0 rejected like -1
 // ---------------------------------------------------------------------------
 
 test('current_page:0 is rejected (consistent with -1)', () => {
@@ -295,7 +295,7 @@ test('current_page:1 is accepted', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fix 9 — gf_list_forms drops status/active/exclude (GF only reads include)
+// gf_list_forms drops status/active/exclude (GF only reads include)
 // ---------------------------------------------------------------------------
 
 test('gf_list_forms keeps include only', () => {
