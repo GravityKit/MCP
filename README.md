@@ -13,6 +13,7 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 - **Advanced Search**: Complex filtering and searching capabilities for entries
 - **Form Submissions**: Full submission workflow with validation
 - **Add-on Integration**: Manage feeds for MailChimp, Stripe, PayPal, and more
+- **GravityKit Products**: GravityView View authoring (and more) via `gv_*` tools auto-generated from the site's Foundation abilities catalog
 - **Type-Safe**: Comprehensive validation for all operations
 - **Battle-Tested**: Extensive test suite with real-world scenarios
 
@@ -123,6 +124,10 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 - `gf_update_feed`      - Update existing feeds
 - `gf_patch_feed`       - Partially update feed properties
 - `gf_delete_feed`      - Delete add-on feeds
+
+### GravityKit Products (`gv_*`, dynamic)
+
+When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional `gv_*` tools are generated at runtime from its Abilities catalog — so the exact set depends on the installed GravityKit products and versions. **GravityView** is supported today: View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`), field/widget/search/grid editing, and discovery (`gv_layouts_list`, `gv_field_type_schema_get`, …). Use the `gv_*_list` discovery tools to see what's available on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
 
 ## Usage Examples
 
