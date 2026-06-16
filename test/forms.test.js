@@ -447,7 +447,9 @@ suite.test('Delete Form: Should validate form ID', async () => {
 // =================================
 
 suite.test('Validate Form: Should validate form submission data', async () => {
-  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+  // validateForm validates WITHOUT creating an entry, so it must hit the
+  // dedicated /submissions/validation route — not /submissions.
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions/validation', new MockResponse({
     is_valid: true,
     validation_messages: {}
   }));
@@ -462,7 +464,7 @@ suite.test('Validate Form: Should validate form submission data', async () => {
 });
 
 suite.test('Validate Form: Should return validation errors', async () => {
-  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions/validation', new MockResponse({
     is_valid: false,
     validation_messages: {
       '2': 'Email is required',
