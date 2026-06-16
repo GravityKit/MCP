@@ -287,7 +287,7 @@ All development here is **test-first** — features, bug fixes, refactors, behav
 
 A test that passes the first time you run it proves nothing — if you can't point to the RED run, it isn't TDD. Extract logic into a testable unit instead of burying it inline where it can't be exercised (e.g. `feedUnavailable` and `collectAbilityNames` were extracted so their behavior is covered, RED-then-GREEN). Bug fixes start with a failing test that reproduces the bug.
 
-Pure-function/unit tests use `node:test` and live in `test/` (run via `npm run test:lib`); see Testing. Never wire a fix into the codebase ahead of its failing test.
+Pure-function/unit tests use `node:test` and live in `test/` (run via `npm run test:node`); see Testing. Never wire a fix into the codebase ahead of its failing test.
 
 ## Development
 
@@ -358,7 +358,7 @@ Shorthand aliases: `TEST_GF_URL`, `TEST_GF_CONSUMER_KEY`, `TEST_GF_CONSUMER_SECR
 
 ```bash
 npm run test:unit      # Unit tests via custom runner
-npm run test:lib       # node:test unit tests for extracted helpers (TDD)
+npm run test:node      # node:test unit suites (field ops, helpers, ability-catalog)
 npm run test:auth      # Authentication tests
 npm run test:forms     # Forms endpoint tests
 npm run test:entries   # Entries endpoint tests

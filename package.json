@@ -16,7 +16,7 @@
     "verify:tool-names": "node scripts/verify-tool-names.mjs",
     "test": "node test/integration.test.js",
     "test:unit": "node test/run.js",
-    "test:field-ops": "node --test test/field-manager.test.js test/field-registry.test.js test/field-dependencies.test.js test/field-positioner.test.js",
+    "test:node": "node --test test/field-manager.test.js test/field-registry.test.js test/field-dependencies.test.js test/field-positioner.test.js test/helpers.test.js test/ability-catalog.test.js",
     "test:auth": "node test/authentication.test.js",
     "test:forms": "node test/forms.test.js",
     "test:entries": "node test/entries.test.js",
@@ -27,12 +27,11 @@
     "test:tools": "node test/server-tools.test.js",
     "test:compact": "node test/compact.test.js",
     "test:views": "node test/views.test.js",
-    "test:lib": "node --test test/helpers.test.js test/ability-catalog.test.js",
-    "test:all": "npm run test:unit && npm run test:field-ops && npm run test:lib && npm run test:auth && npm run test:forms && npm run test:entries && npm run test:feeds && npm run test:submissions && npm run test:validation && npm run test:field-validation && npm run test:tools && npm run test:views && npm test",
+    "test:all": "npm run test:unit && npm run test:node && npm run test:auth && npm run test:forms && npm run test:entries && npm run test:feeds && npm run test:submissions && npm run test:validation && npm run test:field-validation && npm run test:tools && npm run test:views && npm test",
     "test:coverage": "echo 'Running all tests with coverage analysis' && npm run test:all",
     "lint:package": "publint",
     "lint:docs": "node scripts/check-docs.mjs",
-    "prepublishOnly": "npm run test:unit && npm run test:field-ops && npm run test:lib && npm run test:field-validation && npm run test:views && npm run lint:package && npm run lint:docs"
+    "prepublishOnly": "npm run test:unit && npm run test:node && npm run test:field-validation && npm run test:views && npm run lint:package && npm run lint:docs"
   },
   "keywords": [
     "mcp",
