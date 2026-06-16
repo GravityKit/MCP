@@ -16,9 +16,9 @@ This is the single canonical doc for the project (agents and humans). `CLAUDE.md
 **What this is:** A Node.js MCP (Model Context Protocol) server with two independent capability planes:
 
 - **Plane A — Gravity Forms (`gf_*`), primary.** 26 static tools wrapping the Gravity Forms REST API v2 (forms, entries, feeds, notifications, submissions, field filters, results, and intelligent field management). Always available when Gravity Forms REST credentials work — on any Gravity Forms site.
-- **Plane B — GravityKit (`gv_*`), secondary.** Tools generated at runtime from the connected site's GravityKit Foundation Abilities catalog. They appear only when Foundation is active. GravityView is the only GravityKit product wired up so far (View authoring, fields, widgets, search, layouts). The plane is product-agnostic: any GravityKit product that registers Foundation abilities shows up automatically.
+- **Plane B — GravityKit, secondary.** Tools generated at runtime from the connected site's GravityKit Foundation Abilities catalog; each product registers tools under its own server-owned prefix. They appear only when Foundation is active. GravityView is the only product wired up so far, using the `gv_*` prefix (View authoring, fields, widgets, search, layouts). The plane is product-agnostic: any GravityKit product that registers Foundation abilities shows up automatically under its own prefix.
 
-The two planes are independent: a GF-only site gets the full `gf_*` surface with no abilities; a GravityKit site without GF REST keys still gets `gv_*`.
+The two planes are independent: a GF-only site gets the full `gf_*` surface with no abilities; a GravityKit site without GF REST keys still gets its GravityKit tools.
 
 **Main entry point:** `src/index.js`
 **Architecture style:** MCP SDK server with stdio transport, one HTTP client per plane, composable validation
@@ -39,7 +39,7 @@ MCP/
 │   ├── wp-client.js          # WordPressClient: product-agnostic authenticated WP transport (Plane B)
 │   ├── version.js            # VERSION + USER_AGENT, single-sourced from package.json
 │   ├── abilities/
-│   │   └── loader.js         # loadAbilitiesAsTools() — turns the live Abilities catalog into gv_* tools
+│   │   └── loader.js         # loadAbilitiesAsTools() — turns the live Abilities catalog into product tools (GravityView → gv_*)
 │   ├── gravityview/          # GravityView test/demo harness (NOT runtime — gv_* come from abilities/)
 │   │   ├── inspector-client.js  # Client for /wp-json/gravityview/v1 (only when DOING_GRAVITYVIEW_TESTS)
 │   │   └── view-validator.js    # Client-side structural + schema-aware validation for the inspector
@@ -95,7 +95,7 @@ MCP/
 The server registers tools from two independent sources, initialized separately so a failure in one never blocks the other:
 
 - **Plane A — Gravity Forms (`gf_*`).** Static tool definitions in `src/index.js` (`GF_TOOL_DEFINITIONS`) plus the field tools from `src/field-operations/index.js` (`fieldOperationTools`). Backed by `GravityFormsClient` against the GF REST API v2. 26 tools, always present once GF credentials validate.
-- **Plane B — GravityKit (`gv_*`).** Generated at runtime by `src/abilities/loader.js` from the connected site's Abilities catalog, backed by `WordPressClient`. The catalog is fetched in the background after startup; tools appear once it loads (the server advertises `tools.listChanged`). A single built-in tool, `gk_reload_abilities`, forces a re-fetch.
+- **Plane B — GravityKit.** Generated at runtime by `src/abilities/loader.js` from the connected site's Abilities catalog, backed by `WordPressClient`; each product's tools carry its own prefix (GravityView → `gv_*`). The catalog is fetched in the background after startup; tools appear once it loads (the server advertises `tools.listChanged`). A single built-in tool, `gk_reload_abilities`, forces a re-fetch.
 
 ### Initialization Flow
 
@@ -111,7 +111,7 @@ The server registers tools from two independent sources, initialized separately 
 
 **WordPressClient** (`wp-client.js`): Product-agnostic authenticated WordPress transport for Plane B. The abilities loader rides it to reach the Foundation catalog (`/wp-json/gravitykit/v1/...`) and the WP core Abilities API (`/wp-json/wp-abilities/v1/...`). Auth is a WordPress Application Password via HTTP Basic; when `GRAVITYKIT_WP_*` creds aren't set it falls back to `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` (commonly the same WP user + app password).
 
-**Abilities loader** (`abilities/loader.js`): `loadAbilitiesAsTools(wpClient)` builds `gv_*` tool definitions + handlers from the live catalog. Source-preference chain: (1) Foundation catalog `/wp-json/gravitykit/v1/abilities` (server-filtered to GravityKit, server-owned tool names), (2) WP core catalog `/wp-json/wp-abilities/v1/abilities` (filtered client-side on Foundation's stamped `meta.gk_registered_by`), (3) throw if neither is reachable (caller leaves `gv_*` unregistered and retries — self-healing). **Tool names are owned by the server** via each ability's `mcp_tool_name` (from the product's `mcp_prefix`, or the full product slug); abilities without one are skipped with a warning rather than client-invented. Handlers execute abilities at `/wp-abilities/v1/abilities/{name}/run` with the HTTP method derived from annotations (`readonly` → GET, `destructive`+`idempotent` → DELETE, else POST).
+**Abilities loader** (`abilities/loader.js`): `loadAbilitiesAsTools(wpClient)` builds the GravityKit product tool definitions + handlers from the live catalog (GravityView's carry the `gv_*` prefix). Source-preference chain: (1) Foundation catalog `/wp-json/gravitykit/v1/abilities` (server-filtered to GravityKit, server-owned tool names), (2) WP core catalog `/wp-json/wp-abilities/v1/abilities` (filtered client-side on Foundation's stamped `meta.gk_registered_by`), (3) throw if neither is reachable (caller leaves `gv_*` unregistered and retries — self-healing). **Tool names are owned by the server** via each ability's `mcp_tool_name` (from the product's `mcp_prefix`, or the full product slug); abilities without one are skipped with a warning rather than client-invented. Handlers execute abilities at `/wp-abilities/v1/abilities/{name}/run` with the HTTP method derived from annotations (`readonly` → GET, `destructive`+`idempotent` → DELETE, else POST).
 
 **GravityView harness** (`gravityview/inspector-client.js`, `view-validator.js`): The Inspector client and validator target `/wp-json/gravityview/v1` routes that exist only when `DOING_GRAVITYVIEW_TESTS` is defined server-side. They are the integration-test and demo harness — **not** a runtime dependency. Runtime `gv_*` tools come from the abilities loader.
 
@@ -161,7 +161,7 @@ Responses are optimized for minimal token usage:
 | Utilities | `gf_get_field_filters`, `gf_get_results` | `getFieldFilters`, `getResults` |
 | Field Ops | `gf_add_field`, `gf_update_field`, `gf_delete_field`, `gf_list_field_types` | via `fieldOperationHandlers` → `FieldManager` |
 
-**Plane B — GravityKit (`gv_*`), dynamic.** Generated from the catalog, so the exact set depends on the connected site's GravityKit products and versions — discover at runtime, don't hard-code. GravityView currently contributes tool families for View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`, …), fields (`gv_view_field_add`/`patch`/`move`/`remove`), grid rows, widgets, search fields, and discovery/schema (`gv_layouts_list`, `gv_widgets_list`, `gv_field_type_schema_get`, `gv_available_fields_get`, …). Plus the built-in `gk_reload_abilities`. Use the `gv_*_list` discovery tools and `gv_field_type_schema_get` to introspect what's available; the server `instructions` string documents the GravityView authoring flow. To re-verify that prose tool names still match the live catalog, run `npm run verify:tool-names` (see Releasing).
+**Plane B — GravityKit, dynamic.** Generated from the catalog, so the exact set depends on the connected site's GravityKit products and versions — each product under its own prefix; discover at runtime, don't hard-code. GravityView (prefix `gv_*`) currently contributes tool families for View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`, …), fields (`gv_view_field_add`/`patch`/`move`/`remove`), grid rows, widgets, search fields, and discovery/schema (`gv_layouts_list`, `gv_widgets_list`, `gv_field_type_schema_get`, `gv_available_fields_get`, …). Plus the built-in `gk_reload_abilities`. Use the `gv_*_list` discovery tools and `gv_field_type_schema_get` to introspect what's available; the server `instructions` string documents the GravityView authoring flow. To re-verify that prose tool names still match the live catalog, run `npm run verify:tool-names` (see Releasing).
 
 ### Response Shapes
 
@@ -251,9 +251,9 @@ All GF delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this
 4. **Add the handler route** in the `CallToolRequestSchema` switch in `src/index.js`.
 5. **Write the failing test first** (TDD — see Test-Driven Development above), then implement steps 1–4 to make it pass. Tests live in `test/`, importing the source under test as `../src/…` (see `forms.test.js`).
 
-### Adding GravityKit (`gv_*`) Tools
+### Adding GravityKit Product Tools
 
-`gv_*` tools are **not** defined in this repo — they come from the connected site's Foundation Abilities catalog. To add or change them, register/modify abilities in the relevant GravityKit product (the server stamps each ability's `mcp_tool_name`); the loader picks them up automatically. After a catalog change, run `gk_reload_abilities` (live) or `npm run verify:tool-names` to confirm names.
+GravityKit product tools (e.g. GravityView's `gv_*`) are **not** defined in this repo — they come from the connected site's Foundation Abilities catalog. To add or change them, register/modify abilities in the relevant GravityKit product (the server stamps each ability's `mcp_tool_name`); the loader picks them up automatically. After a catalog change, run `gk_reload_abilities` (live) or `npm run verify:tool-names` to confirm names.
 
 ### Adding a New Field Type to the Registry
 

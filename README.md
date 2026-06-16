@@ -8,12 +8,12 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 
 ## Features
 
-- **Comprehensive API Coverage**: Gravity Forms API endpoints
+- **Full Gravity Forms Coverage**: 26 tools across forms, entries, feeds, notifications, submissions, and field management
 - **Smart Field Management**: Intelligent field operations with dependency tracking
 - **Advanced Search**: Complex filtering and searching capabilities for entries
 - **Form Submissions**: Full submission workflow with validation
 - **Add-on Integration**: Manage feeds for MailChimp, Stripe, PayPal, and more
-- **GravityKit Products**: GravityView View authoring (and more) via `gv_*` tools auto-generated from the site's Foundation abilities catalog
+- **GravityKit Products**: dynamic tools auto-generated from the site's Foundation abilities catalog — each add-on under its own prefix (GravityView's View authoring is first, using `gv_*`)
 - **Type-Safe**: Comprehensive validation for all operations
 - **Battle-Tested**: Extensive test suite with real-world scenarios
 
@@ -92,6 +92,8 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 
 ## Available Tools
 
+Two planes: **Gravity Forms** (`gf_*`) — 26 tools, always available — and **GravityKit** — dynamic tools generated from the Foundation catalog when it's active, where each add-on registers tools under its own prefix (GravityView uses `gv_*`). The `gk_reload_abilities` tool reloads the GravityKit catalog.
+
 ### Forms (6 tools)
 - `gf_list_forms`    - List forms with filtering and pagination
 - `gf_get_form`      - Get complete form configuration
@@ -125,9 +127,16 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 - `gf_patch_feed`       - Partially update feed properties
 - `gf_delete_feed`      - Delete add-on feeds
 
-### GravityKit Products (`gv_*`, dynamic)
+### Notifications (1 tool)
+- `gf_send_notifications` - Send a form's notifications for an entry
 
-When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional `gv_*` tools are generated at runtime from its Abilities catalog — so the exact set depends on the installed GravityKit products and versions. **GravityView** is supported today: View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`), field/widget/search/grid editing, and discovery (`gv_layouts_list`, `gv_field_type_schema_get`, …). Use the `gv_*_list` discovery tools to see what's available on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
+### Utilities (2 tools)
+- `gf_get_field_filters` - List the available field filters for a form
+- `gf_get_results`       - Get aggregated results for Quiz/Poll/Survey forms
+
+### GravityKit Products (dynamic)
+
+When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional tools are generated at runtime from its Abilities catalog — each GravityKit add-on under its own server-assigned prefix, so the exact set depends on the installed products and versions. **GravityView** is supported today, using the `gv_*` prefix: View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`), field/widget/search/grid editing, and discovery (`gv_layouts_list`, `gv_field_type_schema_get`, …). Use the `gv_*_list` discovery tools to see what's available on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
 
 ## Usage Examples
 
@@ -182,6 +191,16 @@ await mcp.call('gf_submit_form_data', {
 - `GRAVITY_FORMS_MAX_RETRIES=3`        - Max retry attempts for failed requests
 - `GRAVITY_FORMS_DEBUG=false`          - Enable debug logging
 - `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false`  - Allow self-signed SSL certificates (local dev only)
+
+### GravityKit Product Tools
+
+The GravityKit product tools reach the same site over the WordPress REST Abilities API, so on a single install **no extra configuration is needed** — they reuse your `GRAVITY_FORMS_*` credentials (a WordPress username + application password). Override only if the WordPress root differs from the Gravity Forms URL, or to use a separate credential:
+
+- `GRAVITYKIT_WP_URL`          - WordPress site URL (defaults to `GRAVITY_FORMS_BASE_URL`)
+- `GRAVITYKIT_WP_USERNAME`     - WordPress username (defaults to `GRAVITY_FORMS_CONSUMER_KEY`)
+- `GRAVITYKIT_WP_APP_PASSWORD` - Application password (defaults to `GRAVITY_FORMS_CONSUMER_SECRET`)
+
+These tools appear only when GravityKit Foundation is active on the connected site.
 
 ### Authentication Flow
 
@@ -275,15 +294,16 @@ The server includes multiple safety mechanisms to prevent accidental production 
 ## Testing
 
 ```bash
-# Run all tests
+# Run everything (offline suites + live integration)
 npm run test:all
 
-# Run specific test suites
-npm run test:forms
-npm run test:entries
-npm run test:field-operations
+# Offline suites
+npm run test:unit         # custom-runner unit tests
+npm run test:node         # node:test units (field ops, helpers, ability catalog, …)
+npm run test:views        # GravityView inspector / validator
+npm run test:forms        # per-endpoint suites: also test:entries, test:feeds, test:submissions, …
 
-# Run with live API (requires credentials)
+# Live integration (requires test credentials)
 npm test
 ```
 
