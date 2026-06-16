@@ -342,7 +342,7 @@ export class GravityViewInspectorClient extends WordPressClient {
   async removeViewField({ id, area, slot, ifMatch } = {}) {
     requireViewId(id);
     requireAreaSlot(area, slot);
-const response = await this.httpClient.delete(
+    const response = await this.httpClient.delete(
       `/views/${id}/fields/${encodeArea(area)}/${encodeURIComponent(slot)}`,
       this.ifMatchHeaders(id, ifMatch)
     );
@@ -399,7 +399,7 @@ const response = await this.httpClient.delete(
   async deleteGridRow({ id, surface, row_uid, ifMatch } = {}) {
     requireViewId(id);
     if (!row_uid) throw new Error('row_uid is required.');
-// axios.delete requires `data` inside the config to send a body.
+    // axios.delete requires `data` inside the config to send a body.
     const config = this.ifMatchHeaders(id, ifMatch) || {};
     if (surface) config.data = { surface };
     const response = await this.httpClient.delete(
@@ -488,7 +488,7 @@ const response = await this.httpClient.delete(
     if (!widget_area || !widget_slot || !position || !search_slot) {
       throw new Error('widget_area, widget_slot, position, and search_slot are required.');
     }
-const config = this.ifMatchHeaders(id, ifMatch) || {};
+    const config = this.ifMatchHeaders(id, ifMatch) || {};
     config.data = { widget_area, widget_slot, position };
     const response = await this.httpClient.delete(
       `/views/${id}/search-fields/${encodeURIComponent(search_slot)}`,
@@ -534,7 +534,7 @@ const config = this.ifMatchHeaders(id, ifMatch) || {};
   async removeViewWidget({ id, area, slot, ifMatch } = {}) {
     requireViewId(id);
     requireAreaSlot(area, slot);
-const response = await this.httpClient.delete(
+    const response = await this.httpClient.delete(
       `/views/${id}/widgets/${encodeURIComponent(area)}/${encodeURIComponent(slot)}`,
       this.ifMatchHeaders(id, ifMatch)
     );

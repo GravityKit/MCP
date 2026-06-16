@@ -13,6 +13,7 @@ import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
 import { generateCompoundInputs } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
+import { USER_AGENT } from './version.js';
 
 export class GravityFormsClient {
   constructor(config) {
@@ -25,7 +26,7 @@ export class GravityFormsClient {
       baseURL: this.baseURL,
       timeout: parseInt(config.GRAVITY_FORMS_TIMEOUT) || 30000,
       headers: {
-        'User-Agent': 'GravityKit-MCP/2.1.0',
+        'User-Agent': USER_AGENT,
         'Accept': 'application/json'
       },
       // Serialize query params as explicit bracket-index pairs

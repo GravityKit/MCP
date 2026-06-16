@@ -322,6 +322,22 @@ suite.test('Validator: rejects field entries missing field_id', () => {
   );
 });
 
+suite.test('Validator: rejects non-string/non-number field_id (false, object, array, whitespace)', () => {
+  const v = new ViewValidator(client);
+  for (const bad of [false, {}, [], '   ', true]) {
+    TestAssert.throws(
+      () => v.validateApplyPayload({ fields: { 'directory_list-title': [{ field_id: bad }] } }),
+      'field_id'
+    );
+  }
+});
+
+suite.test('Validator: accepts a numeric field_id', () => {
+  const v = new ViewValidator(client);
+  // field_id is later coerced via String(item.field_id) — numbers are valid.
+  v.validateApplyPayload({ fields: { 'directory_list-title': [{ field_id: 1 }] } });
+});
+
 suite.test('Validator: validateAgainstSchemas rejects unknown setting keys', async () => {
   // Fake schema for the "custom" field type.
   client.getFieldTypeSchema = async () => ({

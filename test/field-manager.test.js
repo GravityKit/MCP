@@ -371,6 +371,19 @@ test('FieldManager - normalizeLayoutProperties', async (t) => {
     assert.strictEqual('layoutGridColumnSpan' in field, false);
   });
 
+  await t.test('layoutGridColumnSpan drops floats and partial-numeric strings', () => {
+    const dropped = (value) => 'layoutGridColumnSpan' in manager.normalizeLayoutProperties({ layoutGridColumnSpan: value }, 1) === false;
+    assert.ok(dropped('6wide'), '"6wide" should be dropped, not coerced to 6');
+    assert.ok(dropped('6.5'), '"6.5" should be dropped');
+    assert.ok(dropped(6.5), '6.5 (float) should be dropped');
+    assert.ok(dropped(''), 'empty string should be dropped');
+    assert.ok(dropped('   '), 'whitespace-only string should be dropped');
+    assert.ok(dropped(true), 'boolean should be dropped');
+    // Valid integers (and integer strings) are still kept.
+    assert.strictEqual(manager.normalizeLayoutProperties({ layoutGridColumnSpan: 8 }, 1).layoutGridColumnSpan, 8);
+    assert.strictEqual(manager.normalizeLayoutProperties({ layoutGridColumnSpan: ' 7 ' }, 1).layoutGridColumnSpan, 7);
+  });
+
   await t.test('empty and missing layoutGroupId are left alone', () => {
     assert.strictEqual(manager.normalizeLayoutProperties({ layoutGroupId: '' }, 1).layoutGroupId, '');
     assert.strictEqual('layoutGroupId' in manager.normalizeLayoutProperties({}, 1), false);

@@ -17,6 +17,7 @@
 
 import axios from 'axios';
 import https from 'https';
+import { USER_AGENT } from './version.js';
 
 export class WordPressClient {
   constructor(config) {
@@ -80,7 +81,7 @@ export class WordPressClient {
       baseURL,
       timeout: this.timeoutMs,
       headers: {
-        'User-Agent': 'GravityKit-MCP/2.1.1',
+        'User-Agent': USER_AGENT,
         'Accept': 'application/json',
         'Content-Type': 'application/json',
         'Authorization': this.basicAuth,

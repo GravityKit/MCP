@@ -225,8 +225,13 @@ export class FieldManager {
    */
   normalizeLayoutProperties(field, formId) {
     if (typeof field.layoutGridColumnSpan !== 'undefined') {
-      const span = parseInt(field.layoutGridColumnSpan, 10);
-      if (Number.isFinite(span)) {
+      const raw = field.layoutGridColumnSpan;
+      // Accept only true integers / integer strings — Number() (not parseInt)
+      // so "6.5" and "6wide" become NaN instead of being truncated to 6, and
+      // empty/whitespace strings are rejected rather than coerced to 0.
+      const numeric = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '');
+      const span = numeric ? Number(raw) : NaN;
+      if (Number.isInteger(span)) {
         field.layoutGridColumnSpan = Math.min(12, Math.max(1, span));
       } else {
         delete field.layoutGridColumnSpan;

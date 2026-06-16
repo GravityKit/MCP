@@ -101,7 +101,12 @@ export class ViewValidator {
         if (!item || typeof item !== 'object') {
           throw new Error(`${label}["${area}"][${idx}] must be an object.`);
         }
-        if (!('field_id' in item) || item.field_id === '' || item.field_id === null) {
+        // field_id must be a finite number or a non-empty (non-whitespace)
+        // string — it's later coerced via String(item.field_id). This rejects
+        // false, objects, arrays, and whitespace-only values.
+        const fid = item.field_id;
+        const validFieldId = (typeof fid === 'number' && Number.isFinite(fid)) || (typeof fid === 'string' && fid.trim() !== '');
+        if (!validFieldId) {
           throw new Error(`${label}["${area}"][${idx}] is missing required key "field_id".`);
         }
         if (item.slot !== undefined && typeof item.slot !== 'string') {
