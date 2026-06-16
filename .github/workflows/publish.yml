@@ -1,62 +1,98 @@
 name: Publish to npm
 
+# Publishes @gravitykit/mcp via npm Trusted Publishing (OIDC) — no NPM_TOKEN
+# secret to rotate or leak; OIDC also generates provenance attestations.
+#
+# One-time setup on npmjs.com: package @gravitykit/mcp → Settings →
+# Trusted Publisher → GitHub Actions, repository GravityKit/MCP,
+# workflow publish.yml.
+#
+# Triggers on a v* tag (the release) and workflow_dispatch (manual re-run).
+# The version guard makes both idempotent — an already-published version is a
+# no-op, so re-running or re-tagging never errors.
+
 on:
   push:
     tags:
-      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the GitHub Release
+  id-token: write # OIDC token for npm trusted publishing + provenance
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
 
 jobs:
   publish:
+    name: Publish @gravitykit/mcp
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
+          persist-credentials: false # npm auth comes from OIDC, not git
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Update npm (trusted publishing requires npm >= 11.5)
+        # Pinned to the 11.x major so a future npm major can't change publish
+        # behavior mid-release.
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
+      - name: Skip when this version is already published
+        id: guard
+        # Only a definitive "version not found" may proceed to publish; any other
+        # npm view failure (network, registry outage) fails the job so a transient
+        # error can't slip past the idempotency check. Some npm versions report a
+        # missing version as exit 0 with empty output, so success requires
+        # non-empty output too.
         run: |
-          # Run unit tests (doesn't require API credentials)
-          npm run test:unit || true
-          npm run test:tools || true
-        env:
-          CI: true
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if OUTPUT="$(npm view "@gravitykit/mcp@$VERSION" version 2>&1)"; then
+            STATUS=0
+          else
+            STATUS=$?
+          fi
+          if [ "$STATUS" -eq 0 ] && [ -n "$OUTPUT" ]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "@gravitykit/mcp@$VERSION is already on npm — nothing to publish."
+          elif [ "$STATUS" -eq 0 ] || printf '%s' "$OUTPUT" | grep -qiE 'E404|not found|no match found'; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Could not determine whether @gravitykit/mcp@$VERSION is published (npm view exit $STATUS):" >&2
+            printf '%s\n' "$OUTPUT" >&2
+            exit 1
+          fi
 
-      - name: Publish to npm
+      - name: Publish to npm (OIDC trusted publishing + provenance)
+        if: steps.guard.outputs.published == 'false'
+        # prepublishOnly runs the full offline gate (tests + publint + doc guard)
+        # automatically before the package is published.
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub Release
-        uses: actions/create-release@v1
+        if: steps.guard.outputs.published == 'false'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          release_name: Release ${{ github.ref_name }}
-          body: |
-            ## Changes in this Release
-            
-            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
-            
-            ## Installation
-            
-            ```bash
-            npm install @gravitykit/mcp@${{ github.ref_name }}
-            ```
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.guard.outputs.version }}"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists — skipping."
+            exit 0
+          fi
+          gh release create "v$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "v$VERSION" \
+            --verify-tag \
+            --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md) for details.
 
-            ## npm Package
-
-            View on npm: https://www.npmjs.com/package/@gravitykit/mcp
-          draft: false
-          prerelease: false
+          Install: \`npm install @gravitykit/mcp@$VERSION\` · [View on npm](https://www.npmjs.com/package/@gravitykit/mcp/v/$VERSION)"
