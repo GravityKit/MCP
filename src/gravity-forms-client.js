@@ -15,6 +15,57 @@ import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
 import { USER_AGENT } from './version.js';
 
+/**
+ * Build the query params for GET /entries from validated gf_list_entries input.
+ *
+ * Returned object is fed to the axios paramsSerializer (flattenParams), which
+ * brackets nested objects/arrays. Gravity Forms reads `sorting`/`paging` as
+ * arrays (sorting[key], paging[page_size]) and `search` as a JSON string;
+ * it has no top-level status/include/exclude — status lives in search.status
+ * and id-based selection is field_filters on key 'id'.
+ *
+ * @param {object} validated Output of EntriesValidator.validateListEntriesParams.
+ * @returns {object} Query params object for the GF REST request.
+ */
+export function buildEntriesQuery(validated) {
+  const { search, sorting, paging, form_ids, status, include, exclude, ...rest } = validated;
+  const query = { ...rest };
+
+  // GF reads form_ids/sorting/paging as arrays; the paramsSerializer brackets
+  // them on the wire (form_ids[0]=…, sorting[key]=…, paging[page_size]=…). They
+  // must stay objects/arrays — JSON-stringifying makes GF's isset() checks fail,
+  // so it silently defaults paging (page_size=10/offset=0) and sorting (id/DESC).
+  if (form_ids !== undefined) query.form_ids = form_ids;
+  if (sorting !== undefined) query.sorting = sorting;
+  if (paging !== undefined) query.paging = paging;
+
+  // GF /entries has no top-level status/include/exclude. status lives in
+  // search.status; id-based selection maps to field_filters on key 'id'
+  // (operator 'in'/'not in'). Collapse them into the single `search` criteria,
+  // which GF expects JSON-encoded.
+  const criteria = search ? { ...search } : {};
+  const fieldFilters = Array.isArray(criteria.field_filters) ? [...criteria.field_filters] : [];
+
+  if (Array.isArray(include) && include.length > 0) {
+    fieldFilters.push({ key: 'id', operator: 'in', value: include });
+  }
+  if (Array.isArray(exclude) && exclude.length > 0) {
+    fieldFilters.push({ key: 'id', operator: 'not in', value: exclude });
+  }
+  if (fieldFilters.length > 0) {
+    criteria.field_filters = fieldFilters;
+  }
+  if (status !== undefined) {
+    criteria.status = status;
+  }
+
+  if (Object.keys(criteria).length > 0) {
+    query.search = JSON.stringify(criteria);
+  }
+
+  return query;
+}
+
 export class GravityFormsClient {
   constructor(config) {
     this.config = testConfig.resolveEnv(config);
@@ -370,20 +421,7 @@ export class GravityFormsClient {
    */
   async listEntries(params = {}) {
     return this.validateAndCall('gf_list_entries', params, async (validated) => {
-      // Convert search parameters to Gravity Forms format
-      const searchParams = { ...validated };
-
-      if (validated.search) {
-        searchParams.search = JSON.stringify(validated.search);
-      }
-
-      if (validated.sorting) {
-        searchParams.sorting = JSON.stringify(validated.sorting);
-      }
-
-      if (validated.paging) {
-        searchParams.paging = JSON.stringify(validated.paging);
-      }
+      const searchParams = buildEntriesQuery(validated);
 
       const response = await this.httpClient.get('/entries', { params: searchParams });
 

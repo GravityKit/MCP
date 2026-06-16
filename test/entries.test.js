@@ -4,6 +4,7 @@
  */
 
 import GravityFormsClient from '../src/gravity-forms-client.js';
+import { flattenParams } from '../src/config/auth.js';
 import {
   TestRunner,
   TestAssert,
@@ -104,7 +105,7 @@ suite.test('List Entries: Should handle complex search with field filters', asyn
   TestAssert.lengthOf(result.entries, 1);
 });
 
-suite.test('List Entries: Should handle sorting', async () => {
+suite.test('List Entries: Should send sorting as bracketed wire params GF reads', async () => {
   const sorting = generateSortingParams('date_created', 'desc');
 
   mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({
@@ -112,21 +113,100 @@ suite.test('List Entries: Should handle sorting', async () => {
   }));
 
   const result = await client.listEntries({ sorting });
-
   TestAssert.lengthOf(result.entries, 1);
+
+  // Assert the REAL wire format (sorting[key]/[direction]), not just that the
+  // params object mentions a substring — GF defaults to id/DESC otherwise.
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  TestAssert.equal(wire.get('sorting[key]'), 'date_created');
+  TestAssert.equal(wire.get('sorting[direction]'), 'desc');
+  TestAssert.isFalse(wire.has('sorting'), 'sorting must not be a JSON-encoded scalar');
 });
 
-suite.test('List Entries: Should handle paging parameters', async () => {
+suite.test('List Entries: Should send paging as bracketed wire params GF reads', async () => {
   const paging = generatePagingParams(50, 2);
 
   mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({
     entries: []
   }));
 
-  const result = await client.listEntries({ paging });
+  await client.listEntries({ paging });
 
-  const request = mockHttpClient.getRequests()[0];
-  TestAssert.includes(JSON.stringify(request.config.params), 'page_size');
+  // GF reads paging[page_size]/[current_page]; a JSON blob silently defaults
+  // to page_size=10/offset=0 — i.e. stuck on the first 10 entries.
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  TestAssert.equal(wire.get('paging[page_size]'), '50');
+  TestAssert.equal(wire.get('paging[current_page]'), '2');
+  TestAssert.isFalse(wire.has('paging'), 'paging must not be a JSON-encoded scalar');
+});
+
+suite.test('List Entries: queries MULTIPLE forms at once (form_ids array, paged)', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [], total_count: 0 }));
+
+  await client.listEntries({ form_ids: [5, 9, 13], paging: { page_size: 50, current_page: 2 } });
+
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  TestAssert.equal(wire.get('form_ids[0]'), '5');
+  TestAssert.equal(wire.get('form_ids[1]'), '9');
+  TestAssert.equal(wire.get('form_ids[2]'), '13');
+  TestAssert.equal(wire.get('paging[page_size]'), '50');
+  TestAssert.equal(wire.get('paging[current_page]'), '2');
+});
+
+suite.test('List Entries: exclude IDs become a GF id "not in" search filter', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [] }));
+
+  await client.listEntries({ exclude: [96656, 96653] });
+
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  TestAssert.isFalse(wire.has('exclude[0]'), 'exclude must not be sent as a raw GF-unknown param');
+  const idFilter = JSON.parse(wire.get('search')).field_filters.find((f) => f.key === 'id' && f.operator === 'not in');
+  TestAssert.exists(idFilter, 'exclude should map to an id not-in field_filter');
+});
+
+suite.test('List Entries: include IDs become a GF id "in" search filter', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [] }));
+
+  await client.listEntries({ include: [11, 22] });
+
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  const idFilter = JSON.parse(wire.get('search')).field_filters.find((f) => f.key === 'id' && f.operator === 'in');
+  TestAssert.equal(JSON.stringify(idFilter.value), JSON.stringify([11, 22]));
+});
+
+suite.test('List Entries: top-level status is folded into search.status', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [] }));
+
+  await client.listEntries({ status: 'spam' });
+
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  TestAssert.isFalse(wire.has('status'), 'GF has no top-level status param — it must be dropped');
+  TestAssert.equal(JSON.parse(wire.get('search')).status, 'spam');
+});
+
+suite.test('List Entries: reporter repro — paged form query produces a pageable request', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [], total_count: 27774 }));
+
+  await client.listEntries({ form_ids: [129], paging: { page_size: 25, current_page: 2 } });
+
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  TestAssert.equal(wire.get('form_ids[0]'), '129');
+  TestAssert.equal(wire.get('paging[page_size]'), '25');
+  TestAssert.equal(wire.get('paging[current_page]'), '2');
+});
+
+suite.test('List Entries: consecutive pages produce different wire (pagination is live)', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [] }));
+
+  await client.listEntries({ paging: { page_size: 25, current_page: 1 } });
+  await client.listEntries({ paging: { page_size: 25, current_page: 2 } });
+
+  const reqs = mockHttpClient.getRequests();
+  const page1 = new Map(flattenParams(reqs[0].config.params)).get('paging[current_page]');
+  const page2 = new Map(flattenParams(reqs[1].config.params)).get('paging[current_page]');
+  TestAssert.equal(page1, '1');
+  TestAssert.equal(page2, '2');
+  TestAssert.isTrue(page1 !== page2, 'different pages must yield different requests');
 });
 
 suite.test('List Entries: Should validate search operators', async () => {
