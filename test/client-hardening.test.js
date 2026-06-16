@@ -5,13 +5,11 @@
  * 2.10.3 source:
  *   - /forms/{id}/submissions/validation returns HTTP 400 with
  *     {is_valid:false, validation_messages, page_number, source_page_number}
- *     for the NORMAL invalid case
- *     (class-controller-form-submissions-validation.php:88-90).
+ *     for the NORMAL invalid case.
  *   - /forms/{id}/submissions returns HTTP 400 with {is_valid:false, …} on a
- *     rejected submission (class-controller-form-submissions.php:115).
+ *     rejected submission.
  *   - search field_filters carry their own 'mode' key; GF reads
- *     $field_filters['mode'] (class-gf-query.php:301), NOT a top-level
- *     search.mode.
+ *     $field_filters['mode'], NOT a top-level search.mode.
  *   - /forms does NOT send X-WP-Total; total_count must be the count returned.
  *   - sendNotifications with an empty _notifications query string makes GF send
  *     ALL notifications (dangerous) — must never happen for a caller-supplied

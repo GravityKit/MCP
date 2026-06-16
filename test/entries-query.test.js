@@ -17,7 +17,7 @@
  *   - There is NO top-level `status` param — only search.status (default
  *     'active'). NO include/exclude params — id-based selection is done via
  *     field_filters {key:'id', operator:'in'|'not in'} (GFAPI::get_entries,
- *     verified in GF test-api-search-criteria.php + api.php:573 docblock).
+ *     verified against GF's search-criteria tests + the GFAPI docblock).
  *
  * We assert the REAL wire output by running the builder result through the
  * production paramsSerializer (flattenParams) — the exact bracket-pair
@@ -153,9 +153,9 @@ test('sorting by a numeric field id (e.g. "1") serializes the key verbatim', () 
 test('search mode rides inside field_filters (GF reads $field_filters[mode]), not search top-level', () => {
   const w = wire(buildEntriesQuery({ search: { field_filters: [{ key: '1', value: 'x', operator: 'is' }], mode: 'any' } }));
   const parsed = JSON.parse(w.get('search'));
-  // GF reads the search mode from $search_criteria['field_filters']['mode']
-  // (class-gf-query.php:301), so it must be a key ON field_filters, not on the
-  // search object. field_filters serializes as an object ({"0":…,"mode":…}).
+  // GF reads the search mode from $search_criteria['field_filters']['mode'], so
+  // it must be a key ON field_filters, not on the search object. field_filters
+  // serializes as an object ({"0":…,"mode":…}).
   assert.equal(parsed.field_filters.mode, 'any');
   assert.ok(!('mode' in parsed), 'mode must NOT sit at the search top level — GF ignores it there');
 });

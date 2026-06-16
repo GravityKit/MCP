@@ -4,11 +4,11 @@
  * These assert the advertised inputSchema for the static Gravity Forms tools
  * in GF_TOOL_DEFINITIONS (src/index.js) matches what Gravity Forms 2.10.3
  * actually honors server-side. Verified against the real GF source:
- *   - /forms get_items() reads ONLY $request['include'] (class-controller-forms.php:88);
- *     get_collection_params() declares only page/per_page/search. status/active/exclude
- *     are no-ops → must NOT be advertised.
- *   - GFAPI::get_entries accepts sorting.is_numeric (includes/api.php:621,1484) and
- *     paging.offset (includes/api.php:604,712) → must be advertised.
+ *   - /forms get_items() reads ONLY $request['include']; get_collection_params()
+ *     declares only page/per_page/search. status/active/exclude are no-ops →
+ *     must NOT be advertised.
+ *   - GFAPI::get_entries accepts sorting.is_numeric and paging.offset →
+ *     must be advertised.
  *
  * src/index.js calls main() on import (starts the stdio server), so importing it
  * has side effects. Instead we read the file text and evaluate ONLY the

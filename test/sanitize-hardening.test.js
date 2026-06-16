@@ -1,16 +1,12 @@
 /**
- * Adversarial / edge-case hardening tests for src/utils/sanitize.js
+ * Adversarial / edge-case hardening tests for src/utils/sanitize.js — they pin
+ * the masking contract for credentials in error responses and debug logs:
+ *   1. sanitize() masks common secret field names (secret, client_secret,
+ *      private_key, stripe_secret_key, webhook_secret, password).
+ *   2. sanitizeUrl() masks oauth_signature and any oauth_* secret query value,
+ *      and redacts HTTP Basic userinfo (user:pass@host) in the authority.
  *
- * These pin two confirmed credential-leak bugs:
- *   1. [P2] sanitize() leaks common secret field names (secret, client_secret,
- *      private_key, stripe_secret_key, webhook_secret, password) because the
- *      SENSITIVE_KEYS match was `keyLower.includes(longToken)` instead of
- *      `keyLower.includes(shortToken)`.
- *   2. [P3] sanitizeUrl() does not mask oauth_signature (the OAuth crypto
- *      credential) nor any oauth_* secret query value, and does not redact
- *      HTTP Basic userinfo (user:pass@host) in the authority.
- *
- * Plus regression coverage proving the already-handled cases still behave.
+ * Plus coverage that the already-handled cases still behave.
  *
  * node:test style — run directly: node --test test/sanitize-hardening.test.js
  */
@@ -33,10 +29,10 @@ function assertMasked(actual, original) {
 }
 
 // ---------------------------------------------------------------------------
-// Bug 1 [P2] — sanitize() must mask common secret field names in full
+// sanitize() masks common secret field names in full
 // ---------------------------------------------------------------------------
 
-test('sanitize(): masks common secret field names that previously leaked', () => {
+test('sanitize(): masks common secret field names', () => {
   const leakyKeys = [
     'secret',
     'client_secret',
@@ -68,7 +64,7 @@ test('sanitize(): also masks app_password / passwd / credential / authorization'
   assertMasked(result.authorization, SECRET_VALUE);
 });
 
-test('sanitize(): REGRESSION — previously-masked keys still masked', () => {
+test('sanitize(): already-recognized secret keys stay masked', () => {
   const input = {
     consumer_key: 'ck_3f4d5e6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e',
     consumer_secret: 'cs_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b',
@@ -116,7 +112,7 @@ test('sanitize(): masks leaky secret keys nested deep in objects/arrays', () => 
 });
 
 // ---------------------------------------------------------------------------
-// Bug 2 [P3] — sanitizeUrl() must mask oauth_* and Basic userinfo
+// sanitizeUrl() masks oauth_* and Basic userinfo
 // ---------------------------------------------------------------------------
 
 test('sanitizeUrl(): masks oauth_signature query value', () => {
@@ -155,7 +151,7 @@ test('sanitizeUrl(): redacts userinfo for https too', () => {
   assert.ok(result.includes('@site.com'), `host preserved: ${result}`);
 });
 
-test('sanitizeUrl(): REGRESSION — existing masking still works', () => {
+test('sanitizeUrl(): existing masking still works', () => {
   const ckUrl =
     'https://site.com/api?consumer_key=ck_3f4d5e6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e&form_id=1';
   const ckResult = sanitizeUrl(ckUrl);

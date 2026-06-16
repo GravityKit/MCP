@@ -3,7 +3,7 @@
  *
  * These go one level deeper than entries-query.test.js: instead of inspecting
  * flattenParams() pairs, they build the FULL serialized query string exactly
- * as the production axios paramsSerializer does (gravity-forms-client.js:38-42),
+ * as the production axios paramsSerializer in gravity-forms-client.js does,
  * then reconstruct it the way PHP's $_GET / WP_REST_Request would — proving GF
  * receives `paging`/`sorting` as nested ARRAYS and `search` as a JSON STRING,
  * which is precisely what parse_entry_search_params (GF
@@ -17,7 +17,7 @@ import { buildEntriesQuery, GravityFormsClient } from '../src/gravity-forms-clie
 import { flattenParams, rfc3986Encode } from '../src/config/auth.js';
 import { ValidationFactory } from '../src/config/validation.js';
 
-// Mirror of the production paramsSerializer (gravity-forms-client.js:38-42).
+// Mirror of the production paramsSerializer in gravity-forms-client.js.
 // Kept in lockstep on purpose: if that serializer changes, these tests should
 // be updated alongside it.
 function serialize(params) {
@@ -77,8 +77,8 @@ test("GF's view: search reconstructs as a JSON STRING that json_decodes to crite
   const criteria = { field_filters: [{ key: '1', value: 'John', operator: 'contains' }], mode: 'all' };
   const view = phpView({ search: criteria });
   assert.equal(typeof view.search, 'string', 'GF json_decodes a string search param');
-  // GF reads the search mode from $field_filters['mode'] (class-gf-query.php:301),
-  // so the builder moves search.mode INTO field_filters. The decoded shape is
+  // GF reads the search mode from $field_filters['mode'], so the builder moves
+  // search.mode INTO field_filters. The decoded shape is
   // therefore { field_filters: { 0: <filter>, mode: 'all' } } — the PHP array GF
   // iterates after reading + unset('mode'), NOT the original top-level-mode input.
   const decoded = JSON.parse(view.search);
