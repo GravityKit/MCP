@@ -400,7 +400,7 @@ suite.test('Integration: Create test feed (if MailChimp available)', async () =>
     result = await client.createFeed(feedData);
   } catch (error) {
     const msg = error.message || '';
-    const unavailable = /table does not exist|missing_table|not installed|not active|invalid add-?on|add-?on .*not (registered|found)/i.test(msg);
+    const unavailable = /table does not exist|missing_table|not installed|not active|invalid add-?on|add-?on.*not (registered|found)/i.test(msg);
     if (unavailable) {
       console.log(`  MailChimp feed add-on not available - skipping (${msg})`);
       return;
@@ -763,7 +763,10 @@ suite.test('Security: read-only API key cannot write', async () => {
     GRAVITY_FORMS_CONSUMER_KEY: roKey,
     GRAVITY_FORMS_CONSUMER_SECRET: roSecret
   });
-  await roClient.initialize().catch(() => {});
+  // initialize() can legitimately fail for a read-only key (its REST-access
+  // probe may not pass every endpoint); continue to the read/write checks,
+  // but log rather than swallow so a real init failure stays visible.
+  await roClient.initialize().catch((e) => console.log(`  read-only client init reported: ${e.message} — continuing`));
 
   // Reads must work… (GF /forms returns an ID-keyed object, not an array)
   const listed = await roClient.listForms({});
