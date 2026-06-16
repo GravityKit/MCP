@@ -38,6 +38,7 @@ MCP/
 │   ├── gravity-forms-client.js  # GravityFormsClient: GF REST HTTP client, all gf_* API methods
 │   ├── wp-client.js          # WordPressClient: product-agnostic authenticated WP transport (Plane B)
 │   ├── version.js            # VERSION + USER_AGENT, single-sourced from package.json
+│   ├── server-runtime.js     # Pure helpers: runPlaneInit, buildToolList, classifyAbilityCall
 │   ├── abilities/
 │   │   └── loader.js         # loadAbilitiesAsTools() — turns the live Abilities catalog into product tools (GravityView → gv_*)
 │   ├── gravityview/          # GravityView test/demo harness (NOT runtime — gv_* come from abilities/)

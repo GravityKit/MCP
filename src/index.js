@@ -24,6 +24,7 @@ import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall } from './server-runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -93,13 +94,12 @@ let gfPlaneFailedAt = 0;
 let wpPlaneFailedAt = 0;
 
 async function initializeClient() {
-  const gfOk = await initializeGravityFormsPlane();
-  const wpOk = initializeWordPressPlane();
-
-  if (!gfOk && !wpOk) {
-    throw new Error('Neither Gravity Forms nor WordPress credentials are usable. Set GRAVITY_FORMS_* and/or GRAVITYKIT_WP_* in .env.');
-  }
-
+  // WP plane starts first (synchronous) so the GF REST probe can't gate it;
+  // runPlaneInit throws only when neither plane has usable credentials.
+  await runPlaneInit({
+    initGravityFormsPlane: initializeGravityFormsPlane,
+    initWordPressPlane: initializeWordPressPlane,
+  });
   return true;
 }
 
@@ -734,35 +734,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   // next gv_* call (or gk_reload_abilities) retries.
   await ensureAbilitiesLoaded({ timeoutMs: 2000 });
 
+  // Gravity Forms tools are advertised only when that plane is live, so a
+  // WP-only install never lists gf_* tools that can't run. gk_reload_abilities
+  // is always present (the manual escape hatch after fixing a WP/cert issue);
+  // ability tools appear once the background catalog load succeeds.
+  const gkReloadDef = {
+    name: 'gk_reload_abilities',
+    description: 'Force a re-fetch of the WordPress Abilities API catalog and refresh the GravityKit product tool list. Use after fixing a WP / network / cert issue that prevented the eager background load from succeeding at MCP startup.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }
+  };
   return {
-    tools: [
-      // Gravity Forms (Plane A) — static, always-on when GF creds work
-      ...GF_TOOL_DEFINITIONS,
-
-      // Field Operations (4 tools) - Intelligent field management
-      ...fieldOperationTools,
-
-      // GravityView Inspector — auto-generated from the WordPress
-      // Abilities API (Foundation catalog first, WP core fallback).
-      // Empty until the background load succeeds; gk_reload_abilities
-      // and the per-call self-heal repopulate it.
-      ...(abilityToolDefinitions ?? []),
-
-      // Always present — the manual escape hatch when the eager
-      // background load fails AND the per-call self-heal hasn't fired
-      // (e.g. you fixed the WP env and want the tool list refreshed
-      // without waiting to call another gv_* tool first).
-      {
-        name: 'gk_reload_abilities',
-        description: 'Force a re-fetch of the WordPress Abilities API catalog and refresh the gv_* tool list. Use after fixing a WP / network / cert issue that prevented the eager background load from succeeding at MCP startup.',
-        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {},
-          additionalProperties: false
-        }
-      }
-    ]
+    tools: buildToolList({
+      gfReady: !!gravityFormsClient,
+      gfToolDefs: GF_TOOL_DEFINITIONS,
+      fieldOpTools: fieldOperationTools,
+      abilityDefs: abilityToolDefinitions,
+      gkReloadDef,
+    })
   };
 });
 
@@ -910,30 +899,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }],
         };
       }
-      if (typeof name === 'string' && name.startsWith('gv_')) {
-        if (!wpClient) {
+      // Any other name is a dynamic GravityKit ability tool (any product
+      // prefix — gv_, gc_, …) or genuinely unknown. Self-heal the catalog
+      // when the WP plane is up, then route by handler-map membership so
+      // every product's tools dispatch, not just GravityView's.
+      if (wpClient) {
+        await ensureAbilitiesLoaded();
+      }
+      switch (classifyAbilityCall({ name, hasWpClient: !!wpClient, handlers: abilityToolHandlers })) {
+        case 'dispatch':
+          return wrapViewHandler(() => abilityToolHandlers[name](params), params)();
+        case 'no-wp-client':
           return createErrorResponse(
             'WordPress client not initialized. Set GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD in .env (or reuse GRAVITY_FORMS_BASE_URL / GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET when the same WP install hosts both surfaces).'
           );
-        }
-        // Self-heal: every gv_* call retries the abilities load if a
-        // prior attempt failed. Cheap (cache hit on success path),
-        // and lets transient cert / network / boot races recover
-        // without an MCP process restart.
-        await ensureAbilitiesLoaded();
-        const handlerMap = abilityToolHandlers;
-        if (!handlerMap) {
+        case 'catalog-unreachable':
           return createErrorResponse(
-            'GravityView abilities catalog unreachable — no gv_* tools are available. Fix WP connectivity / credentials, then call gk_reload_abilities to refresh.'
+            'GravityKit abilities catalog unreachable — no product tools are available. Fix WP connectivity / credentials, then call gk_reload_abilities to refresh.'
           );
-        }
-        const handler = handlerMap[name];
-        if (!handler) {
-          return createErrorResponse(`Unknown GravityView tool: ${name}`);
-        }
-        return wrapViewHandler(() => handler(params), params)();
+        default:
+          return createErrorResponse(`Unknown tool: ${name}`);
       }
-      return createErrorResponse(`Unknown tool: ${name}`);
   }
 });
 

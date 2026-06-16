@@ -18,6 +18,7 @@
 import axios from 'axios';
 import https from 'https';
 import { USER_AGENT } from './version.js';
+import { isLocalUrl } from './config/auth.js';
 
 export class WordPressClient {
   constructor(config) {
@@ -32,6 +33,17 @@ export class WordPressClient {
     }
 
     this.baseUrl = baseUrl.replace(/\/$/, '');
+
+    // This client always sends Basic auth (app password). Refuse to do that
+    // over a remote plain-HTTP URL — the credentials would travel in the
+    // clear. Local dev hosts (localhost, *.test, *.local) are fine; an
+    // explicit GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true overrides. Mirrors
+    // the Gravity Forms plane's guard (config/auth.js).
+    const allowHttpBasic = isLocalUrl(this.baseUrl)
+      || this.config.GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH === 'true';
+    if (this.baseUrl.startsWith('http://') && !allowHttpBasic) {
+      throw new Error('Refusing to send Basic auth over a remote plain-HTTP URL — credentials would be exposed. Use HTTPS, or set GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true to override.');
+    }
 
     // Auth resolution order: canonical GRAVITYKIT_WP_* (prod-style) →
     // WORDPRESS_LOCAL_DEV_TEST_* (the local dev.test admin creds; same
