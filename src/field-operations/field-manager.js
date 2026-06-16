@@ -3,6 +3,8 @@
  * Handles field CRUD operations within REST API v2 constraints
  */
 
+import { createHash } from 'crypto';
+
 export class FieldManager {
   constructor(apiClient, fieldRegistry, validator) {
     this.api = apiClient;
@@ -40,6 +42,9 @@ export class FieldManager {
     if (fieldDef.storage?.type === 'compound') {
       field.inputs = this.generateSubInputs(field, fieldDef);
     }
+
+    // 5b. Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
+    this.normalizeLayoutProperties(field, formId);
     
     // 6. Calculate insertion position (page-aware)
     const insertIndex = this.positionEngine?.calculatePosition(
@@ -91,6 +96,7 @@ export class FieldManager {
       ...updates,
       id: originalField.id // Preserve ID
     };
+    this.normalizeLayoutProperties(form.fields[fieldIndex], formId);
 
     // Replace form via direct PUT (no re-fetch — we already have the full state)
     const result = await this.api.replaceForm(formId, form);
@@ -198,6 +204,46 @@ export class FieldManager {
       ...this.getTypeSpecificDefaults(type, fieldDef),
       ...properties
     };
+  }
+
+  /**
+   * Normalize layout grid properties to the editor's storage format.
+   *
+   * Mirrors the server-side normalization Gravity Forms ships in its
+   * abilities API (GF_Abilities_Handler_Forms::normalize_layout_group_ids):
+   * the editor stores layoutGroupId as an 8-char lowercase hex string, but
+   * agents naturally write friendly names like "row1" or "name-row".
+   * Friendly names hash to a stable 8-char hex per form, so the same name
+   * passed to later calls lands the field in the same row (GF salts per
+   * request because it normalizes a whole form at once; we normalize one
+   * field per call, so determinism is what makes row-sharing work).
+   *
+   * layoutGridColumnSpan is clamped to the editor's 1-12 grid; non-numeric
+   * values are dropped so the editor assigns its own span.
+   *
+   * Mutates and returns the field.
+   */
+  normalizeLayoutProperties(field, formId) {
+    if (typeof field.layoutGridColumnSpan !== 'undefined') {
+      const raw = field.layoutGridColumnSpan;
+      // Accept only true integers / integer strings — Number() (not parseInt)
+      // so "6.5" and "6wide" become NaN instead of being truncated to 6, and
+      // empty/whitespace strings are rejected rather than coerced to 0.
+      const numeric = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '');
+      const span = numeric ? Number(raw) : NaN;
+      if (Number.isInteger(span)) {
+        field.layoutGridColumnSpan = Math.min(12, Math.max(1, span));
+      } else {
+        delete field.layoutGridColumnSpan;
+      }
+    }
+
+    const groupId = field.layoutGroupId;
+    if (typeof groupId === 'string' && groupId !== '' && !/^[0-9a-f]{8}$/.test(groupId)) {
+      field.layoutGroupId = createHash('md5').update(`${formId}:${groupId}`).digest('hex').slice(0, 8);
+    }
+
+    return field;
   }
 
   /**

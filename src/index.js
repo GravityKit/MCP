@@ -22,6 +22,9 @@ import FieldAwareValidator from './config/field-validation.js';
 import logger from './utils/logger.js';
 import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
+import { WordPressClient } from './wp-client.js';
+import { loadAbilitiesAsTools } from './abilities/loader.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall } from './server-runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -40,9 +43,9 @@ const server = new Server(
   },
   {
     capabilities: {
-      tools: {}
+      tools: { listChanged: true }
     },
-    instructions: 'GravityKit MCP server for Gravity Forms. Checkbox/multiselect arrays auto-normalized: pass ["val1","val2"] and values are matched to correct sub-inputs. Text labels also work. Multiselect limitation: values containing commas get split by GF REST API. Responses strip null/empty by default; pass compact=false for full raw data.'
+    instructions: 'GravityKit MCP server. Two tool families: gf_* for Gravity Forms (forms, entries, feeds, notifications, fields — works on any Gravity Forms site) and product tools (gv_* for GravityView Views, plus other GravityKit products) generated from the site\'s GravityKit Foundation abilities catalog — these appear only when Foundation is active on the connected site; call gk_reload_abilities to (re)load the catalog if gv_* tools are missing or stale.\n\nGravityView authoring flow: 1) gv_view_create to create a draft (defaults to gravityview-layout-builder, supports per-zone template_ids). 2) Use gv_grid_row_add (surface=fields|widgets) to materialise rows in the layout. 3) Use gv_view_config_apply for bulk one-shot writes, or gv_view_field_add / gv_view_field_patch / gv_view_field_move for surgical edits. 4) For Search Bar internal layout, use gv_search_field_add / gv_search_field_patch / gv_search_field_remove — modern keyed-by-position storage (search_fields_section). Existing legacy search_bar widgets auto-migrate to modern on first save through this API.\n\nDiscovery: gv_layouts_list (Layout Builder, DIY, Table, List, DataTables, Map — with is_grid_aware flag), gv_widgets_list, gv_grid_row_types_list, gv_widget_zones_list (header/footer), gv_search_zones_list (search-general/search-advanced), gv_available_fields_get. Schema: gv_field_type_schema_get works for fields, widgets, AND search_field types (search_all, submit, search_mode, etc.) — kind in the response says which.\n\nMove semantics: gv_view_field_move accepts to.before_slot / to.after_slot for ref-relative placement (preferred) and position="start"|"end"|integer for symbolic. Concurrency: pass ifMatch="auto" to use the client-cached version. Compact: responses strip null/empty by default — pass compact=false for raw.\n\nGravity Forms specifics: checkbox/multiselect arrays auto-normalized; multiselect values with commas get split by GF REST API; gf_submit_form_data runs the full pipeline (validation/notifications/feeds), gf_create_entry is raw import.'
   }
 );
 
@@ -50,20 +53,69 @@ const server = new Server(
 let gravityFormsClient = null;
 let fieldOperations = null;
 let fieldValidator = null;
+let wpClient = null;
+// Auto-generated from the WordPress Abilities API (Foundation catalog
+// first, WP core fallback). Populated by initializeClient(). This is
+// the ONLY source of gv_* tools — when no catalog is reachable (older
+// WP, plugin off), these stay null, gv_* tools are absent from
+// tools/list, and every gv_* call retries the load (self-healing).
+let abilityToolDefinitions = null;
+let abilityToolHandlers = null;
+// In-flight catalog fetch. Single-flight: concurrent callers share the
+// same promise. On rejection it's cleared so a later call retries —
+// covers transient cert / network / WP-not-yet-booted failures without
+// requiring an MCP process restart. Retries are bounded by a cooldown
+// so Foundation-less sites (gf_* only) don't pay two failed requests
+// on every tools/list forever; gk_reload_abilities bypasses it.
+let abilitiesLoadPromise = null;
+let abilitiesFailedAt = 0;
+const ABILITIES_RETRY_COOLDOWN_MS = 60_000;
 
 /**
- * Initialize Gravity Forms client
+ * Initialize the two independent capability planes.
+ *
+ * Plane A — Gravity Forms: static gf_* tools over GF REST v2. Works on
+ * any Gravity Forms site; requires only GRAVITY_FORMS_* credentials.
+ *
+ * Plane B — GravityKit abilities: dynamic tools from the Foundation
+ * catalog (all GravityKit products) with WP-core fallback. Requires a
+ * WordPress app password (or the GF credential fallback) and lights up
+ * only when Foundation is active on the site.
+ *
+ * Each plane initializes independently and degrades independently —
+ * a GF-only site gets the full gf_* surface with no abilities, and a
+ * GravityKit site without GF REST keys still gets abilities. Failed
+ * planes retry on later calls, bounded by a cooldown.
+ *
+ * @throws when NEITHER plane has usable credentials.
  */
+const INIT_RETRY_COOLDOWN_MS = 60_000;
+let gfPlaneFailedAt = 0;
+let wpPlaneFailedAt = 0;
+
 async function initializeClient() {
+  // WP plane starts first (synchronous) so the GF REST probe can't gate it;
+  // runPlaneInit throws only when neither plane has usable credentials.
+  await runPlaneInit({
+    initGravityFormsPlane: initializeGravityFormsPlane,
+    initWordPressPlane: initializeWordPressPlane,
+  });
+  return true;
+}
+
+async function initializeGravityFormsPlane() {
+  if (gravityFormsClient) return true;
+  if (Date.now() - gfPlaneFailedAt < INIT_RETRY_COOLDOWN_MS) return false;
+
   try {
-    gravityFormsClient = new GravityFormsClient(process.env);
-    const validation = await gravityFormsClient.initialize();
+    const client = new GravityFormsClient(process.env);
+    const validation = await client.initialize();
 
     if (!validation.available) {
-      throw new Error(`Failed to initialize Gravity Forms client: ${validation.error}`);
+      throw new Error(validation.error);
     }
 
-    // Initialize field operations infrastructure
+    gravityFormsClient = client;
     fieldValidator = new FieldAwareValidator();
     fieldOperations = createFieldOperations(
       gravityFormsClient,
@@ -71,12 +123,97 @@ async function initializeClient() {
       fieldValidator
     );
 
-    logger.info('✅ GravityKit MCP initialized successfully');
-    logger.info('✅ Field operations infrastructure initialized');
+    logger.info('✅ Gravity Forms client initialized — gf_* tools available');
     return true;
-  } catch (error) {
-    logger.error(`❌ Failed to initialize: ${error.message}`);
-    throw error;
+  } catch (gfError) {
+    gfPlaneFailedAt = Date.now();
+    logger.warn(`⚠️  Gravity Forms client unavailable: ${gfError.message} — gf_* tools disabled (will retry)`);
+    return false;
+  }
+}
+
+function initializeWordPressPlane() {
+  if (wpClient) return true;
+  if (Date.now() - wpPlaneFailedAt < INIT_RETRY_COOLDOWN_MS) return false;
+
+  try {
+    // WordPress client — the authenticated transport to the WP root
+    // (Foundation catalog + WP core Abilities API). Credentials and
+    // base URL are resolved independently of the GF REST endpoint,
+    // with fallback to GRAVITY_FORMS_* so single-WP-install setups
+    // don't need to mint two separate credentials.
+    wpClient = new WordPressClient(process.env);
+    logger.info('✅ WordPress client initialized — loading GravityKit abilities');
+
+    // Fire-and-forget: kick off the abilities catalog fetch in the
+    // background so MCP startup is fast. ListTools awaits up to 2s
+    // for it; per-call self-heal and gk_reload_abilities retry later.
+    ensureAbilitiesLoaded();
+    return true;
+  } catch (wpError) {
+    wpPlaneFailedAt = Date.now();
+    wpClient = null;
+    logger.warn(`⚠️  WordPress client unavailable: ${wpError.message} — abilities tools disabled (will retry)`);
+    return false;
+  }
+}
+
+/**
+ * Idempotent + self-healing loader for the WordPress Abilities API
+ * catalog. Single-flight (concurrent callers share a promise), with
+ * a per-call optional timeout (used by ListTools so a slow / down WP
+ * doesn't hang the tool list at startup). On rejection the cached
+ * promise is cleared so the NEXT call retries — sleep/wake, cert
+ * mid-fix, valet still booting all self-heal on the next gv_* call.
+ *
+ * Side effects on success:
+ *   - populates `abilityToolDefinitions` + `abilityToolHandlers`
+ *   - emits `notifications/tools/list_changed` so MCP clients refetch
+ *
+ * @param {Object}   [opts]
+ * @param {boolean}  [opts.force]      Discard cached state and reload.
+ * @param {number}   [opts.timeoutMs]  Cap the await; the load itself
+ *                                     keeps running in the background
+ *                                     after the timeout fires.
+ */
+async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
+  if (!wpClient) return;
+  if (force) {
+    abilityToolDefinitions = null;
+    abilityToolHandlers = null;
+    abilitiesLoadPromise = null;
+    abilitiesFailedAt = 0;
+  }
+  if (abilityToolDefinitions) return;
+  if (!abilitiesLoadPromise && Date.now() - abilitiesFailedAt < ABILITIES_RETRY_COOLDOWN_MS) return;
+  if (!abilitiesLoadPromise) {
+    abilitiesLoadPromise = loadAbilitiesAsTools(wpClient, { reservedNames: RESERVED_TOOL_NAMES })
+      .then(({ definitions, handlers, count, source }) => {
+        abilityToolDefinitions = definitions;
+        abilityToolHandlers = handlers;
+        const sourceLabel = source === 'foundation-catalog' ? 'gravitykit/v1 catalog' : '/wp-abilities/v1';
+        logger.info(`✅ Loaded ${count} GravityKit abilities from ${sourceLabel}`);
+        // Tell connected MCP clients to refetch the tool list so the
+        // freshly loaded ability tools and their schemas land in the
+        // client's cached catalogue.
+        server.sendToolListChanged().catch((err) => {
+          logger.warn(`tools/list_changed notification failed: ${err.message}`);
+        });
+      })
+      .catch((err) => {
+        logger.warn(`⚠️  Abilities API catalog unavailable: ${err.message} — abilities tools unavailable until a catalog is reachable (next retry after cooldown, or gk_reload_abilities)`);
+        abilitiesFailedAt = Date.now();
+        abilitiesLoadPromise = null; // clear so a later call retries
+        throw err;
+      });
+  }
+  if (timeoutMs) {
+    await Promise.race([
+      abilitiesLoadPromise.catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+  } else {
+    await abilitiesLoadPromise.catch(() => {});
   }
 }
 
@@ -130,418 +267,491 @@ function wrapHandler(handler, params = {}) {
   };
 }
 
+/**
+ * Variant of wrapHandler for gv_* tools. Differs in two ways:
+ *   - Checks wpClient (not gravityFormsClient).
+ *   - Surfaces the inspector REST envelope (`{ code, message, data }`)
+ *     so the agent sees `gv_rest_invalid_template` etc. instead of a
+ *     generic "Request failed with status code 400". The inspector's
+ *     errors are designed for AI consumption — preserve them.
+ */
+function wrapViewHandler(handler, params = {}) {
+  return async () => {
+    if (!wpClient) {
+      return createErrorResponse('GravityView client not initialized');
+    }
+    try {
+      const result = await handler();
+      const output = params.compact !== false ? stripEmpty(result) : result;
+      return {
+        content: [{ type: 'text', text: JSON.stringify(output) }],
+      };
+    } catch (error) {
+      // Axios errors carry response.data — when the server speaks
+      // the inspector REST envelope, that's the most useful payload.
+      const restBody = error?.response?.data;
+      const status = error?.response?.status;
+      const message = restBody?.message || error.message;
+      const details = restBody
+        ? { status, code: restBody.code, data: restBody.data }
+        : undefined;
+      logger.error(`gv_* tool error: ${message}${status ? ` (HTTP ${status})` : ''}`);
+      return createErrorResponse(message, details);
+    }
+  };
+}
+
 // =================================
 // FORMS MANAGEMENT TOOLS (6)
 // =================================
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      // Forms Management (6 tools)
-      {
-        name: 'gf_list_forms',
-        description: 'List all forms with optional search and pagination.',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            include: {
-              type: 'array',
-              items: { type: 'number' },
-              description: 'Form IDs to include'
-            },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
-          }
-        }
+// Static Gravity Forms tool definitions (Plane A — works on any GF site,
+// no Foundation required). These names are the released contract; the
+// abilities loader treats them as reserved so a future catalog-served
+// gk-gravity-forms ability can never shadow them.
+const GF_TOOL_DEFINITIONS = [
+  // Forms Management (6 tools)
+  {
+    name: 'gf_list_forms',
+    description: 'List all forms with optional search and pagination.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        include: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Form IDs to include'
+        },
+        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+      }
+    }
+  },
+  {
+    name: 'gf_get_form',
+    description: 'Get a form by ID with full field configuration.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Form ID' },
+        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       },
-      {
-        name: 'gf_get_form',
-        description: 'Get a form by ID with full field configuration.',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Form ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
-          },
-          required: ['id']
-        }
+      required: ['id']
+    }
+  },
+  {
+    name: 'gf_create_form',
+    description: 'Create a new form',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Form title' },
+        description: { type: 'string', description: 'Form description' },
+        fields: {
+          type: 'array',
+          description: 'Array of field objects',
+          items: { type: 'object' }
+        },
+        button: { type: 'object', description: 'Submit button settings' },
+        confirmations: { type: 'object', description: 'Confirmation settings' },
+        notifications: { type: 'object', description: 'Notification settings' },
+        is_active: { type: 'boolean', description: 'Form active state' }
       },
-      {
-        name: 'gf_create_form',
-        description: 'Create a new form',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            title: { type: 'string', description: 'Form title' },
-            description: { type: 'string', description: 'Form description' },
-            fields: {
-              type: 'array',
-              description: 'Array of field objects',
-              items: { type: 'object' }
-            },
-            button: { type: 'object', description: 'Submit button settings' },
-            confirmations: { type: 'object', description: 'Confirmation settings' },
-            notifications: { type: 'object', description: 'Notification settings' },
-            is_active: { type: 'boolean', description: 'Form active state' }
-          },
-          required: ['title']
-        }
+      required: ['title']
+    }
+  },
+  {
+    name: 'gf_update_form',
+    description: 'Update a form',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Form ID' },
+        title: { type: 'string', description: 'Form title' },
+        description: { type: 'string', description: 'Form description' },
+        fields: {
+          type: 'array',
+          description: 'Array of field objects',
+          items: { type: 'object' }
+        },
+        button: { type: 'object', description: 'Submit button settings' },
+        confirmations: { type: 'object', description: 'Confirmation settings' },
+        notifications: { type: 'object', description: 'Notification settings' },
+        is_active: { type: 'boolean', description: 'Form active state' }
       },
-      {
-        name: 'gf_update_form',
-        description: 'Update a form',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Form ID' },
-            title: { type: 'string', description: 'Form title' },
-            description: { type: 'string', description: 'Form description' },
-            fields: {
-              type: 'array',
-              description: 'Array of field objects',
-              items: { type: 'object' }
-            },
-            button: { type: 'object', description: 'Submit button settings' },
-            confirmations: { type: 'object', description: 'Confirmation settings' },
-            notifications: { type: 'object', description: 'Notification settings' },
-            is_active: { type: 'boolean', description: 'Form active state' }
-          },
-          required: ['id']
-        }
+      required: ['id']
+    }
+  },
+  {
+    name: 'gf_delete_form',
+    description: 'Delete a form (requires ALLOW_DELETE=true)',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Form ID' },
+        force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
       },
-      {
-        name: 'gf_delete_form',
-        description: 'Delete a form (requires ALLOW_DELETE=true)',
-        annotations: { destructiveHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Form ID' },
-            force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
-          },
-          required: ['id']
-        }
+      required: ['id']
+    }
+  },
+  {
+    name: 'gf_validate_form',
+    description: 'Validate form data',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        form_id: { type: 'number', description: 'Form ID' }
       },
-      {
-        name: 'gf_validate_form',
-        description: 'Validate form data',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            form_id: { type: 'number', description: 'Form ID' }
-          },
-          additionalProperties: true,
-          required: ['form_id']
-        }
-      },
+      additionalProperties: true,
+      required: ['form_id']
+    }
+  },
 
-      // Entries Management (5 tools)
-      {
-        name: 'gf_list_entries',
-        description: 'List/search entries with filtering, sorting, and pagination.',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
+  // Entries Management (5 tools)
+  {
+    name: 'gf_list_entries',
+    description: 'List/search entries with filtering, sorting, and pagination.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        form_ids: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Filter by form IDs'
+        },
+        include: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Entry IDs to include'
+        },
+        exclude: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Entry IDs to exclude'
+        },
+        status: {
+          type: 'string',
+          enum: ['active', 'spam', 'trash'],
+          description: 'Entry status'
+        },
+        search: {
           type: 'object',
           properties: {
-            form_ids: {
+            field_filters: {
               type: 'array',
-              items: { type: 'number' },
-              description: 'Filter by form IDs'
-            },
-            include: {
-              type: 'array',
-              items: { type: 'number' },
-              description: 'Entry IDs to include'
-            },
-            exclude: {
-              type: 'array',
-              items: { type: 'number' },
-              description: 'Entry IDs to exclude'
-            },
-            status: {
-              type: 'string',
-              enum: ['active', 'spam', 'trash'],
-              description: 'Entry status'
-            },
-            search: {
-              type: 'object',
-              properties: {
-                field_filters: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      key: { type: 'string' },
-                      value: { type: 'string' },
-                      operator: {
-                        type: 'string',
-                        enum: ['=', 'IS', 'CONTAINS', 'IS NOT', 'ISNOT', '<>', 'LIKE', 'NOT IN', 'NOTIN', 'IN', '>', '<', '>=', '<=']
-                      }
-                    }
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  value: { type: 'string' },
+                  operator: {
+                    type: 'string',
+                    enum: ['=', 'IS', 'CONTAINS', 'IS NOT', 'ISNOT', '<>', 'LIKE', 'NOT IN', 'NOTIN', 'IN', '>', '<', '>=', '<=']
                   }
-                },
-                mode: {
-                  type: 'string',
-                  enum: ['any', 'all'],
-                  description: 'Search mode'
                 }
               }
             },
-            sorting: {
-              type: 'object',
-              properties: {
-                key: { type: 'string' },
-                direction: {
-                  type: 'string',
-                  enum: ['asc', 'desc', 'ASC', 'DESC']
-                }
-              }
-            },
-            paging: {
-              type: 'object',
-              properties: {
-                page_size: { type: 'number' },
-                current_page: { type: 'number' }
-              }
-            },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
-          }
-        }
-      },
-      {
-        name: 'gf_get_entry',
-        description: 'Get an entry by ID with field labels.',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Entry ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
-          },
-          required: ['id']
-        }
-      },
-      {
-        name: 'gf_create_entry',
-        description: 'Create an entry. Checkbox/multiselect arrays auto-normalized.',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            form_id: { type: 'number', description: 'Form ID' },
-            created_by: { type: 'number', description: 'Creator user ID' },
-            status: {
+            mode: {
               type: 'string',
-              enum: ['active', 'spam', 'trash'],
-              description: 'Entry status'
-            },
-            date_created: { type: 'string', description: 'ISO date' }
-          },
-          additionalProperties: true,
-          required: ['form_id']
-        }
-      },
-      {
-        name: 'gf_update_entry',
-        description: 'Update an entry. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Entry ID' },
-            status: {
-              type: 'string',
-              enum: ['active', 'spam', 'trash'],
-              description: 'Entry status'
+              enum: ['any', 'all'],
+              description: 'Search mode'
             }
-          },
-          additionalProperties: true,
-          required: ['id']
-        }
-      },
-      {
-        name: 'gf_delete_entry',
-        description: 'Delete an entry (requires ALLOW_DELETE=true)',
-        annotations: { destructiveHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Entry ID' },
-            force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
-          },
-          required: ['id']
-        }
-      },
-
-      // Form Submissions (2 tools)
-      {
-        name: 'gf_submit_form_data',
-        description: 'Submit form data (triggers notifications, confirmations, payment)',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            form_id: { type: 'number', description: 'Form ID' },
-            field_values: { type: 'object', description: 'Field values' }
-          },
-          additionalProperties: true,
-          required: ['form_id']
-        }
-      },
-      {
-        name: 'gf_validate_submission',
-        description: 'Validate submission without processing',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            form_id: { type: 'number', description: 'Form ID' }
-          },
-          additionalProperties: true,
-          required: ['form_id']
-        }
-      },
-
-      // Notifications (1 tool)
-      {
-        name: 'gf_send_notifications',
-        description: 'Send notifications for entry',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            entry_id: { type: 'number', description: 'Entry ID' },
-            notification_ids: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Notification IDs to send'
-            }
-          },
-          required: ['entry_id']
-        }
-      },
-
-      // Add-on Feeds (7 tools)
-      {
-        name: 'gf_list_feeds',
-        description: 'List feeds. Filter by form_id and/or addon slug.',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            addon: { type: 'string', description: 'Addon slug' },
-            form_id: { type: 'number', description: 'Form ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
           }
-        }
-      },
-      {
-        name: 'gf_get_feed',
-        description: 'Get a feed by ID.',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
+        },
+        sorting: {
           type: 'object',
           properties: {
-            id: { type: 'number', description: 'Feed ID' },
-            compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
-          },
-          required: ['id']
-        }
-      },
-      // gf_list_form_feeds removed — gf_list_feeds with form_id does the same thing
-      // and also supports addon filtering. Kept listFormFeeds() client method for
-      // backwards compatibility but no longer exposed as a tool.
-      {
-        name: 'gf_create_feed',
-        description: 'Create a feed',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
+            key: { type: 'string' },
+            direction: {
+              type: 'string',
+              enum: ['asc', 'desc', 'ASC', 'DESC']
+            }
+          }
+        },
+        paging: {
           type: 'object',
           properties: {
-            addon_slug: { type: 'string', description: 'Add-on slug' },
-            form_id: { type: 'number', description: 'Form ID' },
-            is_active: { type: 'boolean', description: 'Feed active state' },
-            meta: { type: 'object', description: 'Feed config' }
-          },
-          required: ['addon_slug', 'form_id', 'meta']
+            page_size: { type: 'number' },
+            current_page: { type: 'number' }
+          }
+        },
+        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+      }
+    }
+  },
+  {
+    name: 'gf_get_entry',
+    description: 'Get an entry by ID with field labels.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Entry ID' },
+        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'gf_create_entry',
+    description: 'Create an entry. Checkbox/multiselect arrays auto-normalized.',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        form_id: { type: 'number', description: 'Form ID' },
+        created_by: { type: 'number', description: 'Creator user ID' },
+        status: {
+          type: 'string',
+          enum: ['active', 'spam', 'trash'],
+          description: 'Entry status'
+        },
+        date_created: { type: 'string', description: 'ISO date' }
+      },
+      additionalProperties: true,
+      required: ['form_id']
+    }
+  },
+  {
+    name: 'gf_update_entry',
+    description: 'Update an entry. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Entry ID' },
+        status: {
+          type: 'string',
+          enum: ['active', 'spam', 'trash'],
+          description: 'Entry status'
         }
       },
-      {
-        name: 'gf_update_feed',
-        description: 'Update a feed (full replace)',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Feed ID' },
-            is_active: { type: 'boolean', description: 'Feed active state' },
-            meta: { type: 'object', description: 'Feed config' }
-          },
-          required: ['id']
-        }
+      additionalProperties: true,
+      required: ['id']
+    }
+  },
+  {
+    name: 'gf_delete_entry',
+    description: 'Delete an entry (requires ALLOW_DELETE=true)',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Entry ID' },
+        force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
       },
-      {
-        name: 'gf_patch_feed',
-        description: 'Patch a feed (partial update)',
-        annotations: { idempotentHint: false, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Feed ID' },
-            is_active: { type: 'boolean', description: 'Feed active state' },
-            meta: { type: 'object', description: 'Feed config' }
-          },
-          required: ['id']
-        }
-      },
-      {
-        name: 'gf_delete_feed',
-        description: 'Delete a feed (requires ALLOW_DELETE=true)',
-        annotations: { destructiveHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            id: { type: 'number', description: 'Feed ID' }
-          },
-          required: ['id']
-        }
-      },
+      required: ['id']
+    }
+  },
 
-      // Field Filters (1 tool)
-      {
-        name: 'gf_get_field_filters',
-        description: 'Get field filters for form',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            form_id: { type: 'number', description: 'Form ID' }
-          },
-          required: ['form_id']
+  // Form Submissions (2 tools)
+  {
+    name: 'gf_submit_form_data',
+    description: 'Submit form data (triggers notifications, confirmations, payment)',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        form_id: { type: 'number', description: 'Form ID' },
+        field_values: { type: 'object', description: 'Field values' }
+      },
+      additionalProperties: true,
+      required: ['form_id']
+    }
+  },
+  {
+    name: 'gf_validate_submission',
+    description: 'Validate submission without processing',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        form_id: { type: 'number', description: 'Form ID' }
+      },
+      additionalProperties: true,
+      required: ['form_id']
+    }
+  },
+
+  // Notifications (1 tool)
+  {
+    name: 'gf_send_notifications',
+    description: 'Send notifications for entry',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        entry_id: { type: 'number', description: 'Entry ID' },
+        notification_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Notification IDs to send'
         }
       },
+      required: ['entry_id']
+    }
+  },
 
-      // Results (1 tool)
-      {
-        name: 'gf_get_results',
-        description: 'Get quiz/poll/survey results',
-        annotations: { readOnlyHint: true, openWorldHint: true },
-        inputSchema: {
-          type: 'object',
-          properties: {
-            form_id: { type: 'number', description: 'Form ID' }
-          },
-          required: ['form_id']
-        }
+  // Add-on Feeds (7 tools)
+  {
+    name: 'gf_list_feeds',
+    description: 'List feeds. Filter by form_id and/or addon slug.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        addon: { type: 'string', description: 'Addon slug' },
+        form_id: { type: 'number', description: 'Form ID' },
+        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+      }
+    }
+  },
+  {
+    name: 'gf_get_feed',
+    description: 'Get a feed by ID.',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Feed ID' },
+        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       },
+      required: ['id']
+    }
+  },
+  // gf_list_form_feeds removed — gf_list_feeds with form_id does the same thing
+  // and also supports addon filtering. Kept listFormFeeds() client method for
+  // backwards compatibility but no longer exposed as a tool.
+  {
+    name: 'gf_create_feed',
+    description: 'Create a feed',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        addon_slug: { type: 'string', description: 'Add-on slug' },
+        form_id: { type: 'number', description: 'Form ID' },
+        is_active: { type: 'boolean', description: 'Feed active state' },
+        meta: { type: 'object', description: 'Feed config' }
+      },
+      required: ['addon_slug', 'form_id', 'meta']
+    }
+  },
+  {
+    name: 'gf_update_feed',
+    description: 'Update a feed (full replace)',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Feed ID' },
+        is_active: { type: 'boolean', description: 'Feed active state' },
+        meta: { type: 'object', description: 'Feed config' }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'gf_patch_feed',
+    description: 'Patch a feed (partial update)',
+    annotations: { idempotentHint: false, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Feed ID' },
+        is_active: { type: 'boolean', description: 'Feed active state' },
+        meta: { type: 'object', description: 'Feed config' }
+      },
+      required: ['id']
+    }
+  },
+  {
+    name: 'gf_delete_feed',
+    description: 'Delete a feed (requires ALLOW_DELETE=true)',
+    annotations: { destructiveHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: 'Feed ID' }
+      },
+      required: ['id']
+    }
+  },
 
-      // Field Operations (4 tools) - Intelligent field management
-      ...fieldOperationTools
-    ]
+  // Field Filters (1 tool)
+  {
+    name: 'gf_get_field_filters',
+    description: 'Get field filters for form',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        form_id: { type: 'number', description: 'Form ID' }
+      },
+      required: ['form_id']
+    }
+  },
+
+  // Results (1 tool)
+  {
+    name: 'gf_get_results',
+    description: 'Get quiz/poll/survey results',
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        form_id: { type: 'number', description: 'Form ID' }
+      },
+      required: ['form_id']
+    }
+  },
+];
+
+// Tool names the dynamic abilities pipeline must never claim.
+const RESERVED_TOOL_NAMES = new Set([
+  ...GF_TOOL_DEFINITIONS.map((tool) => tool.name),
+  ...fieldOperationTools.map((tool) => tool.name),
+  'gk_reload_abilities',
+]);
+
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  // ListTools is the FIRST request Claude fires after the MCP
+  // handshake, so we lazily initialise here too — otherwise the
+  // tool list goes out before initializeClient() has had a chance
+  // to construct the GravityView client + start the abilities load.
+  if (!gravityFormsClient || !wpClient) {
+    try { await initializeClient(); } catch (_) { /* serve whatever planes are up */ }
+  }
+  // Best-effort wait for the abilities catalog. 2s covers a warm
+  // cold-start on dev.test (~800ms) plus headroom; if WP is
+  // genuinely unreachable the list ships without gv_* tools and the
+  // next gv_* call (or gk_reload_abilities) retries.
+  await ensureAbilitiesLoaded({ timeoutMs: 2000 });
+
+  // Gravity Forms tools are advertised only when that plane is live, so a
+  // WP-only install never lists gf_* tools that can't run. gk_reload_abilities
+  // is always present (the manual escape hatch after fixing a WP/cert issue);
+  // ability tools appear once the background catalog load succeeds.
+  const gkReloadDef = {
+    name: 'gk_reload_abilities',
+    description: 'Force a re-fetch of the WordPress Abilities API catalog and refresh the GravityKit product tool list. Use after fixing a WP / network / cert issue that prevented the eager background load from succeeding at MCP startup.',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }
+  };
+  return {
+    tools: buildToolList({
+      gfReady: !!gravityFormsClient,
+      gfToolDefs: GF_TOOL_DEFINITIONS,
+      fieldOpTools: fieldOperationTools,
+      abilityDefs: abilityToolDefinitions,
+      gkReloadDef,
+    })
   };
 });
 
@@ -553,8 +763,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: params } = request.params;
 
-  // Ensure client is initialized
-  if (!gravityFormsClient) {
+  // Ensure capability planes are initialized. Per-plane failures
+  // surface as per-tool error responses below; throw only when
+  // neither plane has usable credentials.
+  if (!gravityFormsClient || !wpClient) {
     await initializeClient();
   }
 
@@ -659,8 +871,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await fieldOperationHandlers.gf_list_field_types(params, fieldOperations);
       }, params)();
 
+    // GravityView Inspector — every gv_* tool routes through the
+    // abilities-derived handler map. Single dispatch keeps the switch
+    // readable; the map is rebuilt whenever the abilities catalog is
+    // (re)fetched.
     default:
-      return createErrorResponse(`Unknown tool: ${name}`);
+      if (name === 'gk_reload_abilities') {
+        if (!wpClient) {
+          return createErrorResponse(
+            'WordPress client not initialized. Set GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD in .env (or reuse the GRAVITY_FORMS_* credentials).'
+          );
+        }
+        const before = abilityToolDefinitions?.length ?? 0;
+        await ensureAbilitiesLoaded({ force: true });
+        const after = abilityToolDefinitions?.length ?? 0;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              loaded: !!abilityToolDefinitions,
+              ability_tool_count: after,
+              previous_count: before,
+              note: abilityToolDefinitions
+                ? 'Catalog refreshed. Clients receive `notifications/tools/list_changed` automatically.'
+                : 'Catalog still unreachable — check WP logs / cert / credentials. Will retry on next gv_* tool call.',
+            }, null, 2),
+          }],
+        };
+      }
+      // Any other name is a dynamic GravityKit ability tool (any product
+      // prefix — gv_, gc_, …) or genuinely unknown. Self-heal the catalog
+      // when the WP plane is up, then route by handler-map membership so
+      // every product's tools dispatch, not just GravityView's.
+      if (wpClient) {
+        await ensureAbilitiesLoaded();
+      }
+      switch (classifyAbilityCall({ name, hasWpClient: !!wpClient, handlers: abilityToolHandlers })) {
+        case 'dispatch':
+          return wrapViewHandler(() => abilityToolHandlers[name](params), params)();
+        case 'no-wp-client':
+          return createErrorResponse(
+            'WordPress client not initialized. Set GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD in .env (or reuse GRAVITY_FORMS_BASE_URL / GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET when the same WP install hosts both surfaces).'
+          );
+        case 'catalog-unreachable':
+          return createErrorResponse(
+            'GravityKit abilities catalog unreachable — no product tools are available. Fix WP connectivity / credentials, then call gk_reload_abilities to refresh.'
+          );
+        default:
+          return createErrorResponse(`Unknown tool: ${name}`);
+      }
   }
 });
 
@@ -670,10 +929,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function main() {
   try {
-    // Initialize client on startup
-    await initializeClient();
-
-    // Create stdio transport
+    // Create stdio transport — client initialization is deferred to first tool call
+    // so the MCP handshake completes instantly (live site validation can take 3+ seconds)
     const transport = new StdioServerTransport();
 
     // Connect server to transport

@@ -13,19 +13,25 @@
     "inspect": "npx @modelcontextprotocol/inspector node src/index.js",
     "check-env": "node scripts/check-env.js",
     "setup-test-data": "node scripts/setup-test-data.js",
-    "test": "node src/tests/integration.test.js",
-    "test:unit": "node src/tests/run.js",
-    "test:auth": "node src/tests/authentication.test.js",
-    "test:forms": "node src/tests/forms.test.js",
-    "test:entries": "node src/tests/entries.test.js",
-    "test:feeds": "node src/tests/feeds.test.js",
-    "test:submissions": "node src/tests/submissions.test.js",
-    "test:validation": "node src/tests/validation.test.js",
-    "test:field-validation": "node src/tests/field-validation.test.js",
-    "test:tools": "node src/tests/server-tools.test.js",
-    "test:compact": "node src/tests/compact.test.js",
-    "test:all": "npm run test:unit && npm run test:auth && npm run test:forms && npm run test:entries && npm run test:feeds && npm run test:submissions && npm run test:validation && npm run test:field-validation && npm run test:tools && npm test",
-    "test:coverage": "echo 'Running all tests with coverage analysis' && npm run test:all"
+    "verify:tool-names": "node scripts/verify-tool-names.mjs",
+    "test": "node test/integration.test.js",
+    "test:unit": "node test/run.js",
+    "test:node": "node --test test/field-manager.test.js test/field-registry.test.js test/field-dependencies.test.js test/field-positioner.test.js test/helpers.test.js test/ability-catalog.test.js test/user-agent.test.js test/wp-client.test.js test/server-runtime.test.js",
+    "test:auth": "node test/authentication.test.js",
+    "test:forms": "node test/forms.test.js",
+    "test:entries": "node test/entries.test.js",
+    "test:feeds": "node test/feeds.test.js",
+    "test:submissions": "node test/submissions.test.js",
+    "test:validation": "node test/validation.test.js",
+    "test:field-validation": "node test/field-validation.test.js",
+    "test:tools": "node test/server-tools.test.js",
+    "test:compact": "node test/compact.test.js",
+    "test:views": "node test/views.test.js",
+    "test:all": "npm run test:unit && npm run test:node && npm run test:auth && npm run test:forms && npm run test:entries && npm run test:feeds && npm run test:submissions && npm run test:validation && npm run test:field-validation && npm run test:tools && npm run test:views && npm test",
+    "test:coverage": "echo 'Running all tests with coverage analysis' && npm run test:all",
+    "lint:package": "publint",
+    "lint:docs": "node scripts/check-docs.mjs",
+    "prepublishOnly": "npm run test:unit && npm run test:node && npm run test:field-validation && npm run test:views && npm run lint:package && npm run lint:docs"
   },
   "keywords": [
     "mcp",
@@ -49,12 +55,12 @@
   },
   "files": [
     "src/",
-    "scripts/",
-    "LICENSE",
-    "README.md",
-    ".env.example",
     "mcp.json",
-    "CLAUDE.md"
+    ".env.example",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md",
+    "AGENTS.md"
   ],
   "repository": {
     "type": "git",
@@ -93,5 +99,8 @@
       "Integration testing",
       "Security validation"
     ]
+  },
+  "devDependencies": {
+    "publint": "^0.3.21"
   }
 }

@@ -6,13 +6,14 @@
 
 import axios from 'axios';
 import https from 'https';
-import { AuthManager, validateRestApiAccess } from './config/auth.js';
+import { AuthManager, validateRestApiAccess, flattenParams, rfc3986Encode } from './config/auth.js';
 import { ValidationFactory } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
 import { generateCompoundInputs } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
+import { USER_AGENT } from './version.js';
 
 export class GravityFormsClient {
   constructor(config) {
@@ -25,13 +26,24 @@ export class GravityFormsClient {
       baseURL: this.baseURL,
       timeout: parseInt(config.GRAVITY_FORMS_TIMEOUT) || 30000,
       headers: {
-        'User-Agent': 'GravityKit-MCP/2.1.0',
+        'User-Agent': USER_AGENT,
         'Accept': 'application/json'
       },
+      // Serialize query params as explicit bracket-index pairs
+      // (include[0]=3, paging[page_size]=2) — the exact pairs
+      // flattenParams() feeds the OAuth signature, so the signed
+      // string and the wire string can never diverge. PHP parses
+      // either bracket style identically, so Basic-auth requests
+      // are unaffected.
+      paramsSerializer: {
+        serialize: (params) => flattenParams(params)
+          .map(([key, value]) => `${rfc3986Encode(key)}=${rfc3986Encode(value)}`)
+          .join('&'),
+      },
       // Allow self-signed certificates for local development
-      // Set MCP_ALLOW_SELF_SIGNED_CERTS=true in .env for local dev environments
+      // Set GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true in .env for local dev environments
       httpsAgent: new https.Agent({
-        rejectUnauthorized: config.MCP_ALLOW_SELF_SIGNED_CERTS !== 'true'
+        rejectUnauthorized: (config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS || config.MCP_ALLOW_SELF_SIGNED_CERTS) !== 'true'
       })
     });
 
@@ -642,8 +654,15 @@ export class GravityFormsClient {
     return this.validateAndCall('gf_list_feeds', params, async (validated) => {
       const response = await this.httpClient.get('/feeds', { params: validated });
 
+      // Gravity Forms signals "zero feeds" as a serialized WP_Error with
+      // HTTP 200 (not_found = none match; missing_table = no feed add-on has
+      // ever run). Normalize any HTTP-200 WP_Error to [] so callers always
+      // get an array; real failures arrive as non-200 and throw before here.
+      const data = response.data;
+      const isEmptyWpError = data && !Array.isArray(data) && !!data.errors;
+
       return {
-        feeds: response.data
+        feeds: isEmptyWpError ? [] : data
       };
     });
   }

@@ -8,11 +8,12 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 
 ## Features
 
-- **Comprehensive API Coverage**: Gravity Forms API endpoints
+- **Full Gravity Forms Coverage**: 26 tools across forms, entries, feeds, notifications, submissions, and field management
 - **Smart Field Management**: Intelligent field operations with dependency tracking
 - **Advanced Search**: Complex filtering and searching capabilities for entries
 - **Form Submissions**: Full submission workflow with validation
 - **Add-on Integration**: Manage feeds for MailChimp, Stripe, PayPal, and more
+- **GravityKit Products**: dynamic tools auto-generated from the site's Foundation abilities catalog — each add-on under its own prefix (GravityView's View authoring is first, using `gv_*`)
 - **Type-Safe**: Comprehensive validation for all operations
 - **Battle-Tested**: Extensive test suite with real-world scenarios
 
@@ -21,60 +22,50 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 ### Prerequisites
 - Node.js 18+
 - WordPress with Gravity Forms 2.5+
-- HTTPS-enabled WordPress site (required for authentication)
+- WordPress site over HTTPS (recommended) — local `http://` dev sites (localhost, `*.test`, `*.local`) work too
 
 ### Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/GravityKit/MCP.git
-   cd MCP
-   npm install
-   ```
+No clone or `npm install` needed — `npx` runs the published package on demand. (To run from a local checkout for development, see [Contributing](#contributing).)
 
-2. **Set up environment**
-   ```bash
-   cp .env.example .env
-   ```
+1. **Enable the Gravity Forms REST API** (one-time, required for any credential type):
+   - Go to **Forms → Settings → REST API** and check **Enable access to the API** — Gravity Forms doesn't register its REST routes without it.
 
-3. **Configure credentials** in `.env`:
-   ```env
-   GRAVITY_FORMS_CONSUMER_KEY=your_key_here
-   GRAVITY_FORMS_CONSUMER_SECRET=your_secret_here
-   GRAVITY_FORMS_BASE_URL=https://yoursite.com
-   ```
+2. **Create credentials** in WordPress (pick one):
 
-   **For local development** (Laravel Valet, MAMP, etc.):
-   ```env
-   # Add this line if using self-signed certificates
-   MCP_ALLOW_SELF_SIGNED_CERTS=true
-   ```
+   **Application password (recommended):**
+   - Go to **Users → Profile → Application Passwords**
+   - Name it (e.g. `GravityKit MCP`) and click **Add New Application Password**
+   - Copy the generated password. Your username + this password are your credentials, and access follows your WordPress capabilities. On sites running GravityKit Foundation, the same credential also powers the GravityKit product tools.
 
-4. **Generate API credentials** in WordPress:
-   - Go to **Forms → Settings → REST API**
-   - Click **Add Key**
-   - Save the Consumer Key and Secret
+   **Gravity Forms API key (for scoped access, e.g. a read-only key):**
+   - On the same **Forms → Settings → REST API** screen, click **Add Key**
+   - Choose the user and permission level, then save the Consumer Key (`ck_…`) and Secret (`cs_…`)
 
-5. **Add to Claude Desktop**
-
-   Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+3. **Add to your MCP client.** For Claude Desktop, edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
    ```json
    {
      "mcpServers": {
        "gravitykit-mcp": {
-         "command": "node",
-         "args": ["/path/to/MCP/src/index.js"],
+         "command": "npx",
+         "args": ["-y", "@gravitykit/mcp"],
          "env": {
-           "GRAVITY_FORMS_CONSUMER_KEY": "your_key",
-           "GRAVITY_FORMS_CONSUMER_SECRET": "your_secret",
-           "GRAVITY_FORMS_BASE_URL": "https://yoursite.com"
+           "GRAVITY_FORMS_BASE_URL": "https://yoursite.com",
+           "GRAVITY_FORMS_CONSUMER_KEY": "your_wp_username",
+           "GRAVITY_FORMS_CONSUMER_SECRET": "xxxx xxxx xxxx xxxx xxxx xxxx"
          }
        }
      }
    }
    ```
+   Then restart Claude Desktop — `npx` fetches and runs `@gravitykit/mcp` on demand. Notes:
+   - Prefer a Gravity Forms key pair? Use `"GRAVITY_FORMS_CONSUMER_KEY": "ck_…"` and `"GRAVITY_FORMS_CONSUMER_SECRET": "cs_…"`.
+   - Local dev with self-signed certs: add `"GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS": "true"` to the `env` block.
+   - Pin a version with `@gravitykit/mcp@x.y.z` if you don't want `npx` tracking latest.
 
 ## Available Tools
+
+Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Gravity Forms credentials are valid — and **GravityKit** — dynamic tools generated from the Foundation catalog when it's active, where each add-on registers tools under its own prefix (GravityView uses `gv_*`). The `gk_reload_abilities` tool reloads the GravityKit catalog. The two planes are independent: a Gravity-Forms-only site lists just `gf_*`; a GravityKit site without Gravity Forms REST keys still lists its product tools.
 
 ### Forms (6 tools)
 - `gf_list_forms`    - List forms with filtering and pagination
@@ -101,14 +92,24 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 - `gf_submit_form_data`    - Submit forms with full processing
 - `gf_validate_submission` - Validate without submitting
 
-### Add-ons (7 tools)
+### Add-ons (6 tools)
 - `gf_list_feeds`       - List all add-on feeds
 - `gf_get_feed`         - Get specific feed configuration
-- `gf_list_form_feeds`  - List feeds for a specific form
 - `gf_create_feed`      - Create new add-on feeds
 - `gf_update_feed`      - Update existing feeds
 - `gf_patch_feed`       - Partially update feed properties
 - `gf_delete_feed`      - Delete add-on feeds
+
+### Notifications (1 tool)
+- `gf_send_notifications` - Send a form's notifications for an entry
+
+### Utilities (2 tools)
+- `gf_get_field_filters` - List the available field filters for a form
+- `gf_get_results`       - Get aggregated results for Quiz/Poll/Survey forms
+
+### GravityKit Products (dynamic)
+
+When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional tools are generated at runtime from its Abilities catalog — each GravityKit add-on under its own server-assigned prefix, so the exact set depends on the installed products and versions. **GravityView** is supported today, using the `gv_*` prefix: View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`), field/widget/search/grid editing, and discovery (`gv_layouts_list`, `gv_field_type_schema_get`, …). Use the `gv_*_list` discovery tools to see what's available on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
 
 ## Usage Examples
 
@@ -150,16 +151,42 @@ await mcp.call('gf_submit_form_data', {
 
 ## Configuration
 
+Set these as environment variables — in your MCP client's `env` block (the `npx` setup above) or in a `.env` file when running from a local clone.
+
 ### Required Environment Variables
-- `GRAVITY_FORMS_CONSUMER_KEY`    - API consumer key
-- `GRAVITY_FORMS_CONSUMER_SECRET` - API consumer secret
+- `GRAVITY_FORMS_CONSUMER_KEY`    - WordPress username (app-password setup) or GF consumer key (`ck_…`)
+- `GRAVITY_FORMS_CONSUMER_SECRET` - Application password or GF consumer secret (`cs_…`)
 - `GRAVITY_FORMS_BASE_URL`        - WordPress site URL
 
 ### Optional Settings
+- `GRAVITY_FORMS_AUTH_METHOD`          - Override auto-selection: `basic` or `oauth`/`oauth1` (normally leave unset)
+- `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false` - Allow Basic auth to a REMOTE plain-HTTP host (credentials visible to the network)
 - `GRAVITY_FORMS_ALLOW_DELETE=false`   - Enable delete operations
 - `GRAVITY_FORMS_TIMEOUT=30000`        - Request timeout (ms)
+- `GRAVITY_FORMS_MAX_RETRIES=3`        - Max retry attempts for failed requests
 - `GRAVITY_FORMS_DEBUG=false`          - Enable debug logging
-- `MCP_ALLOW_SELF_SIGNED_CERTS=false`  - Allow self-signed SSL certificates (local dev only)
+- `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false`  - Allow self-signed SSL certificates (local dev only)
+
+### GravityKit Product Tools
+
+The GravityKit product tools reach the same site over the WordPress REST Abilities API, so on a single install **no extra configuration is needed** — they reuse your `GRAVITY_FORMS_*` credentials (a WordPress username + application password). Override only if the WordPress root differs from the Gravity Forms URL, or to use a separate credential:
+
+- `GRAVITYKIT_WP_URL`          - WordPress site URL (defaults to `GRAVITY_FORMS_BASE_URL`)
+- `GRAVITYKIT_WP_USERNAME`     - WordPress username (defaults to `GRAVITY_FORMS_CONSUMER_KEY`)
+- `GRAVITYKIT_WP_APP_PASSWORD` - Application password (defaults to `GRAVITY_FORMS_CONSUMER_SECRET`)
+
+These tools appear only when GravityKit Foundation is active on the connected site. They authenticate with a WordPress application password over Basic auth, so — like the Gravity Forms plane — they refuse a remote plain-HTTP URL unless `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true` (HTTPS and local URLs are always fine).
+
+### Authentication Flow
+
+The client picks the right transport from the shape of your credentials — you normally don't configure anything:
+
+- **Application password** (username + app password) → **Basic Authentication** over HTTPS or any local URL (localhost, `*.test`, `*.local`). WordPress core authenticates the user; Gravity Forms enforces their capabilities.
+- **Gravity Forms key pair** (`ck_…`/`cs_…`) over HTTPS → **Basic Authentication**.
+- **Gravity Forms key pair** over plain HTTP → **OAuth 1.0a**, automatically — Gravity Forms only accepts key-pair Basic auth over HTTPS, so OAuth is the only transport that works there.
+- **Remote plain-HTTP host** → OAuth for key pairs; Basic requires the explicit `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true` opt-in and logs a warning.
+
+Set `GRAVITY_FORMS_AUTH_METHOD` only to override the auto-selection. Whatever the transport, access is limited to the WordPress user's capabilities (or the API key's permission level).
 
 ## Test Environment Configuration
 
@@ -242,15 +269,16 @@ The server includes multiple safety mechanisms to prevent accidental production 
 ## Testing
 
 ```bash
-# Run all tests
+# Run everything (offline suites + live integration)
 npm run test:all
 
-# Run specific test suites
-npm run test:forms
-npm run test:entries
-npm run test:field-operations
+# Offline suites
+npm run test:unit         # custom-runner unit tests
+npm run test:node         # node:test units (field ops, helpers, ability catalog, …)
+npm run test:views        # GravityView inspector / validator
+npm run test:forms        # per-endpoint suites: also test:entries, test:feeds, test:submissions, …
 
-# Run with live API (requires credentials)
+# Live integration (requires test credentials)
 npm test
 ```
 
@@ -270,12 +298,13 @@ npm test
 
 ### Local Development with Self-Signed Certificates
 
-If you're using a local development environment (Laravel Valet, MAMP, Local WP, etc.) with self-signed SSL certificates, you may encounter authentication errors. To fix this:
+If you're using a local development environment (Laravel Valet, MAMP, Local WP, etc.) with self-signed SSL certificates, you may encounter authentication errors. To fix this, set:
 
-Add to your `.env` file:
-```env
-MCP_ALLOW_SELF_SIGNED_CERTS=true
 ```
+GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true
+```
+
+in your MCP client's `env` block (`"GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS": "true"`), or in `.env` when running from a local clone.
 
 **⚠️ Security Warning**: Only disable SSL certificate verification for local development environments. Never use this setting in production!
 
@@ -283,7 +312,7 @@ MCP_ALLOW_SELF_SIGNED_CERTS=true
 - Confirm API keys are correct
 - Verify user has appropriate Gravity Forms capabilities
 - Check Forms → Settings → REST API for key status
-- For local development, ensure `MCP_ALLOW_SELF_SIGNED_CERTS=true` is set if using self-signed certificates
+- For local development, ensure `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true` is set if using self-signed certificates
 
 ### Debug Mode
 Enable detailed logging:
