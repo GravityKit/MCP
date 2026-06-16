@@ -618,6 +618,37 @@ export class FieldAwareValidator {
 
     return summary;
   }
+
+  /**
+   * Non-fatal warnings for a single field, surfaced by gf_add_field and
+   * gf_update_field. Never throws — returns an array of human-readable strings
+   * (empty when the field looks fine).
+   *
+   * @param {object} field A Gravity Forms field object.
+   * @returns {string[]}
+   */
+  getWarnings(field) {
+    const warnings = [];
+    if (!field || typeof field !== 'object') {
+      return warnings;
+    }
+
+    const id = field.id != null ? String(field.id) : '?';
+
+    const label = typeof field.label === 'string' ? field.label.trim() : '';
+    if (!label) {
+      warnings.push(`Field ${id} has no label.`);
+    }
+
+    // Choice-based fields should define choices.
+    const choiceTypes = ['select', 'multiselect', 'checkbox', 'radio'];
+    const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
+    if (choiceTypes.includes(field.type) && !hasChoices) {
+      warnings.push(`Field ${id} (${field.type}) has no choices defined.`);
+    }
+
+    return warnings;
+  }
 }
 
 export default FieldAwareValidator;

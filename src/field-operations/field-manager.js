@@ -9,6 +9,10 @@ export class FieldManager {
   constructor(apiClient, fieldRegistry, validator) {
     this.api = apiClient;
     this.registry = fieldRegistry;
+    // Required collaborator — always a FieldAwareValidator from
+    // createFieldOperations(). It must implement getWarnings(field); a missing
+    // method should fail loudly (and is covered by a test) rather than be
+    // silently swallowed.
     this.validator = validator;
     this.dependencyTracker = null; // Will be injected
     this.positionEngine = null;    // Will be injected
@@ -64,7 +68,7 @@ export class FieldManager {
     return {
       success: true,
       field: field,
-      warnings: this.validator?.getWarnings(field) || [],
+      warnings: this.validator.getWarnings(field),
       form_id: formId,
       position: { 
         index: insertIndex, 
@@ -111,7 +115,7 @@ export class FieldManager {
       warnings: {
         dependencies: dependencies.conditionalLogic?.length > 0 ? 
           ['Field has conditional logic dependencies'] : [],
-        validationIssues: this.validator?.getWarnings(result.form.fields[fieldIndex]) || []
+        validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex])
       }
     };
   }

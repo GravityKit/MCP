@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { FieldManager } from '../src/field-operations/field-manager.js';
+import FieldAwareValidator from '../src/config/field-validation.js';
 
 // Mock dependencies. Mirrors the GravityFormsClient contract FieldManager
 // actually consumes: getForm() resolves { form } and replaceForm() does a
@@ -387,5 +388,50 @@ test('FieldManager - normalizeLayoutProperties', async (t) => {
   await t.test('empty and missing layoutGroupId are left alone', () => {
     assert.strictEqual(manager.normalizeLayoutProperties({ layoutGroupId: '' }, 1).layoutGroupId, '');
     assert.strictEqual('layoutGroupId' in manager.normalizeLayoutProperties({}, 1), false);
+  });
+});
+
+// Regression: production injects `new FieldAwareValidator()`, which has no
+// getWarnings method — gf_add_field / gf_update_field threw
+// "this.validator?.getWarnings is not a function" on every call. The existing
+// suite missed it because its mock validator stubs getWarnings. These exercise
+// the REAL validator the server wires up.
+test('FieldManager - real FieldAwareValidator: add/update do not throw on getWarnings', async (t) => {
+  const apiClient = createMockApiClient();
+  const registry = createMockRegistry();
+  const manager = new FieldManager(apiClient, registry, new FieldAwareValidator());
+
+  await t.test('addField returns success and an array of warnings', async () => {
+    const result = await manager.addField(1, 'text', { label: 'New Field' });
+    assert.strictEqual(result.success, true);
+    assert.ok(Array.isArray(result.warnings));
+  });
+
+  await t.test('updateField returns success and array validationIssues', async () => {
+    const result = await manager.updateField(1, 1, { label: 'Renamed' });
+    assert.strictEqual(result.success, true);
+    assert.ok(Array.isArray(result.warnings.validationIssues));
+  });
+});
+
+test('FieldAwareValidator.getWarnings', async (t) => {
+  const v = new FieldAwareValidator();
+
+  await t.test('returns [] for a well-formed field', () => {
+    assert.deepStrictEqual(v.getWarnings({ id: 1, type: 'text', label: 'Name' }), []);
+  });
+
+  await t.test('warns when a field has no label', () => {
+    assert.ok(v.getWarnings({ id: 5, type: 'text', label: '' }).some((m) => /label/i.test(m)));
+  });
+
+  await t.test('warns when a choice field has no choices', () => {
+    assert.ok(v.getWarnings({ id: 6, type: 'select', label: 'Pick', choices: [] }).some((m) => /choice/i.test(m)));
+  });
+
+  await t.test('never throws on junk input', () => {
+    assert.deepStrictEqual(v.getWarnings(null), []);
+    assert.deepStrictEqual(v.getWarnings(undefined), []);
+    assert.deepStrictEqual(v.getWarnings('nope'), []);
   });
 });
