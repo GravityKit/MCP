@@ -65,7 +65,7 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
 
 ## Available Tools
 
-Two planes: **Gravity Forms** (`gf_*`) — 26 tools, always available — and **GravityKit** — dynamic tools generated from the Foundation catalog when it's active, where each add-on registers tools under its own prefix (GravityView uses `gv_*`). The `gk_reload_abilities` tool reloads the GravityKit catalog.
+Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Gravity Forms credentials are valid — and **GravityKit** — dynamic tools generated from the Foundation catalog when it's active, where each add-on registers tools under its own prefix (GravityView uses `gv_*`). The `gk_reload_abilities` tool reloads the GravityKit catalog. The two planes are independent: a Gravity-Forms-only site lists just `gf_*`; a GravityKit site without Gravity Forms REST keys still lists its product tools.
 
 ### Forms (6 tools)
 - `gf_list_forms`    - List forms with filtering and pagination
@@ -175,7 +175,7 @@ The GravityKit product tools reach the same site over the WordPress REST Abiliti
 - `GRAVITYKIT_WP_USERNAME`     - WordPress username (defaults to `GRAVITY_FORMS_CONSUMER_KEY`)
 - `GRAVITYKIT_WP_APP_PASSWORD` - Application password (defaults to `GRAVITY_FORMS_CONSUMER_SECRET`)
 
-These tools appear only when GravityKit Foundation is active on the connected site.
+These tools appear only when GravityKit Foundation is active on the connected site. They authenticate with a WordPress application password over Basic auth, so — like the Gravity Forms plane — they refuse a remote plain-HTTP URL unless `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true` (HTTPS and local URLs are always fine).
 
 ### Authentication Flow
 
