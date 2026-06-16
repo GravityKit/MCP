@@ -5,6 +5,19 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-06-16
+
+A second correctness pass on the `gf_*` plane — three tools that failed on valid input — plus clearer server instructions. Verified against live Gravity Forms.
+
+### Fixed
+- **`gf_add_field` and `gf_update_field` crashed on every call** with `getWarnings is not a function`. `FieldManager` called a validator method that did not exist, so both tools threw before reaching the API. `FieldAwareValidator.getWarnings()` now exists (returns warnings for a missing label or a choice field with no choices; never throws) and both tools work.
+- **`gf_validate_form` created a real entry instead of validating.** Like the 2.2.0 `gf_validate_submission` fix, it POSTed to `/submissions`; it now uses the dedicated `/forms/{id}/submissions/validation` route and returns `{valid, validation_messages, page_number}` **without persisting an entry**.
+- **`field_values` was typed as an object** on `gf_submit_form_data` and `gf_validate_form` — the inverse of Gravity Forms, which declares it as a string/array of dynamic-population data and rejects an object with a 400. It now accepts a query string or array; objects are rejected client-side with a message pointing to the `input_N` keys for submitted values.
+- **`sorting.is_numeric: false` forced numeric ordering.** GF never casts the flag, so the string `"false"` read as truthy. `is_numeric` is now sent only when truthy and omitted otherwise.
+
+### Changed
+- Server `instructions` rewritten from a second-person playbook into declarative two-plane prose. The imperative phrasing was echoed back by some non-Claude-Code clients as injected commands; the tools are self-describing, so the instructions now just state the `gf_*` / `gv_*` planes and point at the `gv_*_list` discovery tools and `gk_reload_abilities`.
+
 ## [2.2.0] - 2026-06-16
 
 A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity Forms 2.10.3 source and a live GF site (self-seeding `npm run test:live` harness).
@@ -194,6 +207,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.3.0]: https://github.com/GravityKit/MCP/releases/tag/v2.3.0
 [2.2.0]: https://github.com/GravityKit/MCP/releases/tag/v2.2.0
 [2.1.0]: https://github.com/GravityKit/MCP/releases/tag/v2.1.0
 [2.0.0]: https://github.com/GravityKit/MCP/releases/tag/v2.0.0
