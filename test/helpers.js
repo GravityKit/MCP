@@ -19,6 +19,40 @@ export function generateString(prefix = 'test') {
   return `${prefix}_${crypto.randomBytes(4).toString('hex')}`;
 }
 
+// --- Behavior helpers (extracted for testability; see helpers.test.js) ---
+
+/**
+ * Whether the running module is the process entrypoint (so a test file run
+ * directly via `node test/x.test.js` self-executes).
+ */
+export function isMainModule(importMetaUrl, argv1) {
+  // Strip up to the last "/" or "\" so it works on POSIX and Windows paths.
+  return !!argv1 && importMetaUrl.endsWith(argv1.replace(/.*[\\/]/, ''));
+}
+
+/**
+ * Whether a feed error means the add-on or its infrastructure is unavailable
+ * (so a feed test should skip), vs a genuine error that must be re-thrown.
+ */
+export function feedUnavailable(message) {
+  // No mandatory space after add-?on, so "addon_slug ... is not registered"
+  // matches; genuine errors (bad meta, validation) don't.
+  return /table does not exist|missing_table|not installed|not active|invalid add-?on|add-?on.*not (registered|found)/i.test(message || '');
+}
+
+/**
+ * Await a promise; on rejection, report (don't swallow) the error and
+ * continue. Returns the resolved value, or undefined on rejection.
+ */
+export async function settleWithReport(promise, report) {
+  try {
+    return await promise;
+  } catch (error) {
+    report(error);
+    return undefined;
+  }
+}
+
 /**
  * Generate mock form data
  */

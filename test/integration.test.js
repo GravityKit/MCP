@@ -5,7 +5,7 @@
 
 import dotenv from 'dotenv';
 import GravityFormsClient from '../src/gravity-forms-client.js';
-import { TestRunner, TestAssert } from './helpers.js';
+import { TestRunner, TestAssert, feedUnavailable, settleWithReport } from './helpers.js';
 import { validateRestApiAccess } from '../src/config/auth.js';
 
 // Set test mode to suppress initialization messages to stderr
@@ -399,10 +399,8 @@ suite.test('Integration: Create test feed (if MailChimp available)', async () =>
   try {
     result = await client.createFeed(feedData);
   } catch (error) {
-    const msg = error.message || '';
-    const unavailable = /table does not exist|missing_table|not installed|not active|invalid add-?on|add-?on.*not (registered|found)/i.test(msg);
-    if (unavailable) {
-      console.log(`  MailChimp feed add-on not available - skipping (${msg})`);
+    if (feedUnavailable(error.message)) {
+      console.log(`  MailChimp feed add-on not available - skipping (${error.message})`);
       return;
     }
     throw error;
@@ -766,7 +764,7 @@ suite.test('Security: read-only API key cannot write', async () => {
   // initialize() can legitimately fail for a read-only key (its REST-access
   // probe may not pass every endpoint); continue to the read/write checks,
   // but log rather than swallow so a real init failure stays visible.
-  await roClient.initialize().catch((e) => console.log(`  read-only client init reported: ${e.message} — continuing`));
+  await settleWithReport(roClient.initialize(), (e) => console.log(`  read-only client init reported: ${e.message} — continuing`));
 
   // Reads must work… (GF /forms returns an ID-keyed object, not an array)
   const listed = await roClient.listForms({});

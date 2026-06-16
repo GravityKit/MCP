@@ -4,7 +4,7 @@
  */
 
 import { AuthManager, BasicAuthHandler, OAuth1Handler, validateRestApiAccess } from '../src/config/auth.js';
-import { TestRunner, TestAssert, MockHttpClient, MockResponse, setupTestEnvironment } from './helpers.js';
+import { TestRunner, TestAssert, MockHttpClient, MockResponse, setupTestEnvironment, isMainModule } from './helpers.js';
 
 const suite = new TestRunner('Authentication Tests');
 
@@ -368,7 +368,7 @@ suite.test('Failure Mode: Should handle malformed OAuth signature', () => {
 });
 
 // Run tests when executed directly
-const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*[\\/]/, ""));
+const isMain = isMainModule(import.meta.url, process.argv[1]);
 if (isMain) {
 suite.run().then(results => {
   process.exit(results.failed > 0 ? 1 : 0);

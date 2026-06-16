@@ -74,6 +74,8 @@ MCP/
 │   ├── check-env.js          # Environment validation script
 │   ├── check-docs.mjs        # Doc-freshness guard for AGENTS.md (offline; npm run lint:docs)
 │   ├── verify-tool-names.mjs # Cross-check doc/instruction tool names vs registered tools (needs live site)
+│   ├── lib/
+│   │   └── ability-catalog.mjs  # collectAbilityNames() — paginated Abilities catalog reader
 │   ├── stress-abilities.mjs  # Synthetic abilities-loader stress/contract test
 │   ├── setup-test-data.js    # Test data seeding
 │   ├── test-field-ops.js     # Field operations smoke test
@@ -246,7 +248,7 @@ All GF delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this
 2. **Add the client method** in `gravity-forms-client.js` using `validateAndCall`, returning minimal data.
 3. **Add validation** in `config/validation.js` inside `ValidationFactory.validateToolInput()`.
 4. **Add the handler route** in the `CallToolRequestSchema` switch in `src/index.js`.
-5. **Add tests** in `test/`, importing the source under test as `../src/…` (see `forms.test.js`).
+5. **Write the failing test first** (TDD — see Test-Driven Development above), then implement steps 1–4 to make it pass. Tests live in `test/`, importing the source under test as `../src/…` (see `forms.test.js`).
 
 ### Adding GravityKit (`gv_*`) Tools
 
@@ -274,6 +276,18 @@ For compound fields (multi-input like address/name), set `storage.type: 'compoun
 1. Create the rule class in `config/validation-rules.js`
 2. Add the chainable method in `config/validation-chain.js`
 3. Use it in validators via `validate('fieldName').newRule()`
+
+## Test-Driven Development (required)
+
+All development here is **test-first** — features, bug fixes, refactors, behavior changes. The cycle is non-negotiable:
+
+1. **RED** — write one failing test that pins the intended behavior, and run it to watch it fail *for the right reason*. No production code before this.
+2. **GREEN** — write the minimal code to make it pass; keep the rest of the suite green.
+3. **REFACTOR** — clean up with the tests staying green.
+
+A test that passes the first time you run it proves nothing — if you can't point to the RED run, it isn't TDD. Extract logic into a testable unit instead of burying it inline where it can't be exercised (e.g. `feedUnavailable` and `collectAbilityNames` were extracted so their behavior is covered, RED-then-GREEN). Bug fixes start with a failing test that reproduces the bug.
+
+Pure-function/unit tests use `node:test` and live in `test/` (run via `npm run test:lib`); see Testing. Never wire a fix into the codebase ahead of its failing test.
 
 ## Development
 
@@ -344,6 +358,7 @@ Shorthand aliases: `TEST_GF_URL`, `TEST_GF_CONSUMER_KEY`, `TEST_GF_CONSUMER_SECR
 
 ```bash
 npm run test:unit      # Unit tests via custom runner
+npm run test:lib       # node:test unit tests for extracted helpers (TDD)
 npm run test:auth      # Authentication tests
 npm run test:forms     # Forms endpoint tests
 npm run test:entries   # Entries endpoint tests

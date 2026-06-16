@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { WordPressClient } from '../src/wp-client.js';
 import { loadAbilitiesAsTools } from '../src/abilities/loader.js';
+import { collectAbilityNames } from './lib/ability-catalog.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
@@ -49,21 +50,8 @@ let gvDynamic, abilityNames;
 try {
   const { definitions } = await loadAbilitiesAsTools(wp);
   gvDynamic = new Set(definitions.map((d) => d.name));
-  // The WP Abilities endpoint paginates (default per_page 50), so walk every
-  // page or gk-gravityview/* names beyond the first page are missed.
-  abilityNames = new Set();
-  for (let page = 1, totalPages = 1; page <= totalPages; page += 1) {
-    const resp = await wp.httpClient.request({
-      method: 'GET',
-      baseURL: wp.baseUrl,
-      url: '/wp-json/wp-abilities/v1/abilities',
-      params: { per_page: 100, page },
-    });
-    for (const a of resp.data) {
-      if (a.name?.startsWith('gk-gravityview/')) abilityNames.add(a.name);
-    }
-    totalPages = Number(resp.headers?.['x-wp-totalpages']) || 1;
-  }
+  // Walks every page of the paginated WP Abilities catalog (see ability-catalog.mjs).
+  abilityNames = await collectAbilityNames(wp);
 } catch (err) {
   console.error(`✗ Could not load the live abilities catalog from ${wp.baseUrl}`);
   console.error(`  ${err.message}`);
