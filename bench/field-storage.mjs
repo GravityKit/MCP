@@ -11,10 +11,11 @@
  * agent. See bench/field-storage-cases.mjs for the cases.
  *
  * "Real add-ons, not stubs": add-on-gated types (chainedselect, signature,
- * survey*, quiz, poll) run against a site with the ACTUAL Chained Selects /
- * Signature / Survey / Polls / Quiz plugins symlinked + activated. A preflight
- * prints each active plugin's version and a case whose add-on isn't really
- * loaded is SKIPPED, never faked — so a green run can't be a stub.
+ * survey*, quiz, poll, nested form) run against a site with the ACTUAL Chained
+ * Selects / Signature / Survey / Polls / Quiz / GP Nested Forms plugins
+ * symlinked + activated. A preflight prints each active plugin's version and a
+ * case whose add-on isn't really loaded is SKIPPED, never faked — so a green
+ * run can't be a stub.
  *
  * Usage:
  *   node bench/field-storage.mjs --mint [--keep] [--fresh]   # throwaway site w/ add-ons
@@ -42,6 +43,7 @@ const ADDON_SLUGS = [
   'gravityformssurvey',
   'gravityformspolls',
   'gravityformsquiz',
+  'gp-nested-forms',
 ];
 
 function parseArgs(argv) {
@@ -107,21 +109,26 @@ async function main() {
     }
 
     let formId = 0;
+    let ctx;
     let verdict;
     try {
-      const fields = cs.build(FIELD_ID);
+      // Optional setup runs first — e.g. a nested-form case creates its child
+      // form + child entries and returns their ids for build/seed/assert.
+      if (cs.setup) ctx = await cs.setup(client);
+      const fields = cs.build(FIELD_ID, ctx);
       const formRes = await client._gf.post('/forms', { title: `BENCH FieldStorage ${label} ${Date.now()}`, fields });
       formId = Number(formRes.data?.id ?? formRes.data);
       if (!formId) throw new Error(`form create failed (${formRes.status}): ${JSON.stringify(formRes.data).slice(0, 200)}`);
 
-      const entryId = await cs.seed(formId, client, FIELD_ID);
+      const entryId = await cs.seed(formId, client, FIELD_ID, ctx);
       const entry = entryId ? await client.getEntry(entryId) : {};
       const form = await client.getForm(formId);
-      verdict = cs.assert(entry, form, FIELD_ID);
+      verdict = cs.assert(entry, form, FIELD_ID, ctx);
     } catch (e) {
       verdict = { pass: false, detail: `threw: ${e?.message || e}` };
     } finally {
       if (formId) await client.deleteForm(formId);
+      if (cs.teardown && ctx) { try { await cs.teardown(client, ctx); } catch { /* best effort */ } }
     }
 
     results.push({ label, ...verdict });

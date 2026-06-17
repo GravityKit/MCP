@@ -84,6 +84,7 @@ export const SITEMINTER = {
     env.BENCH_SURVEY_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformssurvey')),
     env.BENCH_POLLS_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformspolls')),
     env.BENCH_QUIZ_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformsquiz')),
+    env.BENCH_NESTEDFORMS_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gp-nested-forms')),
   ].filter(Boolean),
 };
 

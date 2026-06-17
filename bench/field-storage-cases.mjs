@@ -656,17 +656,32 @@ export const CASES = [
     note: 'Entry stores the saved-image filename (get_value_save_entry → maybe_save_signature); written on canvas submission, which REST cannot drive.',
   },
 
-  // ─── Nested form (add-on not on the mint → skipped; source-validated) ───────
+  // ─── Nested form (real GP Nested Forms add-on) ─────────────────────────────
   {
     type: 'form',
     addon: 'gp-nested-forms',
-    guards: 'comma-separated child entry ids in one string',
-    build: (id) => [{ id, type: 'form', label: 'Children' }],
-    seed: (f, c, id) => c.createEntry(f, { [id]: '101,102' }),
-    assert: (e, _f, id) => (has(e[id], ',')
-      ? { pass: true, detail: 'comma-separated child ids string' }
-      : { pass: false, detail: `got ${JSON.stringify(e[id])}` }),
-    note: 'GP Nested Forms stores implode(",", child_entry_ids) — source-validated (add-on not on the mint).',
+    guards: 'real child entry ids stored as one comma-separated string',
+    // Create the child form + two real child entries first, then point the
+    // nested-form field at the child form (gpnfForm) and store their ids.
+    setup: async (c) => {
+      const res = await c._gf.post('/forms', {
+        title: `BENCH GPNF child ${Date.now()}`,
+        fields: [{ id: 1, type: 'text', label: 'Item' }],
+      });
+      const childFormId = Number(res.data?.id ?? res.data);
+      const a = await c.createEntry(childFormId, { 1: 'Child A' });
+      const b = await c.createEntry(childFormId, { 1: 'Child B' });
+      return { childFormId, childEntryIds: [a, b] };
+    },
+    build: (id, ctx) => [{ id, type: 'form', label: 'Children', gpnfForm: String(ctx.childFormId) }],
+    seed: (f, c, id, ctx) => c.createEntry(f, { [id]: ctx.childEntryIds.join(',') }),
+    assert: (e, _f, id, ctx) => {
+      const want = ctx.childEntryIds.join(',');
+      return eq(e[id], want) || (has(e[id], String(ctx.childEntryIds[0])) && has(e[id], String(ctx.childEntryIds[1])))
+        ? { pass: true, detail: `stored child entry ids "${e[id]}"` }
+        : { pass: false, detail: `expected "${want}", got ${JSON.stringify(e[id])}` };
+    },
+    teardown: (c, ctx) => c.deleteForm(ctx.childFormId),
   },
 
   // ─── No-value / layout types ────────────────────────────────────────────────
