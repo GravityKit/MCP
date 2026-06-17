@@ -196,9 +196,9 @@ export const fieldOperationHandlers = {
           list: 'array: ["a","b"] or [{Col1:"a",Col2:"b"}] for multi-col (free text, no choices)',
           // Compound (dot-notation, keyed by sub-input id)
           name: 'dot-notation: {"1.3":"First","1.6":"Last"}',
-          address: 'dot-notation: {"2.1":"Street","2.3":"City","2.4":"State","2.5":"ZIP"}',
+          address: 'dot-notation by sub-input (N = field id): {"N.1":"Street","N.2":"Line 2","N.3":"City","N.4":"State","N.5":"ZIP","N.6":"Country"}',
           consent: 'dot-notation: {"5.1":"1","5.2":"text","5.3":"revision"}',
-          chainedselect: 'dot-notation: {"1.1":"Level1","1.2":"Level2"}',
+          chainedselect: 'dot-notation, one sub-input per dropdown level (count is dynamic): {"N.1":"Level1 value","N.2":"Level2 value",…}',
           time: 'string: "HH:MM am/pm" (e.g. "12:30 pm"), stored combined — NOT as .1/.2/.3 sub-inputs',
           date: 'string: "YYYY-MM-DD" (or the field date format)',
           fileupload: 'string: file URL (JSON array of URLs when multipleFiles)',
@@ -212,7 +212,7 @@ export const fieldOperationHandlers = {
           // Surveys / quiz / poll (add-on choice codes)
           survey_likert: 'single-row: "glikertcolN"; multi-row: dot-notation {"N.rowValue":"glikertcolN"}',
           survey_rating: 'string: rating choice value (e.g. "glikertcol3")',
-          survey_rank: 'string: ranked choice values, comma-separated',
+          survey_rank: 'string: all choice values in ranked order, comma-separated (order = the data). Survey auto-assigns comma-free value tokens ("gsurvey<id><hex>") so the comma delimiter is unambiguous — never put a comma in a rank choice VALUE (labels may contain commas; they are not stored).',
           survey: 'by inputType: radio/select→string, checkbox→array, text→string',
           quiz: 'string: "gquizN" (radio/select) or array of "gquizN" (checkbox)',
           poll: 'string: "gpollN" (radio/select) or array of "gpollN" (checkbox)',
