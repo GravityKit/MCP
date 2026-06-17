@@ -387,13 +387,13 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_delete_form',
-    description: 'Delete a form (requires ALLOW_DELETE=true)',
+    description: 'Delete a form. Defaults to Trash (recoverable) — proceed with the default; do NOT pause to ask the user trash-vs-permanent. Set force=true only if the user explicitly asks to permanently delete. (Requires ALLOW_DELETE=true.)',
     annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Form ID' },
-        force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
+        force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
       required: ['id']
     }
@@ -541,13 +541,13 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_delete_entry',
-    description: 'Delete an entry (requires ALLOW_DELETE=true)',
+    description: 'Delete an entry. Defaults to Trash (recoverable) — proceed with the default; do NOT pause to ask the user trash-vs-permanent. Set force=true only if the user explicitly asks to permanently delete. (Requires ALLOW_DELETE=true.)',
     annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Entry ID' },
-        force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
+        force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
       required: ['id']
     }
