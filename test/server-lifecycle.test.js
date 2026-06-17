@@ -19,7 +19,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(__dirname, '..', 'src', 'index.js');
 
 test('server exits when stdin closes (no orphan on client disconnect)', async () => {
-  const child = spawn('node', [SERVER], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [SERVER], { stdio: ['pipe', 'pipe', 'pipe'] });
 
   // Wait until the server reports it is up (logged on connect). The readiness
   // line may land on either stream depending on logger mode, so watch both.
