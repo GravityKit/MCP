@@ -809,7 +809,21 @@ export const fieldRegistry = {
       type: 'string',
       format: 'commaSeparated'
     },
-    isNested: true
+    isNested: true,
+    // Provided by the GP Nested Forms add-on (needs the Spellbook framework,
+    // formerly Gravity Perks). Configure these on the field:
+    requiresAddon: 'gp-nested-forms',
+    settings: {
+      gpnfForm: {
+        required: true,
+        type: 'string',
+        description: 'Child form id whose entries are nested under this field.',
+      },
+      gpnfFields: {
+        type: 'array',
+        description: 'Summary Fields — the child-form field ids shown in the nested entries summary table (lets you choose which child fields display). A directory View lists the child entry ids; the field/single-entry view renders these fields as columns.',
+      },
+    },
   },
 
   repeater: {

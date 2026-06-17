@@ -174,7 +174,11 @@ export const fieldOperationHandlers = {
               settings: variant.settings
             })) : undefined,
           storage: def.storage,
-          validation: def.validation
+          validation: def.validation,
+          // Add-on field config (e.g. Nested Form's gpnfForm + gpnfFields
+          // Summary Fields). Undefined for most types → stripped by compact.
+          requiresAddon: def.requiresAddon,
+          settings: def.settings
         }));
       } else {
         // Summary mode (default) — minimal tokens, with entry input hints
