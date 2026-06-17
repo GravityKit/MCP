@@ -5,6 +5,29 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-06-17
+
+A field-model correctness pass. An adversarial audit of every field type against Gravity Forms 2.10.3 + add-on source — each finding refuted, then re-confirmed by a live entry round-trip — corrected the entry-storage shapes and the `gf_list_field_types` `entry_input` hints so a small model writes the right entry shape. Adds the `password` field type (registry now 46), plus dev-only benchmark suites.
+
+### Added
+- **`password` field type** in the registry (now **46** field types, up from 45). GF registers it as its own type (`GF_Field_Password`), not a text variant; it is single-id with no sub-inputs and GF never persists it (the stored entry value is always `""`).
+- **Expanded `entry_input` hints in `gf_list_field_types` summary mode** for every field type whose entry format isn't an obvious plain string — choice fields (value-vs-label rule), compound (dot-notation), time, date, fileupload, signature, pricing (`product`/`option`/`quantity`/`shipping`/`total`, `"Label|amount"` encoding), survey/quiz/poll add-on choice tokens, and repeater/nested-form shapes. Plain string fields stay omitted.
+- **Dev-only benchmark suites** (not shipped): `npm run bench` — the AI release gate that drives the full MCP surface through a small model (`claude-haiku-4-5`) and grades real Gravity Forms/GravityView state; `npm run bench:field-output` — deterministic field-output smoke suite; `npm run bench:field-storage` — field-storage validation against real add-ons.
+
+### Changed
+- **`gf_delete_form` / `gf_delete_entry` descriptions** now state the safe Trash default explicitly and instruct the model to proceed with Trash unless the user asks to permanently delete — the terse `(vs trash)` phrasing made small models pause and ask on every delete.
+- **Server `instructions`** now point the search-bar flow at the one-call `gv_search_bar_add` route, reserving the low-level `gv_search_field_*` tools for surgical slot edits. Prose only — no behavior change.
+- **One-shot clients can wait for the full tool catalog.** `tools/list` waits a default 2s for the abilities catalog; clients that read it once (e.g. `claude -p`) and never see `tools/list_changed` can raise the first-list wait via `GRAVITYKIT_MCP_LIST_TIMEOUT_MS` to receive `gv_*` in the initial list.
+
+### Fixed
+- **Corrected entry-storage shapes to match real Gravity Forms** (`gf_list_field_types --detail`): `number`/`quantity` store as a TEXT string, not numeric; `signature` stores the saved image filename, not base64; `creditcard` persists only `.1` (masked number) and `.4` (card type) — expiration, security code, and cardholder name are never stored, and `generateSubInputs` now labels `.4` Card Type / `.5` Cardholder Name (were swapped); `post_content` is the real GF type (was the non-existent `post_body`, which `gf_add_field` could never resolve); `post_image` stores one `url|:|title|:|caption|:|description|:|alt` composite, not a bare URL; `fileupload` stores a JSON array when `storageType` is `json` OR `multipleFiles` (was `multipleFiles` alone); `product` `price` (User Defined) is a single money string, not dot-notation; `form` (Nested Forms) stores a comma-separated string of child entry ids, not a JSON array.
+- **`chainedselect` sub-inputs were never generated.** A chained-select field is compound but `generateSubInputs` had no branch for it, so it got an empty `inputs` array. It now emits one sub-input per dropdown level (ids `1,2,…,9,11,12,…`, skipping multiples of 10 which GF reserves), defaulting to two levels when none are configured. Confirmed against the live Chained Selects add-on.
+- **Corrected `entry_input` hints** for `address` (was hardcoded to field id 2 and omitted Line 2 / Country; now lists all six sub-inputs `N.1`–`N.6`), `chainedselect` (notes the dynamic per-level sub-input count), `survey_rank` (all choice values in ranked order, comma-separated), `date` (always ISO/zero-padded, independent of display format), and the survey/quiz/poll tokens (`g<kind><fieldId><hex>` form; multi-row likert keyed by sub-input id).
+- **Logger could corrupt the JSON-RPC transport.** The non-test detection was inverted (`!NODE_ENV || NODE_ENV === 'production'`), routing the common `NODE_ENV=development` to stdout and breaking the MCP handshake. Mode is now resolved per call: all server-mode logs go to stderr; only an explicit test context (`NODE_ENV=test` or the `GRAVITYKIT_MCP_TEST_MODE` flags) may use stdout.
+- **Ability `/run` calls now always send an object `input`.** Foundation abilities declare an object `input_schema` and the WP Abilities API rejects a missing/null `input` with a 400. Empty input now sends `input=''` on GET/DELETE (WP's empty-object wire form) and `{ input: {} }` on POST.
+- **`sorting.is_numeric` is interpreted strictly.** A client sending the value as a JSON string (`"false"`/`"0"`) slipped through a naive truthy check and wrongly forced numeric ordering. `is_numeric` is now carried only when it genuinely means true (`true`, `1`, `"true"`, `"1"`) and omitted otherwise so GF falls back to lexical ordering.
+- **Stdio server now exits on client disconnect (stdin EOF).** Without it, every crashed or `SIGKILL`'d client left an orphaned `node src/index.js` running forever; orphans accumulated and starved the next server's startup, surfacing as agents booting with 0 MCP tools.
+
 ## [2.3.0] - 2026-06-16
 
 A second correctness pass on the `gf_*` plane — three tools that failed on valid input — plus clearer server instructions. Verified against live Gravity Forms.
@@ -207,6 +230,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.4.0]: https://github.com/GravityKit/MCP/releases/tag/v2.4.0
 [2.3.0]: https://github.com/GravityKit/MCP/releases/tag/v2.3.0
 [2.2.0]: https://github.com/GravityKit/MCP/releases/tag/v2.2.0
 [2.1.0]: https://github.com/GravityKit/MCP/releases/tag/v2.1.0
