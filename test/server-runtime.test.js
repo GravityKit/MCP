@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { runPlaneInit, buildToolList, classifyAbilityCall } from '../src/server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs } from '../src/server-runtime.js';
 
 // --- runPlaneInit (#1: WP not blocked by a slow GF probe) ---
 
@@ -76,4 +76,20 @@ test('classifyAbilityCall: no-wp-client when WP client is absent (any prefix)', 
 test('classifyAbilityCall: catalog-unreachable when WP is up but catalog not loaded (any prefix)', () => {
   assert.equal(classifyAbilityCall({ name: 'gv_view_create', hasWpClient: true, handlers: null }), 'catalog-unreachable');
   assert.equal(classifyAbilityCall({ name: 'gc_chart_create', hasWpClient: true, handlers: null }), 'catalog-unreachable');
+});
+
+// --- resolveAbilitiesListTimeoutMs (how long tools/list waits for the catalog) ---
+
+test('resolveAbilitiesListTimeoutMs: defaults to 2000 when unset', () => {
+  assert.equal(resolveAbilitiesListTimeoutMs({}), 2000);
+});
+
+test('resolveAbilitiesListTimeoutMs: honors a valid override (e.g. a one-shot client needing the full catalog)', () => {
+  assert.equal(resolveAbilitiesListTimeoutMs({ GRAVITYKIT_MCP_LIST_TIMEOUT_MS: '15000' }), 15000);
+});
+
+test('resolveAbilitiesListTimeoutMs: ignores non-positive / non-numeric values', () => {
+  assert.equal(resolveAbilitiesListTimeoutMs({ GRAVITYKIT_MCP_LIST_TIMEOUT_MS: '0' }), 2000);
+  assert.equal(resolveAbilitiesListTimeoutMs({ GRAVITYKIT_MCP_LIST_TIMEOUT_MS: '-5' }), 2000);
+  assert.equal(resolveAbilitiesListTimeoutMs({ GRAVITYKIT_MCP_LIST_TIMEOUT_MS: 'abc' }), 2000);
 });

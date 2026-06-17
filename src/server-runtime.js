@@ -46,3 +46,22 @@ export function classifyAbilityCall({ name, hasWpClient, handlers }) {
   if (!handlers) return 'catalog-unreachable';
   return 'unknown';
 }
+
+/**
+ * How long tools/list waits for the abilities catalog before shipping the list.
+ *
+ * Defaults to 2000ms — fast handshake; if the catalog isn't loaded yet the
+ * product tools (gv_*) stream in afterward via tools/list_changed. That's fine
+ * for clients that honor list_changed, but a ONE-SHOT client (e.g. `claude -p`)
+ * reads tools/list once, so it would miss gv_* if the catalog is slower than the
+ * wait. Such a client can raise GRAVITYKIT_MCP_LIST_TIMEOUT_MS to make the first
+ * tools/list block long enough to return the complete catalog. Non-positive or
+ * non-numeric values fall back to the default.
+ *
+ * @param {Record<string,string|undefined>} [env]
+ * @returns {number} milliseconds
+ */
+export function resolveAbilitiesListTimeoutMs(env = process.env) {
+  const raw = Number(env.GRAVITYKIT_MCP_LIST_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 2000;
+}

@@ -24,7 +24,7 @@ import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
-import { runPlaneInit, buildToolList, classifyAbilityCall } from './server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs } from './server-runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -735,11 +735,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   if (!gravityFormsClient || !wpClient) {
     try { await initializeClient(); } catch (_) { /* serve whatever planes are up */ }
   }
-  // Best-effort wait for the abilities catalog. 2s covers a warm
-  // cold-start on dev.test (~800ms) plus headroom; if WP is
-  // genuinely unreachable the list ships without gv_* tools and the
-  // next gv_* call (or gk_reload_abilities) retries.
-  await ensureAbilitiesLoaded({ timeoutMs: 2000 });
+  // Best-effort wait for the abilities catalog. The default 2s covers a warm
+  // cold-start (~800ms) plus headroom; if WP is genuinely unreachable the list
+  // ships without gv_* tools and the next gv_* call (or gk_reload_abilities)
+  // retries. Clients that read tools/list only once (no list_changed support,
+  // e.g. `claude -p`) can raise GRAVITYKIT_MCP_LIST_TIMEOUT_MS so this first
+  // list blocks long enough to return the complete catalog.
+  await ensureAbilitiesLoaded({ timeoutMs: resolveAbilitiesListTimeoutMs() });
 
   // Gravity Forms tools are advertised only when that plane is live, so a
   // WP-only install never lists gf_* tools that can't run. gk_reload_abilities
