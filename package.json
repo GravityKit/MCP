@@ -16,7 +16,7 @@
     "verify:tool-names": "node scripts/verify-tool-names.mjs",
     "test": "node test/integration.test.js",
     "test:unit": "node test/run.js",
-    "test:node": "node --test test/field-manager.test.js test/field-registry.test.js test/field-dependencies.test.js test/field-positioner.test.js test/helpers.test.js test/ability-catalog.test.js test/user-agent.test.js test/wp-client.test.js test/server-runtime.test.js test/entries-query.test.js test/entries-wire.test.js test/client-hardening.test.js test/validation-hardening.test.js test/sanitize-hardening.test.js test/schema-hardening.test.js test/instructions.test.js test/logger-stdout.test.js test/server-lifecycle.test.js",
+    "test:node": "node --test test/field-manager.test.js test/field-registry.test.js test/field-dependencies.test.js test/field-positioner.test.js test/helpers.test.js test/ability-catalog.test.js test/user-agent.test.js test/wp-client.test.js test/server-runtime.test.js test/entries-query.test.js test/entries-wire.test.js test/client-hardening.test.js test/validation-hardening.test.js test/sanitize-hardening.test.js test/schema-hardening.test.js test/instructions.test.js test/logger-stdout.test.js test/server-lifecycle.test.js test/bench-grading.test.js test/bench-agent.test.js test/bench-cleanup.test.js",
     "test:auth": "node test/authentication.test.js",
     "test:forms": "node test/forms.test.js",
     "test:entries": "node test/entries.test.js",
