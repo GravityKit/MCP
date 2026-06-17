@@ -312,7 +312,27 @@ export class FieldManager {
         { id: `${baseId}.5`, label: 'Card Type', name: '' }
       );
     }
-    
+
+    // Chained Select sub-inputs — one dropdown level per sub-input. Validated
+    // against the GF Chained Selects add-on (class-gf-field-chainedselect.php
+    // import_choices / get_default_inputs): sub-input ids are baseId.N, counted
+    // 1,2,…,9,11,12,… SKIPPING multiples of 10 (the .10/.20 slots are reserved),
+    // each labelled by its column/level. A fresh field defaults to two levels
+    // ("Parents" / "Children"). The level definitions come from any inputs the
+    // caller supplied; otherwise the add-on default is used.
+    else if (field.type === 'chainedselect') {
+      const hasConfiguredLevels = Array.isArray(field.inputs) && field.inputs.length > 0;
+      const levels = hasConfiguredLevels
+        ? field.inputs
+        : [{ label: 'Parents' }, { label: 'Children' }];
+      let position = 1;
+      for (const level of levels) {
+        if (position % 10 === 0) position++; // GF reserves .10/.20/… — skip them
+        subInputs.push({ id: `${baseId}.${position}`, label: level.label || '', name: level.name || '' });
+        position++;
+      }
+    }
+
     return subInputs;
   }
 

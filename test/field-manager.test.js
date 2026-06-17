@@ -158,11 +158,44 @@ test('FieldManager - generateSubInputs', async (t) => {
     const field = { id: 15, type: 'name', nameFormat: 'advanced' };
     const fieldDef = { storage: { type: 'compound' } };
     const subInputs = manager.generateSubInputs(field, fieldDef);
-    
+
     assert.strictEqual(subInputs.length, 5);
     assert.strictEqual(subInputs[0].id, '15.2'); // Prefix
     assert.strictEqual(subInputs[1].id, '15.3'); // First
     assert.strictEqual(subInputs[1].label, 'First');
+  });
+
+  // Chained Selects: one sub-input per dropdown level. Validated against the
+  // GF Chained Selects add-on (class-gf-field-chainedselect.php): inputs are
+  // fieldId.N, counting 1,2,…,9,11,12,… and SKIPPING multiples of 10, labelled
+  // per column; a fresh field defaults to two levels (Parents/Children).
+  await t.test('generates chainedselect sub-inputs, one per configured level', () => {
+    const field = { id: 5, type: 'chainedselect', inputs: [{ label: 'Make' }, { label: 'Model' }, { label: 'Trim' }] };
+    const fieldDef = { storage: { type: 'compound' } };
+    const subInputs = manager.generateSubInputs(field, fieldDef);
+
+    assert.strictEqual(subInputs.length, 3);
+    assert.deepStrictEqual(subInputs.map((i) => i.id), ['5.1', '5.2', '5.3']);
+    assert.deepStrictEqual(subInputs.map((i) => i.label), ['Make', 'Model', 'Trim']);
+  });
+
+  await t.test('chainedselect defaults to two levels when none are configured', () => {
+    const field = { id: 2, type: 'chainedselect' };
+    const fieldDef = { storage: { type: 'compound' } };
+    const subInputs = manager.generateSubInputs(field, fieldDef);
+
+    assert.deepStrictEqual(subInputs.map((i) => i.id), ['2.1', '2.2']);
+    assert.deepStrictEqual(subInputs.map((i) => i.label), ['Parents', 'Children']);
+  });
+
+  await t.test('chainedselect skips the reserved .10 sub-input id', () => {
+    const field = { id: 1, type: 'chainedselect', inputs: Array.from({ length: 10 }, (_, i) => ({ label: `L${i + 1}` })) };
+    const fieldDef = { storage: { type: 'compound' } };
+    const subInputs = manager.generateSubInputs(field, fieldDef);
+
+    const ids = subInputs.map((i) => i.id);
+    assert.ok(!ids.includes('1.10'), 'must skip the reserved .10 slot');
+    assert.deepStrictEqual(ids, ['1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9', '1.11']);
   });
 });
 
