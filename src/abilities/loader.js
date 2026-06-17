@@ -450,15 +450,16 @@ async function executeAbility(wpClient, abilityName, method, input) {
     // expand the input into `input[key][nested]=value` so WP
     // rehydrates the nested object structure.
     const config = { method, baseURL, url };
-    if (hasInputKeys) {
-      const params = {};
-      walkInputToBracketedParams(input, 'input', params);
+    const params = {};
+    if (input) walkInputToBracketedParams(input, 'input', params);
+    if (Object.keys(params).length > 0) {
       config.params = params;
     } else {
-      // Empty input. Send `input=` (empty string): WP's
-      // rest_is_object('') === true, so it validates as an empty object —
-      // whereas omitting `input` entirely sends `null`, which fails the
-      // type:object check with a 400.
+      // No serializable params — either truly empty input, or keys that
+      // flatten away ({ nested: {} }, { a: null }). Send `input=` (empty
+      // string): WP's rest_is_object('') === true, so it validates as an
+      // empty object — whereas empty/omitted params send `null`, which fails
+      // the type:object check with a 400.
       config.params = { input: '' };
     }
     const { data } = await wpClient.httpClient.request(config);

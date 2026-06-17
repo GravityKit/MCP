@@ -522,6 +522,14 @@ function inputSchemaFenceCatalog() {
       mcp_tool_name: 'gv_schema_post',
     },
     {
+      name: 'gk-gravityview/view-delete-hard',
+      description: 'DELETE with object input_schema',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { destructive: true, idempotent: true },
+      enabled: true,
+      mcp_tool_name: 'gv_schema_delete',
+    },
+    {
       name: 'gk-gravityview/ping-get',
       description: 'GET with NO input_schema',
       // No input_schema key at all.
@@ -622,6 +630,35 @@ suite.test('executeAbility: non-empty input on a schemaless ability still sends 
   await handlers.gv_noschema_get({ q: 'x' });
   const run = findRun(stub, 'gk-gravityview/ping-get');
   TestAssert.deepEqual(run.params, { 'input[q]': 'x' }, 'keys present → bracketed params regardless of schema');
+});
+
+suite.test('executeAbility: empty input → DELETE sends params {input:\'\'} (parity with GET)', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_schema_delete({});
+  const run = findRun(stub, 'gk-gravityview/view-delete-hard');
+  TestAssert.isTrue(!!run, 'DELETE ability must hit the run endpoint');
+  TestAssert.equal(run.method, 'DELETE');
+  TestAssert.deepEqual(run.params, { input: '' }, 'empty object input → input="" on DELETE');
+  TestAssert.equal(run.data, undefined, 'DELETE must not carry a body');
+});
+
+suite.test('executeAbility: input whose keys flatten to nothing ({nested:{}}) → GET params {input:\'\'}', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_schema_get({ nested: {} });
+  const run = findRun(stub, 'gk-gravityview/views-list');
+  TestAssert.equal(run.method, 'GET');
+  TestAssert.deepEqual(run.params, { input: '' }, '{nested:{}} serializes to no params → must still send input="" (else WP 400s on null)');
+});
+
+suite.test('executeAbility: input with only null values ({a:null}) → GET params {input:\'\'}', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_schema_get({ a: null });
+  const run = findRun(stub, 'gk-gravityview/views-list');
+  TestAssert.equal(run.method, 'GET');
+  TestAssert.deepEqual(run.params, { input: '' }, '{a:null} drops in walkInputToBracketedParams → must still send input=""');
 });
 
 // ---------------------------------------------------------------------------
