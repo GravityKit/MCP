@@ -18,7 +18,8 @@ import { provisionSite, destroySite, activePlugins } from './lib/siteminter.mjs'
 import { runAgent } from './lib/agent.mjs';
 
 const SITE = process.env.BENCH_DEMO_SITE || 'gvstore';
-const args = { keep: process.argv.includes('--keep'), fresh: process.argv.includes('--fresh') };
+const runsArg = (() => { const i = process.argv.indexOf('--runs'); return i >= 0 ? Math.max(1, parseInt(process.argv[i + 1], 10) || 1) : 1; })();
+const args = { keep: process.argv.includes('--keep'), fresh: process.argv.includes('--fresh'), runs: runsArg };
 
 // One plain-English goal that spans both planes (forms/entries/fields + View +
 // search) AND the role-aware search work — but never names a tool. The model
@@ -61,30 +62,50 @@ async function main() {
   const traceDir = join(CONFIG.outDir, 'demo');
   mkdirSync(traceDir, { recursive: true });
 
-  console.log(`\nModel: ${CONFIG.model}  ·  tools exposed: ONLY the MCP under test`);
+  console.log(`\nModel: ${CONFIG.model}  ·  tools exposed: ONLY the MCP under test  ·  runs: ${args.runs}`);
   console.log('─'.repeat(72));
   console.log('GOAL (natural language, no tool names):\n');
   console.log(GOAL.split('\n').map((l) => `  ${l}`).join('\n'));
   console.log('─'.repeat(72));
-  console.log('Running the agent… (this drives the real MCP over stdio)\n');
 
-  const t = await runAgent(GOAL, mcpConfigPath, join(traceDir, 'demo.jsonl'));
+  const single = args.runs === 1;
+  const agg = [];
+  for (let i = 1; i <= args.runs; i++) {
+    const t = await runAgent(GOAL, mcpConfigPath, join(traceDir, `demo.run${i}.jsonl`));
+    const real = t.toolCalls.filter((c) => !c.denied);
+    const firstForm = real.find((c) => c.name === 'gf_create_form');
+    const formOneShot = !!firstForm && !firstForm.isError; // first gf_create_form succeeded
+    const formMade = real.some((c) => c.name === 'gf_create_form' && !c.isError);
+    const errs = real.filter((c) => c.isError).length;
+    const uniq = new Set(real.map((c) => c.name)).size;
+    agg.push({ formOneShot, formMade, errs, turns: t.turns, uniq, finalText: t.finalText, toolCalls: t.toolCalls });
 
-  console.log('TRANSCRIPT — tools the model chose to call:');
-  if (!t.toolCalls.length) console.log('  (no tool calls — check CLAUDE_BIN / ANTHROPIC_API_KEY / warmup)');
-  for (const c of t.toolCalls) {
-    const mark = c.denied ? '·' : c.isError ? '✗' : '✓';
-    const tail = c.isError ? `  ⚠ ${(c.errorCode || c.text || '').slice(0, 80)}` : '';
-    console.log(`  ${mark} ${c.name.padEnd(22)} ${summarizeInput(c.name, c.input)}${tail}`);
+    if (single) {
+      console.log('Running the agent… (drives the real MCP over stdio)\n');
+      console.log('TRANSCRIPT — tools the model chose to call:');
+      if (!t.toolCalls.length) console.log('  (no tool calls — check CLAUDE_BIN / ANTHROPIC_API_KEY / warmup)');
+      for (const c of t.toolCalls) {
+        const mark = c.denied ? '·' : c.isError ? '✗' : '✓';
+        const tail = c.isError ? `  ⚠ ${(c.errorCode || c.text || '').slice(0, 80)}` : '';
+        console.log(`  ${mark} ${c.name.padEnd(22)} ${summarizeInput(c.name, c.input)}${tail}`);
+      }
+      console.log('\n' + '─'.repeat(72));
+      console.log(`Turns: ${t.turns}  ·  distinct tools used: ${uniq}  ·  tool errors: ${errs}  ·  tokens: ${t.tokens.input}+${t.tokens.output}`);
+      if (t.hardError) console.log(`Hard error: ${t.hardError}`);
+      console.log('\nAGENT REPORT:\n');
+      console.log((t.finalText || '(no final text)').split('\n').map((l) => `  ${l}`).join('\n'));
+    } else {
+      console.log(`  run ${i}/${args.runs}: gf_create_form ${formOneShot ? '✓ one-shot' : firstForm ? '✗ retried' : '— not called'} · form created: ${formMade ? 'yes' : 'no'} · tool errors: ${errs} · tools: ${uniq} · turns: ${t.turns}`);
+    }
   }
 
-  const uniq = [...new Set(t.toolCalls.filter((c) => !c.denied).map((c) => c.name))];
-  const errs = t.toolCalls.filter((c) => c.isError && !c.denied).length;
-  console.log('\n' + '─'.repeat(72));
-  console.log(`Turns: ${t.turns}  ·  distinct tools used: ${uniq.length}  ·  tool errors: ${errs}  ·  tokens: ${t.tokens.input}+${t.tokens.output}`);
-  if (t.hardError) console.log(`Hard error: ${t.hardError}`);
-  console.log('\nAGENT REPORT:\n');
-  console.log((t.finalText || '(no final text)').split('\n').map((l) => `  ${l}`).join('\n'));
+  if (!single) {
+    const oneShot = agg.filter((r) => r.formOneShot).length;
+    const made = agg.filter((r) => r.formMade).length;
+    const clean = agg.filter((r) => r.errs === 0).length;
+    console.log('\n' + '─'.repeat(72));
+    console.log(`AGGREGATE over ${args.runs} runs: gf_create_form one-shot ${oneShot}/${args.runs} · form created ${made}/${args.runs} · zero-error runs ${clean}/${args.runs}`);
+  }
 
   if (!args.keep) { try { destroySite(prov.name); } catch { /* best effort */ } console.log(`\nTore down "${prov.name}".`); }
   else console.log(`\n[siteminter] keeping "${prov.name}" at ${target.baseUrl} (admin/admin) so you can inspect what it built.`);
