@@ -169,7 +169,7 @@ function parseStream(stdout) {
  *   written here — the authoritative record for debugging a failed run.
  * @returns {Promise<{toolCalls:Array, turns:number, tokens:{input:number,output:number}, finalText:string, hardError:string|null, durationMs:number, logFile:string|null}>}
  */
-function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null) {
+export function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null, bin = CLAUDE_BIN) {
   const args = [
     '-p', prompt,
     '--model', CONFIG.model,
@@ -194,7 +194,7 @@ function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null) {
     const started = Date.now();
     let stdout = '';
     let stderr = '';
-    const child = spawn(CLAUDE_BIN, args, {
+    const child = spawn(bin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       // Empty cwd → no project CLAUDE.md/AGENTS.md auto-loaded (see agentCwd).
       cwd: agentCwd(),
@@ -210,10 +210,28 @@ function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null) {
     });
 
     const timer = setTimeout(() => { child.kill('SIGKILL'); }, CONFIG.runTimeoutMs);
+    let settled = false;
+
+    // Spawn failure (CLAUDE_BIN missing / not executable): without an 'error'
+    // handler the event is unhandled — it crashes the gate or leaves this Promise
+    // pending forever. Resolve as a hard error so the run scores as failed.
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({
+        toolCalls: [], turns: 0, tokens: { input: 0, output: 0 }, finalText: '',
+        durationMs: Date.now() - started, timedOut: false, exitCode: null,
+        hardError: `spawn_failed: ${err?.code || err?.message || 'spawn error'}`,
+        stderr: '', logFile: logFile || null,
+      });
+    });
 
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.stderr.on('data', (d) => { stderr += d.toString(); });
     child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       if (logFile) {
         try {
