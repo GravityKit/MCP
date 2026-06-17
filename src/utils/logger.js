@@ -1,34 +1,42 @@
 /**
- * Logger utility for MCP server
- * Handles logging in both MCP mode (JSON-RPC) and test mode (console)
+ * Logger utility for MCP server.
+ *
+ * The server speaks JSON-RPC over stdout, so ANY log byte on stdout corrupts the
+ * transport and breaks the MCP handshake (the client gets a malformed message
+ * and the server hangs unconnected with 0 tools). Logs therefore go to stderr
+ * whenever the process runs as a server — which is EVERY environment except an
+ * explicit test context. Only a test (no JSON-RPC peer to corrupt) may use
+ * stdout, for readable assertions/output.
+ *
+ * The mode is resolved PER CALL (not memoized at import) so it always reflects
+ * the current environment and stays unit-testable. The previous detection
+ * (`!NODE_ENV || NODE_ENV === 'production'`) was inverted: it routed the common
+ * `NODE_ENV=development` to stdout and silently broke the handshake.
  */
 
-// Detect if running as MCP server or in test mode
-const isMCPMode = !process.env.NODE_ENV || process.env.NODE_ENV === 'production';
+/** True only in an explicit test context — the one case stdout is safe. */
+function isTestContext() {
+  return process.env.NODE_ENV === 'test'
+    || process.env.GRAVITYKIT_MCP_TEST_MODE === 'true'
+    || process.env.GRAVITYMCP_TEST_MODE === 'true';
+}
 
 /**
- * Send a log message that works in both MCP and test modes
- * In MCP mode: sends JSON-RPC notification to stderr to avoid stdout conflicts
- * In test mode: uses console.log
+ * Send a log message. Errors and all server-mode logs go to stderr; only an
+ * explicit test context uses stdout.
  */
 export function sendLogMessage(message, level = 'info') {
-  if (isMCPMode) {
-    // In MCP mode, use stderr to avoid conflicting with JSON-RPC on stdout
-    // Claude Desktop will still see these in the logs
-    if (level === 'error') {
-      console.error(message);
-    } else {
-      // Use stderr for all logs in MCP mode to keep stdout clean for JSON-RPC
-      console.error(`[${level}] ${message}`);
-    }
-  } else {
-    // In test mode, use regular console.log
-    if (level === 'error') {
-      console.error(message);
-    } else {
-      console.log(message);
-    }
+  // Errors always go to stderr — never risk the JSON-RPC stream.
+  if (level === 'error') {
+    console.error(message);
+    return;
   }
+  if (isTestContext()) {
+    console.log(message);
+    return;
+  }
+  // Server mode (default): keep stdout clean for JSON-RPC.
+  console.error(`[${level}] ${message}`);
 }
 
 export default {
