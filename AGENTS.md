@@ -50,7 +50,7 @@ MCP/
 │   │   ├── field-dependencies.js  # DependencyTracker: conditional logic/merge tag scanning
 │   │   └── field-positioner.js    # PositionEngine: page-aware field positioning
 │   ├── field-definitions/
-│   │   ├── field-registry.js # 45 field types with metadata, validation, storage patterns
+│   │   ├── field-registry.js # 46 field types with metadata, validation, storage patterns
 │   │   └── loader.js         # Registry loader
 │   ├── config/
 │   │   ├── auth.js           # BasicAuthHandler, OAuth1Handler, AuthManager
@@ -122,7 +122,7 @@ The server registers tools from two independent sources, initialized separately 
 
 **FieldManager** (`field-operations/field-manager.js`): Handles field CRUD within REST API v2 constraints (fields are properties of form objects, not separate endpoints). Generates integer IDs via max+1, creates compound sub-inputs for address/name/creditcard fields.
 
-**Field Registry** (`field-definitions/field-registry.js`): Metadata for all 45 Gravity Forms field types — categories, storage patterns (simple/compound/special), validation rules, variants, and capability flags.
+**Field Registry** (`field-definitions/field-registry.js`): Metadata for all 46 Gravity Forms field types — categories, storage patterns (simple/compound/special), validation rules, variants, and capability flags.
 
 ### Data Flow
 
@@ -399,7 +399,7 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 10. **Validation has legacy and new patterns.** A `BaseValidator` legacy layer wraps the newer `ValidationChain` and domain validators. Both paths are active. New code should use the chain system in `validation-chain.js`.
 
-11. **`gf_list_field_types` defaults to summary mode.** Returns only `type`, `label`, `category`. Pass `detail=true` for full metadata; add `include_variants=true` for variants. Prevents dumping thousands of tokens for all 45 field types.
+11. **`gf_list_field_types` defaults to summary mode.** Returns only `type`, `label`, `category`. Pass `detail=true` for full metadata; add `include_variants=true` for variants. Prevents dumping thousands of tokens for all 46 field types.
 
 12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_*` → `GRAVITY_FORMS_*`. The rest of the client and AuthManager work unchanged.
 

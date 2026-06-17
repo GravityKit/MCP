@@ -199,26 +199,31 @@ export const fieldOperationHandlers = {
           address: 'dot-notation by sub-input (N = field id): {"N.1":"Street","N.2":"Line 2","N.3":"City","N.4":"State","N.5":"ZIP","N.6":"Country"}',
           consent: 'dot-notation: {"5.1":"1","5.2":"text","5.3":"revision"}',
           chainedselect: 'dot-notation, one sub-input per dropdown level (count is dynamic): {"N.1":"Level1 value","N.2":"Level2 value",…}',
-          time: 'string: "HH:MM am/pm" (e.g. "12:30 pm"), stored combined — NOT as .1/.2/.3 sub-inputs',
-          date: 'string: "YYYY-MM-DD" (or the field date format)',
-          fileupload: 'string: file URL (JSON array of URLs when multipleFiles)',
-          signature: 'string: saved signature image filename',
+          time: 'string: "HH:MM am/pm" (e.g. "12:30 pm"), stored at the field id (one combined value)',
+          date: 'string: "YYYY-MM-DD" (always ISO, zero-padded — independent of the field\'s display format)',
+          fileupload: 'string: single file URL; a JSON array of URLs (e.g. ["https://.../a.pdf"]) when multipleFiles is on or the field\'s storageType is "json"',
+          signature: 'string: the saved signature image filename (e.g. "<hash>.png")',
+          password: 'not stored — the entry value is always empty ("")',
+          // Post fields
+          post_image: 'string: "url|:|title|:|caption|:|description|:|alt" — one composite joined by "|:|" (5 segments); a bare URL alone is fine, trailing parts may be empty',
           // Pricing (price encoded as "Label|amount")
-          product: 'singleproduct: dot-notation {"N.1":"Name","N.2":"10.00","N.3":"qty"}; select/radio: "Name|10.00"',
+          product: 'singleproduct: dot-notation {"N.1":"Name","N.2":"10.00","N.3":"qty"}; select/radio: "Name|10.00"; price (User Defined): single money string',
           option: 'string: "Label|price"; checkbox option: dot-notation per choice',
           quantity: 'string: "2" (integer)',
           shipping: 'string: "Method|price" (or "price")',
           total: 'string: "29.99" — calculated from pricing fields; rarely set directly',
-          // Surveys / quiz / poll (add-on choice codes)
-          survey_likert: 'single-row: "glikertcolN"; multi-row: dot-notation {"N.rowValue":"glikertcolN"}',
-          survey_rating: 'string: rating choice value (e.g. "glikertcol3")',
-          survey_rank: 'string: all choice values in ranked order, comma-separated (order = the data). Survey auto-assigns comma-free value tokens ("gsurvey<id><hex>") so the comma delimiter is unambiguous — never put a comma in a rank choice VALUE (labels may contain commas; they are not stored).',
-          survey: 'by inputType: radio/select→string, checkbox→array, text→string',
-          quiz: 'string: "gquizN" (radio/select) or array of "gquizN" (checkbox)',
-          poll: 'string: "gpollN" (radio/select) or array of "gpollN" (checkbox)',
+          // Surveys / quiz / poll. Choice VALUES are add-on-generated tokens of
+          // the form "g<kind><fieldId><hex>" (e.g. gsurvey5a1b2c3d); inspect the
+          // form's choices for the real tokens.
+          survey_likert: 'single-row: string = the column token "glikertcol<fieldId><hex>"; multi-row: dot-notation keyed by sub-input id (N.1, N.2…) with value "glikertrow<hex>:glikertcol<fieldId><hex>"',
+          survey_rating: 'string: the rating choice value token "grating<fieldId><hex>" (e.g. "grating5a1b2c3d")',
+          survey_rank: 'string: all choice values in ranked order, comma-separated (order = the data). Choice value tokens are comma-free, so the delimiter is unambiguous (labels are not stored).',
+          survey: 'by inputType: radio/select→string, checkbox→dot-notation sub-inputs, text/textarea→string, rank/rating/likert→see survey_rank/survey_rating/survey_likert. Choice values are "gsurvey<fieldId><hex>" tokens',
+          quiz: 'string: "gquiz<fieldId><hex>" (radio/select) or dot-notation sub-inputs N.1/N.2 (checkbox)',
+          poll: 'string: "gpoll<fieldId><hex>" (radio/select) or dot-notation sub-inputs (checkbox)',
           // Repeaters / nested
           repeater: 'array of row objects: [{"<subFieldId>":"val", ...}, ...]',
-          form: 'array of child entry ids: [101,102] — create child entries first',
+          form: 'comma-separated string of child entry ids, e.g. "101,102" (create child entries first)',
         };
         fieldTypes = entries.map(([type, def]) => {
           const entry = { type, label: def.label, category: def.category };

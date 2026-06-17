@@ -36,6 +36,27 @@ export const fieldRegistry = {
     }
   },
 
+  password: {
+    // GF registers 'password' as its OWN field type (GF_Field_Password), not a
+    // text variant. It is single-id — get_entry_inputs() returns null, so no
+    // dot-notation sub-inputs. CRITICALLY, GF does NOT persist passwords: the
+    // value is stashed/hydrated into the runtime $entry only during submission;
+    // the DB entry value is an EMPTY STRING (''). (class-gf-field-password.php;
+    // tests/unit-tests/gf-field/test-type-password.php::test_not_saving_passwords
+    // asserts $entry['1'] === '').
+    type: 'password',
+    label: 'Password',
+    category: 'advanced',
+    supportsRequired: true,
+    supportsConditionalLogic: false,
+    storage: {
+      type: 'string',
+      format: 'single'
+    },
+    storesData: false,
+    isSensitive: true
+  },
+
   textarea: {
     type: 'textarea',
     label: 'Paragraph Text',
@@ -75,9 +96,9 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      // GF stores number values as a TEXT string in the entry, not numeric.
-      // numberFormat (decimal_dot/decimal_comma/currency) is display/validation,
-      // not storage. (class-gf-field-number.php get_value_submission → string.)
+      // GF stores number values as a TEXT string in the entry; numberFormat
+      // (decimal_dot/decimal_comma/currency) governs display/validation only.
+      // (class-gf-field-number.php get_value_submission → string.)
       type: 'string',
       format: 'single'
     },
@@ -289,7 +310,12 @@ export const fieldRegistry = {
     storage: {
       type: 'mixed',
       format: 'conditional',
-      condition: 'multipleFiles',
+      // GF stores a JSON array when EITHER multipleFiles is on OR the field's
+      // storageType === 'json' (a single file set to JSON storage is also
+      // JSON-encoded, e.g. ["https://.../file.pdf"]).
+      // (class-gf-field-fileupload.php to_string: storageType==='json' ||
+      // multipleFiles || is_array($value) → json_encode.)
+      condition: "storageType === 'json' || multipleFiles",
       singleFormat: 'string',
       multipleFormat: 'json'
     },
@@ -386,8 +412,10 @@ export const fieldRegistry = {
     }
   },
 
-  post_body: {
-    type: 'post_body',
+  post_content: {
+    // The GF field type is 'post_content' (GF_Field_Post_Content, $type =
+    // 'post_content'). Storage is a plain string.
+    type: 'post_content',
     label: 'Post Body',
     category: 'post',
     supportsRequired: true,
@@ -454,8 +482,14 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
+      // GF stores ONE composite string under the field id, five segments
+      // joined by "|:|": url|:|title|:|caption|:|description|:|alt. NOT a bare
+      // URL and NOT dot-notation sub-inputs. (class-gf-field-post-image.php
+      // get_value_save_entry.) Trailing segments may be empty (url-only is OK).
       type: 'string',
-      format: 'single'
+      format: 'composite',
+      delimiter: '|:|',
+      segments: ['url', 'title', 'caption', 'description', 'alt']
     }
   },
 
@@ -493,10 +527,12 @@ export const fieldRegistry = {
     storage: {
       type: 'varies',
       format: 'inputType-dependent',
-      // singleproduct/calculation/price/hiddenproduct: compound dot-notation
+      // singleproduct/calculation/hiddenproduct: compound dot-notation
       //   (.1=name, .2=price, .3=quantity) — has inputs, NO choices
       // select/radio: single "value|price" string — has choices, NO inputs
       // checkbox: dot-notation sub-inputs "value|price" — has inputs + choices
+      // price (User Defined Price): single money/number string — no inputs,
+      //   no choices (class-gf-field-price.php renders one input_{id}, no .1/.2/.3)
     },
     hasChoices: true,
     variants: {
@@ -505,7 +541,7 @@ export const fieldRegistry = {
       radio: { label: 'Radio Buttons', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
       checkbox: { label: 'Checkboxes', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
       calculation: { label: 'Calculation', settings: { inputType: 'calculation' }, storage: { type: 'compound', format: 'dotNotation' } },
-      price: { label: 'User Defined Price', settings: { inputType: 'price' }, storage: { type: 'compound', format: 'dotNotation' } },
+      price: { label: 'User Defined Price', settings: { inputType: 'price' }, storage: { type: 'string', format: 'single' } },
       hiddenproduct: { label: 'Hidden', settings: { inputType: 'hiddenproduct' }, storage: { type: 'compound', format: 'dotNotation' } }
     }
   },
@@ -518,7 +554,6 @@ export const fieldRegistry = {
     supportsConditionalLogic: true,
     storage: {
       // Like number, GF stores the quantity as a TEXT string in the entry.
-      // "numeric" is the field's purpose, not its storage shape.
       type: 'string',
       format: 'single'
     }
@@ -584,12 +619,14 @@ export const fieldRegistry = {
     storage: {
       type: 'compound',
       format: 'dotNotation',
+      // GF persists ONLY two sub-inputs to the entry: .1 = the card number
+      // MASKED to last-4 (e.g. "XXXXXXXXXXXX1111") and .4 = the card TYPE name
+      // (e.g. "Visa"). The expiration (.2), security code (.3) and cardholder
+      // name (.5) are NEVER stored — the security code is never persisted.
+      // (class-gf-field-creditcard.php get_entry_inputs + get_value_save_entry.)
       subInputs: {
-        '1': 'card_number',
-        '2': 'expiration_date',
-        '3': 'security_code',
-        '4': 'card_name',
-        '5': 'card_type'
+        '1': 'card_number_masked',
+        '4': 'card_type'
       }
     },
     isCompound: true,
@@ -622,8 +659,8 @@ export const fieldRegistry = {
     supportsConditionalLogic: true,
     storage: {
       // The Signature add-on saves the drawn image to disk and stores its
-      // FILENAME (e.g. "<hash>.png") in the entry — not base64. The public URL
-      // is derived from the filename at display time (get_signature_url()).
+      // FILENAME (e.g. "<hash>.png") in the entry; the public URL is derived
+      // from the filename at display time (get_signature_url()).
       // (class-gf-field-signature.php get_value_save_entry → maybe_save_signature.)
       type: 'string',
       format: 'filename'
@@ -765,11 +802,14 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'array',
-      format: 'json'
+      // GP Nested Forms stores a comma-separated string of child entry ids
+      // (e.g. "101,102") in one TEXT column: save does implode(',', ids), read
+      // does explode(',').
+      // (gp-nested-forms class-gp-field-nested-form.php santize_nested_form_field_value.)
+      type: 'string',
+      format: 'commaSeparated'
     },
-    isNested: true,
-    isArray: true
+    isNested: true
   },
 
   repeater: {

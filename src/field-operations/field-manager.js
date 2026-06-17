@@ -302,14 +302,18 @@ export class FieldManager {
       }
     }
     
-    // Credit card field sub-inputs
+    // Credit card field sub-inputs. GF's field defines five form inputs:
+    // .1 Card Number, .2 Expiration, .3 Security Code, .4 Card Type, .5
+    // Cardholder Name. Only .1 (masked number) and .4 (card type) are persisted
+    // to the entry. (class-gf-field-creditcard.php get_field_input /
+    // get_entry_inputs.)
     else if (field.type === 'creditcard') {
       subInputs.push(
         { id: `${baseId}.1`, label: 'Card Number', name: '' },
         { id: `${baseId}.2`, label: 'Expiration Date', name: '' },
         { id: `${baseId}.3`, label: 'Security Code', name: '' },
-        { id: `${baseId}.4`, label: 'Cardholder Name', name: '' },
-        { id: `${baseId}.5`, label: 'Card Type', name: '' }
+        { id: `${baseId}.4`, label: 'Card Type', name: '' },
+        { id: `${baseId}.5`, label: 'Cardholder Name', name: '' }
       );
     }
 
