@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { CONFIG, resolveTarget } from './config.mjs';
 import { writeMcpConfig, makeClient } from './lib/target.mjs';
-import { provisionSite, destroySite } from './lib/siteminter.mjs';
+import { provisionSite, cleanupMintedSite } from './lib/siteminter.mjs';
 import { runAgent } from './lib/agent.mjs';
 import { scoreRun, aggregateTask, decideGate } from './lib/score.mjs';
 import { report } from './lib/report.mjs';
@@ -81,42 +81,42 @@ async function main() {
 
   let target;
   let mintedName = null;
-  if (args.mint) {
-    const prov = await provisionSite({ fresh: args.fresh, log: (m) => console.log(`[siteminter] ${m}`) });
-    target = prov.target;
-    mintedName = prov.name;
-  } else {
-    target = resolveTarget();
-  }
+  let gate = { passed: false };
+  try {
+    if (args.mint) {
+      const prov = await provisionSite({ fresh: args.fresh, log: (m) => console.log(`[siteminter] ${m}`) });
+      target = prov.target;
+      mintedName = prov.name;
+    } else {
+      target = resolveTarget();
+    }
 
-  const client = makeClient(target);
-  const mcpConfigPath = writeMcpConfig(target);
-  const stamp = new Date().toISOString();
-  const traceDir = join(CONFIG.outDir, 'traces', stamp.replace(/[:.]/g, '-'));
+    const client = makeClient(target);
+    const mcpConfigPath = writeMcpConfig(target);
+    const stamp = new Date().toISOString();
+    const traceDir = join(CONFIG.outDir, 'traces', stamp.replace(/[:.]/g, '-'));
 
-  console.log(`\nGate target: ${target.baseUrl}`);
-  console.log(`Tasks: ${tasks.length}  ·  model: ${CONFIG.model}  ·  runs/task: ${CONFIG.runsPerTask}`);
-  console.log(`Transcripts: ${traceDir}\n`);
+    console.log(`\nGate target: ${target.baseUrl}`);
+    console.log(`Tasks: ${tasks.length}  ·  model: ${CONFIG.model}  ·  runs/task: ${CONFIG.runsPerTask}`);
+    console.log(`Transcripts: ${traceDir}\n`);
 
-  const aggregates = [];
-  for (const task of tasks) {
-    aggregates.push(await runTask(task, client, mcpConfigPath, traceDir));
-    // Persist after every task so a long run (or a killed shell) still yields
-    // partial results to inspect.
-    try {
-      mkdirSync(traceDir, { recursive: true });
-      writeFileSync(join(traceDir, 'partial.json'), JSON.stringify(aggregates, null, 2));
-    } catch { /* best effort */ }
-  }
+    const aggregates = [];
+    for (const task of tasks) {
+      aggregates.push(await runTask(task, client, mcpConfigPath, traceDir));
+      // Persist after every task so a long run (or a killed shell) still yields
+      // partial results to inspect.
+      try {
+        mkdirSync(traceDir, { recursive: true });
+        writeFileSync(join(traceDir, 'partial.json'), JSON.stringify(aggregates, null, 2));
+      } catch { /* best effort */ }
+    }
 
-  const gate = decideGate(aggregates, CONFIG.successThreshold);
-  report({ aggregates, gate, stamp });
-
-  if (mintedName && !args.keep) {
-    console.log(`[siteminter] destroying "${mintedName}" (pass --keep to retain it for inspection)`);
-    try { destroySite(mintedName); } catch (e) { console.error(`[siteminter] destroy failed: ${e?.message || e}`); }
-  } else if (mintedName) {
-    console.log(`[siteminter] keeping "${mintedName}" — destroy with: (cd "$SITEMINTER_DIR" && npm run cli -- destroy ${mintedName} --yes)`);
+    gate = decideGate(aggregates, CONFIG.successThreshold);
+    report({ aggregates, gate, stamp });
+  } finally {
+    // Always tear the minted site down — even if provisioning's downstream steps,
+    // the task loop, or reporting threw — so a crash never leaks a Docker site.
+    cleanupMintedSite(mintedName, { keep: args.keep, log: console.log, error: console.error });
   }
 
   process.exit(gate.passed ? 0 : 1);

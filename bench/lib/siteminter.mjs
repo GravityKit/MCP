@@ -126,3 +126,25 @@ export async function provisionSite({ fresh = false, log = () => {}, name = SITE
 export function destroySite(name = SITEMINTER.siteName) {
   sm(['destroy', name, '--yes']);
 }
+
+/**
+ * Decide and perform minted-site cleanup. Best-effort: a destroy failure is
+ * logged, never thrown, so this is safe to call from a `finally` block — which
+ * is how callers guarantee a crashed run never leaks a running Docker site.
+ *
+ * @param {string|null} mintedName  The minted site name, or null on a non-mint run.
+ * @param {{keep?:boolean, destroy?:(name:string)=>void, log?:(m:string)=>void, error?:(m:string)=>void}} [opts]
+ */
+export function cleanupMintedSite(mintedName, { keep = false, destroy = destroySite, log = () => {}, error = () => {} } = {}) {
+  if (!mintedName) return;
+  if (keep) {
+    log(`[siteminter] keeping "${mintedName}" — destroy with: (cd "$SITEMINTER_DIR" && npm run cli -- destroy ${mintedName} --yes)`);
+    return;
+  }
+  try {
+    destroy(mintedName);
+    log(`[siteminter] destroyed "${mintedName}"`);
+  } catch (e) {
+    error(`[siteminter] destroy failed: ${e?.message || e}`);
+  }
+}
