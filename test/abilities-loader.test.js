@@ -488,6 +488,143 @@ suite.test('loadAbilitiesAsTools: healthy schema passes through untouched', asyn
 });
 
 // ---------------------------------------------------------------------------
+// executeAbility request shape (driven through the public handler; the mock
+// captures the wire config). Empty-input contract: every ability is sent an
+// OBJECT input, never null/omitted — GET → input='' (WP treats it as {} via
+// rest_is_object('')); POST → {input:{}}. Foundation guarantees every ability
+// declares an object input_schema, so a null/absent input would only ever 400
+// against type:object; sending {} is always correct. The loader does not
+// inspect the schema.
+// ---------------------------------------------------------------------------
+
+/**
+ * Foundation catalog exercising the request shape across GET/POST and
+ * abilities that do or don't declare an input_schema. The loader always sends
+ * an object input regardless, so the schema and no-schema rows behave
+ * identically — the no-schema rows guard against the loader trying to be clever.
+ */
+function inputSchemaFenceCatalog() {
+  return [
+    {
+      name: 'gk-gravityview/views-list',
+      description: 'GET with object input_schema',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_schema_get',
+    },
+    {
+      name: 'gk-gravityview/view-create',
+      description: 'POST with object input_schema',
+      input_schema: { type: 'object', properties: { title: { type: 'string' } } },
+      annotations: {},
+      enabled: true,
+      mcp_tool_name: 'gv_schema_post',
+    },
+    {
+      name: 'gk-gravityview/ping-get',
+      description: 'GET with NO input_schema',
+      // No input_schema key at all.
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_noschema_get',
+    },
+    {
+      name: 'gk-gravityview/ping-post',
+      description: 'POST with NO input_schema',
+      // No input_schema key at all.
+      annotations: {},
+      enabled: true,
+      mcp_tool_name: 'gv_noschema_post',
+    },
+  ];
+}
+
+/** Find the captured /run request for a given ability name. */
+function findRun(stub, abilityName) {
+  return stub.requests.find(
+    (r) => typeof r.url === 'string' && r.url === `/wp-json/wp-abilities/v1/abilities/${abilityName}/run`,
+  );
+}
+
+suite.test('executeAbility: object input_schema + empty input → GET sends params {input:\'\'}', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_schema_get({});
+  const run = findRun(stub, 'gk-gravityview/views-list');
+  TestAssert.isTrue(!!run, 'GET ability must hit the run endpoint');
+  TestAssert.equal(run.method, 'GET');
+  TestAssert.deepEqual(run.params, { input: '' }, 'empty object input → input="" (WP rest_is_object(\'\')===true)');
+  TestAssert.equal(run.data, undefined, 'GET must not carry a body');
+});
+
+suite.test('executeAbility: object input_schema + empty input → POST body {input:{}}', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_schema_post({});
+  const run = findRun(stub, 'gk-gravityview/view-create');
+  TestAssert.isTrue(!!run, 'POST ability must hit the run endpoint');
+  TestAssert.equal(run.method, 'POST');
+  TestAssert.deepEqual(run.data, { input: {} }, 'empty object input → body {input:{}}');
+  TestAssert.equal(run.params, undefined, 'POST must not carry query params');
+});
+
+suite.test('executeAbility: empty input on a GET ability → params {input:\'\'} even without a declared schema', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_noschema_get({});
+  const run = findRun(stub, 'gk-gravityview/ping-get');
+  TestAssert.isTrue(!!run, 'GET ability must hit the run endpoint');
+  TestAssert.equal(run.method, 'GET');
+  TestAssert.deepEqual(run.params, { input: '' }, 'empty input → input="" (object); the loader always sends an object');
+});
+
+suite.test('executeAbility: empty input on a POST ability → body {input:{}} even without a declared schema', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_noschema_post({});
+  const run = findRun(stub, 'gk-gravityview/ping-post');
+  TestAssert.isTrue(!!run, 'POST ability must hit the run endpoint');
+  TestAssert.equal(run.method, 'POST');
+  TestAssert.deepEqual(run.data, { input: {} }, 'empty input → body {input:{}}; the loader always sends an object');
+});
+
+suite.test('executeAbility: non-empty input → GET bracketed params (unchanged)', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_schema_get({ id: 7, nested: { k: 'v' } });
+  const run = findRun(stub, 'gk-gravityview/views-list');
+  TestAssert.isTrue(!!run, 'GET ability must hit the run endpoint');
+  TestAssert.equal(run.method, 'GET');
+  TestAssert.deepEqual(
+    run.params,
+    { 'input[id]': 7, 'input[nested][k]': 'v' },
+    'non-empty input expands to bracketed query params',
+  );
+});
+
+suite.test('executeAbility: non-empty input → POST body {input:{...}} (unchanged)', async () => {
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_schema_post({ title: 'Hello' });
+  const run = findRun(stub, 'gk-gravityview/view-create');
+  TestAssert.isTrue(!!run, 'POST ability must hit the run endpoint');
+  TestAssert.equal(run.method, 'POST');
+  TestAssert.deepEqual(run.data, { input: { title: 'Hello' } }, 'non-empty input nests under input key');
+});
+
+suite.test('executeAbility: non-empty input on a schemaless ability still sends it (bracketed)', async () => {
+  // The loader always forwards caller-supplied keys verbatim (bracketed); the
+  // server, not the loader, is the authority on whether that ability accepts
+  // the input.
+  const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+  await handlers.gv_noschema_get({ q: 'x' });
+  const run = findRun(stub, 'gk-gravityview/ping-get');
+  TestAssert.deepEqual(run.params, { 'input[q]': 'x' }, 'keys present → bracketed params regardless of schema');
+});
+
+// ---------------------------------------------------------------------------
 // Lightweight smoke for the existing helpers — these have no tests yet and
 // regressions here would silently mis-route every gv_* call.
 // ---------------------------------------------------------------------------

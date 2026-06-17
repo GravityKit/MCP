@@ -416,11 +416,31 @@ function walkInputToBracketedParams(value, key, out) {
   out[key] = value;
 }
 
+/**
+ * Invariant: EVERY ability declares an object `input_schema` (Foundation
+ * guarantees this), so the loader ALWAYS sends an object input — an empty
+ * call goes out as an empty object in the method-appropriate empty
+ * representation. The WP abilities-api validates the `input` arg against
+ * `type:object`, so a missing/`null` arg would fail ("input is not of type
+ * object" → 400); an empty object never does. Readonly abilities MUST use
+ * GET — WP core's run controller enforces method-per-annotation (readonly =
+ * GET, destructive+idempotent = DELETE, else POST), so uniform POST isn't an
+ * option. On GET/DELETE, WP rehydrates `input=''` as `{}`
+ * (rest_is_object('') === true), the wire form of an empty object on a query
+ * string.
+ *
+ * @param {object}  wpClient        WordPressClient instance.
+ * @param {string}  abilityName     Fully-qualified ability name.
+ * @param {'GET'|'POST'|'DELETE'} method  Method derived from annotations.
+ * @param {object}  input           Caller-supplied input (may be empty).
+ */
 async function executeAbility(wpClient, abilityName, method, input) {
   // Explicit baseURL so the URL resolves at the WP root regardless
   // of how the client instance is namespaced.
   const baseURL = wpClient.baseUrl;
   const url     = `/wp-json/wp-abilities/v1/abilities/${abilityName}/run`;
+
+  const hasInputKeys = !!input && Object.keys(input).length > 0;
 
   if (method === 'GET' || method === 'DELETE') {
     // WordPress REST takes bracketed query params for object-typed
@@ -430,21 +450,31 @@ async function executeAbility(wpClient, abilityName, method, input) {
     // expand the input into `input[key][nested]=value` so WP
     // rehydrates the nested object structure.
     const config = { method, baseURL, url };
-    if (input && Object.keys(input).length > 0) {
+    if (hasInputKeys) {
       const params = {};
       walkInputToBracketedParams(input, 'input', params);
       config.params = params;
+    } else {
+      // Empty input. Send `input=` (empty string): WP's
+      // rest_is_object('') === true, so it validates as an empty object —
+      // whereas omitting `input` entirely sends `null`, which fails the
+      // type:object check with a 400.
+      config.params = { input: '' };
     }
     const { data } = await wpClient.httpClient.request(config);
     return data;
   }
 
   // POST. The Abilities API wraps input under an `input` key in the body.
-  const { data } = await wpClient.httpClient.request({
+  // With keys → `{ input: {…} }`. Empty → `{ input: {} }` (a real empty
+  // object validates against type:object).
+  const data = hasInputKeys ? { input } : { input: {} };
+
+  const response = await wpClient.httpClient.request({
     method,
     baseURL,
     url,
-    data: input && Object.keys(input).length > 0 ? { input } : {},
+    data,
   });
-  return data;
+  return response.data;
 }
