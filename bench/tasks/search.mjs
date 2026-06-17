@@ -10,6 +10,8 @@ export default [
   {
     id: 'search.add-last-name-field',
     category: 'search',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) {
       const title = uniqueLabel('BENCH SearchView');
       const form = await client.createForm(uniqueLabel('BENCH Form'));
@@ -36,6 +38,8 @@ export default [
   {
     id: 'search.add-and-configure-input',
     category: 'search',
+    expectedTurns: 4,
+    maxTurns: 10,
     async setup(client) {
       const title = uniqueLabel('BENCH SearchView');
       const form = await client.createForm(uniqueLabel('BENCH Form'));
@@ -62,6 +66,8 @@ export default [
   {
     id: 'search.multi-field-bar',
     category: 'search',
+    expectedTurns: 4,
+    maxTurns: 12,
     async setup(client) {
       const title = uniqueLabel('BENCH SearchView');
       const form = await client.createForm(uniqueLabel('BENCH Form'));
@@ -88,6 +94,8 @@ export default [
   {
     id: 'search.role-restricted-field',
     category: 'search',
+    expectedTurns: 4,
+    maxTurns: 12,
     async setup(client) {
       const title = uniqueLabel('BENCH SearchView');
       const form = await client.createForm(uniqueLabel('BENCH Form'));

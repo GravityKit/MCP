@@ -10,6 +10,8 @@ export default [
   {
     id: 'authoring.create-view-seeded',
     category: 'authoring',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) {
       const title = uniqueLabel('BENCH View');
       const form = await client.createForm(uniqueLabel('BENCH Form'));

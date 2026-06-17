@@ -18,6 +18,8 @@ export default [
   {
     id: 'view-widgets.add',
     category: 'view-widgets',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) { return seedView(client); },
     prompt: (s) => `Add a "pagination info" widget (shows "Displaying x–y of z") to the footer of the GravityView View "${s.title}" (id ${s.viewId}).`,
     async grade({ client, state }) {
@@ -31,6 +33,8 @@ export default [
   {
     id: 'view-widgets.add-then-remove',
     category: 'view-widgets',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) { return seedView(client); },
     prompt: (s) => `On the GravityView View "${s.title}" (id ${s.viewId}), add a pagination info widget to the header, then remove it again.`,
     async grade({ client, state }) {

@@ -13,6 +13,8 @@ export default [
   {
     id: 'forms.create-complex',
     category: 'forms',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup() { return { title: uniqueLabel('BENCH Form') }; },
     prompt: (s) =>
       `Create a new Gravity Forms form titled "${s.title}" for event registration with these fields: ` +
@@ -32,6 +34,8 @@ export default [
   {
     id: 'forms.add-field',
     category: 'forms',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return { formId: (await client.createForm(uniqueLabel('BENCH Form'))).id }; },
     prompt: (s) => `Add a Date field labeled "Event Date" to Gravity Forms form ${s.formId}.`,
     async grade({ client, state }) {
@@ -45,6 +49,8 @@ export default [
   {
     id: 'forms.make-field-required',
     category: 'forms',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return { formId: (await client.createForm(uniqueLabel('BENCH Form'))).id }; },
     prompt: (s) => `On Gravity Forms form ${s.formId}, make the Email field required.`,
     async grade({ client, state }) {
@@ -59,6 +65,8 @@ export default [
   {
     id: 'forms.delete-field',
     category: 'forms',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return { formId: (await client.createForm(uniqueLabel('BENCH Form'))).id }; },
     prompt: (s) => `Remove the Last Name field from Gravity Forms form ${s.formId}.`,
     async grade({ client, state }) {
@@ -72,6 +80,8 @@ export default [
   {
     id: 'forms.add-notification',
     category: 'forms',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return { formId: (await client.createForm(uniqueLabel('BENCH Form'))).id }; },
     prompt: (s) =>
       `Add an admin email notification to Gravity Forms form ${s.formId} that fires when the form is submitted, ` +
@@ -87,6 +97,8 @@ export default [
   {
     id: 'forms.add-confirmation',
     category: 'forms',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return { formId: (await client.createForm(uniqueLabel('BENCH Form'))).id }; },
     prompt: (s) => `Add a confirmation to Gravity Forms form ${s.formId} that shows the message "Thanks for registering!".`,
     async grade({ client, state }) {

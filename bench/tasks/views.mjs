@@ -17,6 +17,8 @@ export default [
   {
     id: 'views.update-settings',
     category: 'views',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return seedView(client); },
     prompt: (s) => `On the GravityView View "${s.title}" (id ${s.viewId}), set the number of entries shown per page to 25.`,
     async grade({ client, state }) {
@@ -30,6 +32,8 @@ export default [
   {
     id: 'views.set-status-publish',
     category: 'views',
+    expectedTurns: 2,
+    maxTurns: 8,
     async setup(client) { return seedView(client); },
     prompt: (s) => `The GravityView View "${s.title}" (id ${s.viewId}) is a draft. Publish it.`,
     async grade({ client, state }) {
@@ -43,6 +47,8 @@ export default [
   {
     id: 'views.duplicate',
     category: 'views',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return seedView(client); },
     prompt: (s) => `Duplicate the GravityView View "${s.title}" (id ${s.viewId}).`,
     async grade({ telemetry }) {
@@ -56,6 +62,8 @@ export default [
   {
     id: 'views.delete',
     category: 'views',
+    expectedTurns: 2,
+    maxTurns: 8,
     async setup(client) { return seedView(client); },
     prompt: (s) => `Delete the GravityView View "${s.title}" (id ${s.viewId}).`,
     async grade({ client, state }) {

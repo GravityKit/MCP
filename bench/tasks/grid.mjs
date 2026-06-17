@@ -18,6 +18,8 @@ export default [
   {
     id: 'grid.add-row',
     category: 'grid',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) { return seedBuilderView(client); },
     prompt: (s) => `Add a new two-column (50/50) grid row to the GravityView View "${s.title}" (id ${s.viewId}).`,
     async grade({ client, state }) {
@@ -31,6 +33,8 @@ export default [
   {
     id: 'grid.add-row-and-place-field',
     category: 'grid',
+    expectedTurns: 4,
+    maxTurns: 12,
     async setup(client) { return seedBuilderView(client); },
     prompt: (s) => `On the GravityView View "${s.title}" (id ${s.viewId}), add a two-column grid row and place the Email field in its left column.`,
     async grade({ client, state }) {

@@ -16,6 +16,8 @@ export default [
   {
     id: 'entries.read',
     category: 'entries',
+    expectedTurns: 2,
+    maxTurns: 8,
     async setup(client) {
       const s = await formWithEntries(client, [{ '1': 'Ada', '2': 'ada@example.com' }]);
       return { ...s, entryId: s.entryIds[0] };
@@ -31,6 +33,8 @@ export default [
   {
     id: 'entries.search',
     category: 'entries',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) {
       return formWithEntries(client, [
         { '1': 'Ada', '2': 'ada@example.com' },
@@ -49,6 +53,8 @@ export default [
   {
     id: 'entries.update',
     category: 'entries',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) {
       const s = await formWithEntries(client, [{ '1': 'Ada', '2': 'ada@example.com' }]);
       return { ...s, entryId: s.entryIds[0] };
@@ -65,6 +71,8 @@ export default [
   {
     id: 'entries.delete',
     category: 'entries',
+    expectedTurns: 2,
+    maxTurns: 8,
     async setup(client) {
       const s = await formWithEntries(client, [{ '1': 'Ada', '2': 'ada@example.com' }]);
       return { ...s, entryId: s.entryIds[0], before: await client.countEntries(s.formId) };

@@ -26,6 +26,8 @@ export default [
   {
     id: 'view-fields.add',
     category: 'view-fields',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return seedTableView(client); },
     prompt: (s) => `Add the Email field as a column to the GravityView View "${s.title}" (id ${s.viewId}).`,
     async grade({ client, state }) {
@@ -39,6 +41,8 @@ export default [
   {
     id: 'view-fields.add-with-label',
     category: 'view-fields',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) { return seedTableView(client); },
     prompt: (s) => `Add the First Name field to the GravityView View "${s.title}" (id ${s.viewId}) and set its column label to "Given Name".`,
     async grade({ client, state }) {
@@ -54,6 +58,8 @@ export default [
   {
     id: 'view-fields.reorder',
     category: 'view-fields',
+    expectedTurns: 4,
+    maxTurns: 12,
     async setup(client) { return seedTableView(client); },
     prompt: (s) => `On the GravityView View "${s.title}" (id ${s.viewId}), add First Name and Email as columns, with Email shown first (before First Name).`,
     async grade({ client, state }) {
@@ -69,6 +75,8 @@ export default [
   {
     id: 'view-fields.remove',
     category: 'view-fields',
+    expectedTurns: 3,
+    maxTurns: 8,
     async setup(client) { return seedTableView(client); },
     prompt: (s) => `On the GravityView View "${s.title}" (id ${s.viewId}), add First Name and Email as columns, then remove the First Name column (keep Email).`,
     async grade({ client, state }) {

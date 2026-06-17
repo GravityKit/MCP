@@ -11,6 +11,8 @@ export default [
   {
     id: 'entries.validate-without-saving',
     category: 'entries',
+    expectedTurns: 2,
+    maxTurns: 8,
     async setup(client) {
       const form = await client.createForm(uniqueLabel('BENCH Form'));
       const before = await client.countEntries(form.id);
@@ -34,6 +36,8 @@ export default [
   {
     id: 'entries.submit',
     category: 'entries',
+    expectedTurns: 3,
+    maxTurns: 10,
     async setup(client) {
       const form = await client.createForm(uniqueLabel('BENCH Form'));
       const before = await client.countEntries(form.id);

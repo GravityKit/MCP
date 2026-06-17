@@ -12,6 +12,8 @@ export default [
   {
     id: 'discovery.list-views',
     category: 'discovery',
+    expectedTurns: 2,
+    maxTurns: 8,
     prompt: 'List all the GravityView Views on this site and tell me how many there are.',
     async grade({ telemetry }) {
       const ok = calledOk(telemetry, 'views_list') && noToolErrors(telemetry);
@@ -24,6 +26,8 @@ export default [
   {
     id: 'discovery.list-layouts',
     category: 'discovery',
+    expectedTurns: 2,
+    maxTurns: 8,
     prompt: 'What View layouts (templates) are available on this site? Name them.',
     async grade({ telemetry }) {
       const clean = calledOk(telemetry, 'layouts_list') && noToolErrors(telemetry);
@@ -37,6 +41,8 @@ export default [
   {
     id: 'discovery.scan-by-status',
     category: 'discovery',
+    expectedTurns: 2,
+    maxTurns: 8,
     prompt: 'Which Views on this site are published (post status "publish")? List them.',
     async grade({ telemetry }) {
       // The scalar-status oneOf bug surfaced as a 400 on the status-filtered call.
