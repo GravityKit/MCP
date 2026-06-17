@@ -36,6 +36,27 @@ export const fieldRegistry = {
     }
   },
 
+  password: {
+    // GF registers 'password' as its OWN field type (GF_Field_Password), not a
+    // text variant. It is single-id — get_entry_inputs() returns null, so no
+    // dot-notation sub-inputs. CRITICALLY, GF does NOT persist passwords: the
+    // value is stashed/hydrated into the runtime $entry only during submission;
+    // the DB entry value is an EMPTY STRING (''). (class-gf-field-password.php;
+    // tests/unit-tests/gf-field/test-type-password.php::test_not_saving_passwords
+    // asserts $entry['1'] === '').
+    type: 'password',
+    label: 'Password',
+    category: 'advanced',
+    supportsRequired: true,
+    supportsConditionalLogic: false,
+    storage: {
+      type: 'string',
+      format: 'single'
+    },
+    storesData: false,
+    isSensitive: true
+  },
+
   textarea: {
     type: 'textarea',
     label: 'Paragraph Text',
@@ -75,7 +96,10 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'number',
+      // GF stores number values as a TEXT string in the entry; numberFormat
+      // (decimal_dot/decimal_comma/currency) governs display/validation only.
+      // (class-gf-field-number.php get_value_submission → string.)
+      type: 'string',
       format: 'single'
     },
     variants: {
@@ -286,7 +310,12 @@ export const fieldRegistry = {
     storage: {
       type: 'mixed',
       format: 'conditional',
-      condition: 'multipleFiles',
+      // GF stores a JSON array when EITHER multipleFiles is on OR the field's
+      // storageType === 'json' (a single file set to JSON storage is also
+      // JSON-encoded, e.g. ["https://.../file.pdf"]).
+      // (class-gf-field-fileupload.php to_string: storageType==='json' ||
+      // multipleFiles || is_array($value) → json_encode.)
+      condition: "storageType === 'json' || multipleFiles",
       singleFormat: 'string',
       multipleFormat: 'json'
     },
@@ -383,8 +412,10 @@ export const fieldRegistry = {
     }
   },
 
-  post_body: {
-    type: 'post_body',
+  post_content: {
+    // The GF field type is 'post_content' (GF_Field_Post_Content, $type =
+    // 'post_content'). Storage is a plain string.
+    type: 'post_content',
     label: 'Post Body',
     category: 'post',
     supportsRequired: true,
@@ -451,8 +482,14 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
+      // GF stores ONE composite string under the field id, five segments
+      // joined by "|:|": url|:|title|:|caption|:|description|:|alt. NOT a bare
+      // URL and NOT dot-notation sub-inputs. (class-gf-field-post-image.php
+      // get_value_save_entry.) Trailing segments may be empty (url-only is OK).
       type: 'string',
-      format: 'single'
+      format: 'composite',
+      delimiter: '|:|',
+      segments: ['url', 'title', 'caption', 'description', 'alt']
     }
   },
 
@@ -490,10 +527,12 @@ export const fieldRegistry = {
     storage: {
       type: 'varies',
       format: 'inputType-dependent',
-      // singleproduct/calculation/price/hiddenproduct: compound dot-notation
+      // singleproduct/calculation/hiddenproduct: compound dot-notation
       //   (.1=name, .2=price, .3=quantity) — has inputs, NO choices
       // select/radio: single "value|price" string — has choices, NO inputs
       // checkbox: dot-notation sub-inputs "value|price" — has inputs + choices
+      // price (User Defined Price): single money/number string — no inputs,
+      //   no choices (class-gf-field-price.php renders one input_{id}, no .1/.2/.3)
     },
     hasChoices: true,
     variants: {
@@ -502,7 +541,7 @@ export const fieldRegistry = {
       radio: { label: 'Radio Buttons', settings: { inputType: 'radio' }, storage: { type: 'string', format: 'single' } },
       checkbox: { label: 'Checkboxes', settings: { inputType: 'checkbox' }, storage: { type: 'compound', format: 'dotNotation' } },
       calculation: { label: 'Calculation', settings: { inputType: 'calculation' }, storage: { type: 'compound', format: 'dotNotation' } },
-      price: { label: 'User Defined Price', settings: { inputType: 'price' }, storage: { type: 'compound', format: 'dotNotation' } },
+      price: { label: 'User Defined Price', settings: { inputType: 'price' }, storage: { type: 'string', format: 'single' } },
       hiddenproduct: { label: 'Hidden', settings: { inputType: 'hiddenproduct' }, storage: { type: 'compound', format: 'dotNotation' } }
     }
   },
@@ -514,7 +553,8 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'number',
+      // Like number, GF stores the quantity as a TEXT string in the entry.
+      type: 'string',
       format: 'single'
     }
   },
@@ -579,12 +619,14 @@ export const fieldRegistry = {
     storage: {
       type: 'compound',
       format: 'dotNotation',
+      // GF persists ONLY two sub-inputs to the entry: .1 = the card number
+      // MASKED to last-4 (e.g. "XXXXXXXXXXXX1111") and .4 = the card TYPE name
+      // (e.g. "Visa"). The expiration (.2), security code (.3) and cardholder
+      // name (.5) are NEVER stored — the security code is never persisted.
+      // (class-gf-field-creditcard.php get_entry_inputs + get_value_save_entry.)
       subInputs: {
-        '1': 'card_number',
-        '2': 'expiration_date',
-        '3': 'security_code',
-        '4': 'card_name',
-        '5': 'card_type'
+        '1': 'card_number_masked',
+        '4': 'card_type'
       }
     },
     isCompound: true,
@@ -616,8 +658,12 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
+      // The Signature add-on saves the drawn image to disk and stores its
+      // FILENAME (e.g. "<hash>.png") in the entry; the public URL is derived
+      // from the filename at display time (get_signature_url()).
+      // (class-gf-field-signature.php get_value_save_entry → maybe_save_signature.)
       type: 'string',
-      format: 'base64'
+      format: 'filename'
     }
   },
 
@@ -756,11 +802,28 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'array',
-      format: 'json'
+      // GP Nested Forms stores a comma-separated string of child entry ids
+      // (e.g. "101,102") in one TEXT column: save does implode(',', ids), read
+      // does explode(',').
+      // (gp-nested-forms class-gp-field-nested-form.php santize_nested_form_field_value.)
+      type: 'string',
+      format: 'commaSeparated'
     },
     isNested: true,
-    isArray: true
+    // Provided by the GP Nested Forms add-on (needs the Spellbook framework,
+    // formerly Gravity Perks). Configure these on the field:
+    requiresAddon: 'gp-nested-forms',
+    settings: {
+      gpnfForm: {
+        required: true,
+        type: 'string',
+        description: 'Child form id whose entries are nested under this field.',
+      },
+      gpnfFields: {
+        type: 'array',
+        description: 'Summary Fields — the child-form field ids shown in the nested entries summary table (lets you choose which child fields display). A directory View lists the child entry ids; the field/single-entry view renders these fields as columns.',
+      },
+    },
   },
 
   repeater: {
@@ -900,6 +963,61 @@ export function validateFieldConfig(field) {
 }
 
 /**
+ * Fill in field ids for any fields that lack one, mirroring GF's max+1
+ * convention — so callers (and small models driving the MCP in natural
+ * language) don't have to hand-number fields. Explicit ids are preserved; new
+ * ids come from above the highest existing id and never collide. When a field
+ * receives a new id, any provided compound sub-input ids are re-based onto it
+ * (e.g. "2.3" → "10.3"). Non-array input passes through unchanged.
+ *
+ * @param {Array<object>} fields
+ * @returns {Array<object>} fields with ids filled in
+ */
+export function assignFieldIds(fields) {
+  if (!Array.isArray(fields)) {
+    return fields;
+  }
+
+  const used = new Set();
+  for (const field of fields) {
+    const id = Number(field?.id);
+    if (Number.isInteger(id) && id > 0) {
+      used.add(id);
+    }
+  }
+
+  let next = (used.size ? Math.max(...used) : 0) + 1;
+
+  return fields.map((field) => {
+    const id = Number(field?.id);
+    if (Number.isInteger(id) && id > 0) {
+      return field;
+    }
+
+    while (used.has(next)) {
+      next++;
+    }
+    const newId = next++;
+    used.add(newId);
+
+    // Re-base any provided compound sub-input ids onto the new field id.
+    if (Array.isArray(field?.inputs)) {
+      const inputs = field.inputs.map((input) => {
+        const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
+        if (hasDottedId) {
+          const sub = input.id.slice(input.id.indexOf('.') + 1);
+          return { ...input, id: `${newId}.${sub}` };
+        }
+        return input;
+      });
+      return { ...field, id: newId, inputs };
+    }
+
+    return { ...field, id: newId };
+  });
+}
+
+/**
  * Get all field types by category
  */
 export function getFieldsByCategory() {
@@ -995,14 +1113,16 @@ export function generateCompoundInputs(field) {
     }
   }
 
-  // Credit card field sub-inputs.
+  // Credit card field sub-inputs. Per GF (class-gf-field-creditcard.php): .4 is
+  // Card Type and .5 is Cardholder Name; only .1 (masked number) and .4 (card
+  // type) are persisted. Mirrors generateSubInputs in field-manager.js.
   else if (field.type === 'creditcard') {
     subInputs.push(
       { id: `${baseId}.1`, label: 'Card Number', name: '' },
       { id: `${baseId}.2`, label: 'Expiration Date', name: '' },
       { id: `${baseId}.3`, label: 'Security Code', name: '' },
-      { id: `${baseId}.4`, label: 'Cardholder Name', name: '' },
-      { id: `${baseId}.5`, label: 'Card Type', name: '' }
+      { id: `${baseId}.4`, label: 'Card Type', name: '' },
+      { id: `${baseId}.5`, label: 'Cardholder Name', name: '' }
     );
   }
 

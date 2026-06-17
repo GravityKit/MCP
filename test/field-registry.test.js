@@ -4,7 +4,41 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { generateCompoundInputs, isCompoundField, getFieldDefinition } from '../src/field-definitions/field-registry.js';
+import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds } from '../src/field-definitions/field-registry.js';
+
+test('assignFieldIds', async (t) => {
+  await t.test('assigns sequential ids when none are provided', () => {
+    const out = assignFieldIds([{ type: 'text' }, { type: 'email' }, { type: 'number' }]);
+    assert.deepStrictEqual(out.map((f) => f.id), [1, 2, 3]);
+  });
+
+  await t.test('fills around explicit ids without collision', () => {
+    const out = assignFieldIds([{ id: 5, type: 'text' }, { type: 'email' }, { id: 2, type: 'text' }, { type: 'number' }]);
+    assert.strictEqual(out[0].id, 5);
+    assert.strictEqual(out[2].id, 2);
+    assert.deepStrictEqual([out[1].id, out[3].id], [6, 7]); // max(5,2)+1, +1
+    const ids = out.map((f) => f.id);
+    assert.strictEqual(new Set(ids).size, ids.length); // all unique
+  });
+
+  await t.test('leaves already-numbered fields untouched', () => {
+    const out = assignFieldIds([{ id: 1, type: 'text' }, { id: 2, type: 'email' }]);
+    assert.deepStrictEqual(out.map((f) => f.id), [1, 2]);
+  });
+
+  await t.test('re-bases compound sub-input ids to the assigned field id', () => {
+    const out = assignFieldIds([
+      { id: 9, type: 'text' },
+      { type: 'name', inputs: [{ id: '2.3', label: 'First' }, { id: '2.6', label: 'Last' }] },
+    ]);
+    assert.strictEqual(out[1].id, 10);
+    assert.deepStrictEqual(out[1].inputs.map((i) => i.id), ['10.3', '10.6']);
+  });
+
+  await t.test('tolerates non-array input', () => {
+    assert.strictEqual(assignFieldIds(undefined), undefined);
+  });
+});
 
 test('generateCompoundInputs - address field', async (t) => {
   await t.test('generates US address inputs', () => {
@@ -88,8 +122,8 @@ test('generateCompoundInputs - creditcard field', async (t) => {
     assert.strictEqual(inputs[0].label, 'Card Number');
     assert.strictEqual(inputs[1].label, 'Expiration Date');
     assert.strictEqual(inputs[2].label, 'Security Code');
-    assert.strictEqual(inputs[3].label, 'Cardholder Name');
-    assert.strictEqual(inputs[4].label, 'Card Type');
+    assert.strictEqual(inputs[3].label, 'Card Type');
+    assert.strictEqual(inputs[4].label, 'Cardholder Name');
   });
 });
 

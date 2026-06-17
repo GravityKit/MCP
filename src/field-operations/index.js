@@ -174,20 +174,60 @@ export const fieldOperationHandlers = {
               settings: variant.settings
             })) : undefined,
           storage: def.storage,
-          validation: def.validation
+          validation: def.validation,
+          // Add-on field config (e.g. Nested Form's gpnfForm + gpnfFields
+          // Summary Fields). Undefined for most types → stripped by compact.
+          requiresAddon: def.requiresAddon,
+          settings: def.settings
         }));
       } else {
         // Summary mode (default) — minimal tokens, with entry input hints
+        // Entry-value shape per field type. Surfaced for every type whose entry
+        // format is NOT an obvious plain string — the ones a small model is most
+        // likely to populate wrong. Each hint mirrors the field-registry storage
+        // model (compound dot-notation, pricing "Label|amount", add-on choice
+        // codes, array-of-rows for repeaters). Plain string fields (text, email,
+        // number, phone, website, textarea, hidden) are omitted on purpose.
         const inputHints = {
-          checkbox: 'array: ["val1","val2"] — auto-matched to sub-inputs',
-          multiselect: 'array: ["val1","val2"] — commas in values get split',
-          select: 'string: "value"',
-          radio: 'string: "value"',
-          list: 'array: ["a","b"] or [{Col1:"a",Col2:"b"}] for multi-col',
+          // Choice — store the choice VALUE when it has a non-empty value (or
+          // "Show Values"/enableChoiceValue is on), ELSE the choice LABEL text.
+          // (GF rule: !empty(choice.value) || enableChoiceValue ? value : text;
+          // enablePrice then appends "|price".) Inspect the form's choices to know.
+          select: 'string: choice value if set (or "Show Values" on); else the choice label',
+          radio: 'string: choice value if set (or "Show Values" on); else the choice label',
+          checkbox: 'array: selected choices — value if set else label; auto-matched to sub-inputs (N.1, N.2…)',
+          multiselect: 'array: choice values if set else labels; commas in a value get split',
+          list: 'array: ["a","b"] or [{Col1:"a",Col2:"b"}] for multi-col (free text, no choices)',
+          // Compound (dot-notation, keyed by sub-input id)
           name: 'dot-notation: {"1.3":"First","1.6":"Last"}',
-          address: 'dot-notation: {"2.1":"Street","2.3":"City","2.4":"State","2.5":"ZIP"}',
+          address: 'dot-notation by sub-input (N = field id): {"N.1":"Street","N.2":"Line 2","N.3":"City","N.4":"State","N.5":"ZIP","N.6":"Country"}',
           consent: 'dot-notation: {"5.1":"1","5.2":"text","5.3":"revision"}',
-          chainedselect: 'dot-notation: {"1.1":"Level1","1.2":"Level2"}',
+          chainedselect: 'dot-notation, one sub-input per dropdown level (count is dynamic): {"N.1":"Level1 value","N.2":"Level2 value",…}',
+          time: 'string: "HH:MM am/pm" (e.g. "12:30 pm"), stored at the field id (one combined value)',
+          date: 'string: "YYYY-MM-DD" (always ISO, zero-padded — independent of the field\'s display format)',
+          fileupload: 'string: single file URL; a JSON array of URLs (e.g. ["https://.../a.pdf"]) when multipleFiles is on or the field\'s storageType is "json"',
+          signature: 'string: the saved signature image filename (e.g. "<hash>.png")',
+          password: 'not stored — the entry value is always empty ("")',
+          // Post fields
+          post_image: 'string: "url|:|title|:|caption|:|description|:|alt" — one composite joined by "|:|" (5 segments); a bare URL alone is fine, trailing parts may be empty',
+          // Pricing (price encoded as "Label|amount")
+          product: 'singleproduct: dot-notation {"N.1":"Name","N.2":"10.00","N.3":"qty"}; select/radio: "Name|10.00"; price (User Defined): single money string',
+          option: 'string: "Label|price"; checkbox option: dot-notation per choice',
+          quantity: 'string: "2" (integer)',
+          shipping: 'string: "Method|price" (or "price")',
+          total: 'string: "29.99" — calculated from pricing fields; rarely set directly',
+          // Surveys / quiz / poll. Choice VALUES are add-on-generated tokens of
+          // the form "g<kind><fieldId><hex>" (e.g. gsurvey5a1b2c3d); inspect the
+          // form's choices for the real tokens.
+          survey_likert: 'single-row: string = the column token "glikertcol<fieldId><hex>"; multi-row: dot-notation keyed by sub-input id (N.1, N.2…) with value "glikertrow<hex>:glikertcol<fieldId><hex>"',
+          survey_rating: 'string: the rating choice value token "grating<fieldId><hex>" (e.g. "grating5a1b2c3d")',
+          survey_rank: 'string: all choice values in ranked order, comma-separated (order = the data). Choice value tokens are comma-free, so the delimiter is unambiguous (labels are not stored).',
+          survey: 'by inputType: radio/select→string, checkbox→dot-notation sub-inputs, text/textarea→string, rank/rating/likert→see survey_rank/survey_rating/survey_likert. Choice values are "gsurvey<fieldId><hex>" tokens',
+          quiz: 'string: "gquiz<fieldId><hex>" (radio/select) or dot-notation sub-inputs N.1/N.2 (checkbox)',
+          poll: 'string: "gpoll<fieldId><hex>" (radio/select) or dot-notation sub-inputs (checkbox)',
+          // Repeaters / nested
+          repeater: 'array of row objects: [{"<subFieldId>":"val", ...}, ...]',
+          form: 'comma-separated string of child entry ids, e.g. "101,102" (create child entries first)',
         };
         fieldTypes = entries.map(([type, def]) => {
           const entry = { type, label: def.label, category: def.category };

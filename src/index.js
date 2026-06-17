@@ -24,7 +24,7 @@ import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
-import { runPlaneInit, buildToolList, classifyAbilityCall } from './server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs } from './server-runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -45,7 +45,7 @@ const server = new Server(
     capabilities: {
       tools: { listChanged: true }
     },
-    instructions: 'GravityKit MCP server. Tools come from two independent planes.\n\ngf_* are always-on Gravity Forms tools (forms, entries, feeds, notifications, fields), present on any site with working Gravity Forms REST credentials.\n\ngv_* (and other GravityKit product prefixes) are generated from the connected site\'s GravityKit Foundation abilities catalog. They are present only when Foundation and the product (GravityView for gv_*) are active, so the available set varies per site.\n\nEach tool is self-describing: its description and inputSchema document its parameters and behavior. The GravityView surface is discoverable through the gv_*_list tools (gv_views_list, gv_layouts_list, gv_widgets_list, gv_available_fields_get) and gv_field_type_schema_get for field, widget, and search-field shapes. gk_reload_abilities refreshes the catalog when product tools are missing or stale.'
+    instructions: 'GravityKit MCP server. Tools come from two independent planes.\n\ngf_* are always-on Gravity Forms tools (forms, entries, feeds, notifications, fields), present on any site with working Gravity Forms REST credentials.\n\ngv_* (and other GravityKit product prefixes) are generated from the connected site\'s GravityKit Foundation abilities catalog. They are present only when Foundation and the product (GravityView for gv_*) are active, so the available set varies per site.\n\nEach tool is self-describing: its description and inputSchema document its parameters and behavior. The GravityView surface is discoverable through the gv_*_list tools (gv_views_list, gv_layouts_list, gv_widgets_list, gv_available_fields_get) and gv_field_type_schema_get for field, widget, and search-field shapes. To add or configure a search bar, prefer gv_search_bar_add — one call with a View id plus fields[] of {field_id, input?} creates the search_bar and its fields; use the low-level gv_search_field_* tools only for surgical slot edits after gv_view_config_get. gk_reload_abilities refreshes the catalog when product tools are missing or stale.'
   }
 );
 
@@ -387,13 +387,13 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_delete_form',
-    description: 'Delete a form (requires ALLOW_DELETE=true)',
+    description: 'Delete a form. Defaults to Trash (recoverable) — proceed with the default; do NOT pause to ask the user trash-vs-permanent. Set force=true only if the user explicitly asks to permanently delete. (Requires ALLOW_DELETE=true.)',
     annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Form ID' },
-        force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
+        force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
       required: ['id']
     }
@@ -541,13 +541,13 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_delete_entry',
-    description: 'Delete an entry (requires ALLOW_DELETE=true)',
+    description: 'Delete an entry. Defaults to Trash (recoverable) — proceed with the default; do NOT pause to ask the user trash-vs-permanent. Set force=true only if the user explicitly asks to permanently delete. (Requires ALLOW_DELETE=true.)',
     annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Entry ID' },
-        force: { type: 'boolean', description: 'Permanent delete (vs trash)' }
+        force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
       required: ['id']
     }
@@ -735,11 +735,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   if (!gravityFormsClient || !wpClient) {
     try { await initializeClient(); } catch (_) { /* serve whatever planes are up */ }
   }
-  // Best-effort wait for the abilities catalog. 2s covers a warm
-  // cold-start on dev.test (~800ms) plus headroom; if WP is
-  // genuinely unreachable the list ships without gv_* tools and the
-  // next gv_* call (or gk_reload_abilities) retries.
-  await ensureAbilitiesLoaded({ timeoutMs: 2000 });
+  // Best-effort wait for the abilities catalog. The default 2s covers a warm
+  // cold-start (~800ms) plus headroom; if WP is genuinely unreachable the list
+  // ships without gv_* tools and the next gv_* call (or gk_reload_abilities)
+  // retries. Clients that read tools/list only once (no list_changed support,
+  // e.g. `claude -p`) can raise GRAVITYKIT_MCP_LIST_TIMEOUT_MS so this first
+  // list blocks long enough to return the complete catalog.
+  await ensureAbilitiesLoaded({ timeoutMs: resolveAbilitiesListTimeoutMs() });
 
   // Gravity Forms tools are advertised only when that plane is live, so a
   // WP-only install never lists gf_* tools that can't run. gk_reload_abilities

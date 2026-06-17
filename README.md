@@ -9,7 +9,7 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 ## Features
 
 - **Full Gravity Forms Coverage**: 26 tools across forms, entries, feeds, notifications, submissions, and field management
-- **Smart Field Management**: Intelligent field operations with dependency tracking
+- **Smart Field Management**: Intelligent field operations with dependency tracking across all 46 Gravity Forms field types — entry-storage shapes and `entry_input` hints validated against real Gravity Forms + add-ons (round-tripped on GF 2.10.3)
 - **Advanced Search**: Complex filtering and searching capabilities for entries
 - **Form Submissions**: Full submission workflow with validation
 - **Add-on Integration**: Manage feeds for MailChimp, Stripe, PayPal, and more
@@ -72,7 +72,7 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 - `gf_get_form`      - Get complete form configuration
 - `gf_create_form`   - Create new forms with fields
 - `gf_update_form`   - Update existing forms
-- `gf_delete_form`   - Delete forms (requires ALLOW_DELETE=true)
+- `gf_delete_form`   - Delete forms — Trash by default (recoverable), `force=true` to delete permanently (requires ALLOW_DELETE=true)
 - `gf_validate_form` - Validate form data
 
 ### Entries (5 tools)
@@ -80,13 +80,13 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 - `gf_get_entry`    - Get specific entry details
 - `gf_create_entry` - Create new entries
 - `gf_update_entry` - Update existing entries
-- `gf_delete_entry` - Delete entries (requires ALLOW_DELETE=true)
+- `gf_delete_entry` - Delete entries — Trash by default (recoverable), `force=true` to delete permanently (requires ALLOW_DELETE=true)
 
 ### Field Operations (4 tools)
 - `gf_add_field`        - Add fields with intelligent positioning
 - `gf_update_field`     - Update fields with dependency checking
 - `gf_delete_field`     - Delete fields with cascade options
-- `gf_list_field_types` - List available field types
+- `gf_list_field_types` - List the 46 supported field types (summary by default; `detail=true` for full metadata, `include_variants=true` for variants)
 
 ### Submissions (2 tools)
 - `gf_submit_form_data`    - Submit forms with full processing
@@ -109,7 +109,7 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 
 ### GravityKit Products (dynamic)
 
-When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional tools are generated at runtime from its Abilities catalog — each GravityKit add-on under its own server-assigned prefix, so the exact set depends on the installed products and versions. **GravityView** is supported today, using the `gv_*` prefix: View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`), field/widget/search/grid editing, and discovery (`gv_layouts_list`, `gv_field_type_schema_get`, …). Use the `gv_*_list` discovery tools to see what's available on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
+When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional tools are generated at runtime from its Abilities catalog — each GravityKit add-on under its own server-assigned prefix, so the exact set depends on the installed products and versions. **GravityView** is supported today, using the `gv_*` prefix: View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`), field/widget/search/grid editing (add a search bar in one call with `gv_search_bar_add`), and discovery (`gv_layouts_list`, `gv_field_type_schema_get`, …). Use the `gv_*_list` discovery tools to see what's available on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
 
 ## Usage Examples
 
@@ -292,12 +292,29 @@ LIVE_GF_URL=https://example.com LIVE_GF_USER=admin LIVE_GF_PW='xxxx xxxx ...' np
 npm test
 ```
 
+Dev-only benchmark suites (not shipped in the npm package, require a live test site):
+
+```bash
+# AI release gate — drives the full MCP surface through a small model and grades
+# real Gravity Forms / GravityView state (needs the `claude` CLI; slow, token-costly)
+npm run bench
+
+# Deterministic field-output smoke suite
+npm run bench:field-output
+
+# Field-storage validation against real add-ons
+npm run bench:field-storage
+
+# Front-end render test: a parent View shows a nested form's Summary Fields
+npm run bench:nested-forms
+```
+
 ## Security
 
 - **HTTPS Required**: All API communication encrypted
-- **Delete Protection**: Destructive operations disabled by default
+- **Delete Protection**: Destructive operations disabled by default; deletes default to Trash (recoverable)
 - **Input Validation**: All inputs validated before API calls
-- **Rate Limiting**: Automatic retry with exponential backoff
+- **Credential Masking**: Secrets and HTTP Basic credentials masked in logs
 
 ## Troubleshooting
 

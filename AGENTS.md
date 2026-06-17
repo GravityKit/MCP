@@ -6,7 +6,7 @@ This is the single canonical doc for the project (agents and humans). `CLAUDE.md
 
 ## Project Identity
 
-- **Package:** `@gravitykit/mcp` v2.3.0
+- **Package:** `@gravitykit/mcp` v2.4.0
 - **Type:** Node.js MCP server (ESM)
 - **Purpose:** Full Gravity Forms REST API v2 coverage (26 Gravity Forms tools), plus dynamic GravityKit product tools (GravityView so far) via the WordPress Abilities API
 - **Repo:** https://github.com/GravityKit/MCP
@@ -50,7 +50,7 @@ MCP/
 │   │   ├── field-dependencies.js  # DependencyTracker: conditional logic/merge tag scanning
 │   │   └── field-positioner.js    # PositionEngine: page-aware field positioning
 │   ├── field-definitions/
-│   │   ├── field-registry.js # 45 field types with metadata, validation, storage patterns
+│   │   ├── field-registry.js # 46 field types with metadata, validation, storage patterns
 │   │   └── loader.js         # Registry loader
 │   ├── config/
 │   │   ├── auth.js           # BasicAuthHandler, OAuth1Handler, AuthManager
@@ -122,7 +122,7 @@ The server registers tools from two independent sources, initialized separately 
 
 **FieldManager** (`field-operations/field-manager.js`): Handles field CRUD within REST API v2 constraints (fields are properties of form objects, not separate endpoints). Generates integer IDs via max+1, creates compound sub-inputs for address/name/creditcard fields.
 
-**Field Registry** (`field-definitions/field-registry.js`): Metadata for all 45 Gravity Forms field types — categories, storage patterns (simple/compound/special), validation rules, variants, and capability flags.
+**Field Registry** (`field-definitions/field-registry.js`): Metadata for all 46 Gravity Forms field types — categories, storage patterns (simple/compound/special), validation rules, variants, and capability flags.
 
 ### Data Flow
 
@@ -360,7 +360,7 @@ Shorthand aliases: `TEST_GF_URL`, `TEST_GF_CONSUMER_KEY`, `TEST_GF_CONSUMER_SECR
 
 ```bash
 npm run test:unit      # Unit tests via custom runner
-npm run test:node      # node:test unit suites (field ops, helpers, ability-catalog)
+npm run test:node      # node:test unit suites (field ops, helpers, ability-catalog, bench grader/runner)
 npm run test:auth      # Authentication tests
 npm run test:forms     # Forms endpoint tests
 npm run test:entries   # Entries endpoint tests
@@ -371,7 +371,7 @@ npm run test:all       # Run everything sequentially
 npm test               # Integration tests (requires live API)
 ```
 
-Tests use a custom runner (`test/run.js`), not Jest/Mocha. Test helpers in `test/helpers.js` provide mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`). For integration tests, set `GRAVITY_FORMS_TEST_*` env vars pointing to a test WordPress site; test forms are prefixed with `TEST_` and auto-cleaned via `TestFormManager`.
+Two unit harnesses run side by side: the **custom `TestRunner`** (suites export a runner and are registered in `test/run.js`, run via `npm run test:unit`) and **`node:test`** (suites are listed in the `test:node` script in `package.json`, run via `npm run test:node`) — the latter includes the dev-only bench grader/runner tests (`test/bench-*.test.js`). A new suite only runs once it is registered in the matching place. `test/helpers.js` provides mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`). For integration tests, set `GRAVITY_FORMS_TEST_*` env vars pointing to a test WordPress site; test forms are prefixed with `TEST_` and auto-cleaned via `TestFormManager`. **See `test/AGENTS.md` for which harness to use, how to register a new test, and how the `bench/` AI gate relates to the unit suites.**
 
 ### Building
 
@@ -399,7 +399,7 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 10. **Validation has legacy and new patterns.** A `BaseValidator` legacy layer wraps the newer `ValidationChain` and domain validators. Both paths are active. New code should use the chain system in `validation-chain.js`.
 
-11. **`gf_list_field_types` defaults to summary mode.** Returns only `type`, `label`, `category`. Pass `detail=true` for full metadata; add `include_variants=true` for variants. Prevents dumping thousands of tokens for all 45 field types.
+11. **`gf_list_field_types` defaults to summary mode.** Returns only `type`, `label`, `category`. Pass `detail=true` for full metadata; add `include_variants=true` for variants. Prevents dumping thousands of tokens for all 46 field types.
 
 12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_*` → `GRAVITY_FORMS_*`. The rest of the client and AuthManager work unchanged.
 
@@ -431,6 +431,7 @@ Skipping any step (especially CHANGELOG) leaves the release history incomplete.
 **Before tagging:**
 - Run **`npm run lint:docs`** — the offline doc-freshness guard (repo-map coverage, tool/field counts, no line citations). `prepublishOnly` runs it too.
 - Run **`npm run verify:tool-names` against a live site** — the `gv_*` tools are generated from the installed GravityView/Foundation Abilities catalog, so a catalog rename can silently leave the server `instructions` string, README, or the demo referencing tools that no longer exist. The script cross-checks every `gf_`/`gv_` name in prose against what the server registers and exits non-zero on a mismatch. Needs WordPress credentials (see GravityKit Environment). Dev-only — not shipped in the npm package.
+- Run **`npm run bench` — the AI release gate** (`bench/`). It drives the whole flow (forms/entries/views/fields/widgets/search/grid CRUD) through a **small model** (`claude-haiku-4-5`) over the MCP and exits non-zero if any task falls below the success threshold. A small model failing means the tool surface is too hard for an agent to use — fix descriptions/schemas/errors, not the gate. Needs the `claude` CLI + a `GRAVITY_FORMS_TEST_*`/`GRAVITY_FORMS_*` site running the code under test; slow + token-costly, so it's a release gate, not per-commit CI. Dev-only — not shipped.
 
 ## Related Resources
 
