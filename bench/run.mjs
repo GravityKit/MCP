@@ -50,7 +50,7 @@ async function runTask(task, client, mcpConfigPath, traceDir) {
     try {
       if (task.setup) state = await task.setup(client);
       const prompt = typeof task.prompt === 'function' ? task.prompt(state) : task.prompt;
-      telemetry = await runAgent(prompt, mcpConfigPath, join(traceDir, `${task.id}.run${i + 1}.jsonl`));
+      telemetry = await runAgent(prompt, mcpConfigPath, join(traceDir, `${task.id}.run${i + 1}.jsonl`), task.maxTurns);
       grade = await task.grade({ client, state, telemetry });
     } catch (e) {
       grade = { pass: false, detail: `harness error: ${e?.message || e}` };
@@ -60,7 +60,9 @@ async function runTask(task, client, mcpConfigPath, traceDir) {
     const scored = scoreRun(grade, telemetry);
     runs.push(scored);
     const flag = scored.pass ? '✓' : '✗';
-    process.stdout.write(`  ${flag} ${task.id} run ${i + 1}/${CONFIG.runsPerTask}  (${scored.errors} err, ${scored.turns} turns)\n`);
+    const budget = task.expectedTurns ? `/${task.expectedTurns}exp` : '';
+    const cap = task.maxTurns ? ` cap${task.maxTurns}` : '';
+    process.stdout.write(`  ${flag} ${task.id} run ${i + 1}/${CONFIG.runsPerTask}  (${scored.errors} err, ${scored.turns}${budget} turns${cap})\n`);
   }
   return aggregateTask(task, runs);
 }

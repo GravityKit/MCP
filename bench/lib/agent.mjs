@@ -169,7 +169,7 @@ function parseStream(stdout) {
  *   written here — the authoritative record for debugging a failed run.
  * @returns {Promise<{toolCalls:Array, turns:number, tokens:{input:number,output:number}, finalText:string, hardError:string|null, durationMs:number, logFile:string|null}>}
  */
-function runOnce(prompt, mcpConfigPath, logFile = null) {
+function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null) {
   const args = [
     '-p', prompt,
     '--model', CONFIG.model,
@@ -177,7 +177,9 @@ function runOnce(prompt, mcpConfigPath, logFile = null) {
     '--strict-mcp-config',
     '--output-format', 'stream-json',
     '--verbose',
-    '--max-turns', String(CONFIG.maxTurns),
+    // Per-task ceiling when given, else the global backstop. A task hitting
+    // this is killed mid-run → grades as incomplete, so keep it generous.
+    '--max-turns', String(maxTurns || CONFIG.maxTurns),
     // Sandbox the agent to ONLY the MCP under test. No bypassPermissions: in
     // headless mode any tool NOT in --allowedTools is denied (no prompt to
     // answer), so the allow-list is the real fence — robust against new
@@ -245,11 +247,11 @@ function runOnce(prompt, mcpConfigPath, logFile = null) {
  * task succeeded is judged by the grader, not by the init event. A timeout is
  * also not retried — it means the agent genuinely hung, which is real signal.
  */
-export async function runAgent(prompt, mcpConfigPath, logFile = null) {
+export async function runAgent(prompt, mcpConfigPath, logFile = null, maxTurns = null) {
   const maxAttempts = 2;
   let last = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    last = await runOnce(prompt, mcpConfigPath, logFile);
+    last = await runOnce(prompt, mcpConfigPath, logFile, maxTurns);
     last.attempts = attempt;
     const processCrashed = !last.finalText && /^exit_/.test(last.hardError || '');
     if (!processCrashed) return last;

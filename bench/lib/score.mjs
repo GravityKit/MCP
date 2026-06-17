@@ -38,6 +38,17 @@ export function scoreRun(grade, telemetry) {
 }
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const median = (xs) => {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+// A task's median turns may exceed expectedTurns by up to this factor before
+// we flag it — absorbs the small model's run-to-run variance (it sometimes
+// verifies its own work) so the SOFT budget doesn't cry wolf. Tune per env.
+const TURNS_TOLERANCE = Number(process.env.BENCH_TURNS_TOLERANCE) || 2;
 
 /**
  * Aggregate a task's runs into the metrics the gate + report use.
@@ -48,6 +59,8 @@ const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 export function aggregateTask(task, runs) {
   const passes = runs.filter((r) => r.pass).length;
   const failing = runs.find((r) => !r.pass) || null;
+  const medianTurns = median(runs.map((r) => r.turns));
+  const expectedTurns = task.expectedTurns ?? null;
   return {
     id: task.id,
     category: task.category,
@@ -56,9 +69,18 @@ export function aggregateTask(task, runs) {
     successRate: runs.length ? passes / runs.length : 0,
     meanErrors: round(mean(runs.map((r) => r.errors))),
     meanTurns: round(mean(runs.map((r) => r.turns))),
+    medianTurns,
     meanTokens: Math.round(mean(runs.map((r) => r.tokens))),
     errorCodes: [...new Set(runs.flatMap((r) => r.errorCodes))],
     flaky: passes > 0 && passes < runs.length,
+    // Per-task turn budgets. maxTurns is the HARD ceiling (enforced at run time
+    // by killing the agent → graded incomplete). expectedTurns is the SOFT
+    // efficiency budget: turnsOverBudget flags a surface that still passes but
+    // got harder to drive (median > expected × tolerance). It is REPORTED, not
+    // gated — turn counts are too stochastic to hard-fail on.
+    expectedTurns,
+    maxTurns: task.maxTurns ?? null,
+    turnsOverBudget: expectedTurns != null && medianTurns > expectedTurns * TURNS_TOLERANCE,
     // The full picture of one failing run — written to the JSON artifact and
     // summarized in the console so a failure needs no re-run to diagnose.
     failingSample: failing && {

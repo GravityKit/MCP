@@ -23,8 +23,12 @@ export function report({ aggregates, gate, stamp }) {
   lines.push('');
   lines.push(`AI release gate — model: ${CONFIG.model}  ·  runs/task: ${CONFIG.runsPerTask}  ·  threshold: ${pct(gate.threshold)}`);
   lines.push('─'.repeat(78));
-  lines.push(`${pad('TASK', 34)} ${pad('SUCCESS', 9)} ${pad('ERR', 5)} ${pad('TURNS', 6)} ${pad('TOKENS', 8)} FLAKY`);
+  lines.push(`${pad('TASK', 34)} ${pad('SUCCESS', 9)} ${pad('ERR', 5)} ${pad('TURNS', 8)} ${pad('TOKENS', 8)} FLAKY`);
   lines.push('─'.repeat(78));
+
+  // TURNS column shows median (+ /expected budget, ⚠ when over the soft budget).
+  const turnsCell = (a) => `${a.medianTurns}${a.expectedTurns ? `/${a.expectedTurns}` : ''}${a.turnsOverBudget ? '⚠' : ''}`;
+  const overBudget = aggregates.filter((a) => a.turnsOverBudget);
 
   const byCat = groupBy(aggregates, (a) => a.category);
   for (const [cat, items] of byCat) {
@@ -33,13 +37,18 @@ export function report({ aggregates, gate, stamp }) {
       const mark = a.successRate >= gate.threshold ? ' ' : '✗';
       lines.push(
         `${mark} ${pad(a.id, 32)} ${pad(`${pct(a.successRate)} (${a.passes}/${a.runs})`, 9)} ` +
-          `${pad(a.meanErrors, 5)} ${pad(a.meanTurns, 6)} ${pad(a.meanTokens, 8)} ${a.flaky ? 'yes' : ''}`,
+          `${pad(a.meanErrors, 5)} ${pad(turnsCell(a), 8)} ${pad(a.meanTokens, 8)} ${a.flaky ? 'yes' : ''}`,
       );
       if (a.errorCodes.length) lines.push(`    ↳ errors seen: ${a.errorCodes.join(', ')}`);
+      if (a.turnsOverBudget) lines.push(`    ↳ over turn budget (soft): median ${a.medianTurns} > expected ${a.expectedTurns}`);
     }
   }
 
   lines.push('─'.repeat(78));
+  if (overBudget.length) {
+    lines.push(`⏱  ${overBudget.length} task(s) over the soft turn budget (does NOT fail the gate — efficiency signal): ${overBudget.map((a) => `${a.id} (${a.medianTurns}>${a.expectedTurns})`).join(', ')}`);
+    lines.push('─'.repeat(78));
+  }
   if (gate.passed) {
     lines.push(`✅ GATE PASSED — every task ≥ ${pct(gate.threshold)} on ${CONFIG.model}`);
   } else {
