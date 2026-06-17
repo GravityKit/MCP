@@ -60,9 +60,13 @@ async function runTask(task, client, mcpConfigPath, traceDir) {
     const scored = scoreRun(grade, telemetry);
     runs.push(scored);
     const flag = scored.pass ? '✓' : '✗';
-    const budget = task.expectedTurns ? `/${task.expectedTurns}exp` : '';
-    const cap = task.maxTurns ? ` cap${task.maxTurns}` : '';
-    process.stdout.write(`  ${flag} ${task.id} run ${i + 1}/${CONFIG.runsPerTask}  (${scored.errors} err, ${scored.turns}${budget} turns${cap})\n`);
+    const overExp = task.expectedTurns && scored.turns > task.expectedTurns ? '⚠' : '';
+    const budget = `exp ${task.expectedTurns ?? '–'}, max ${task.maxTurns ?? CONFIG.maxTurns}`;
+    process.stdout.write(
+      `  ${flag} ${task.id.padEnd(32)} run ${i + 1}/${CONFIG.runsPerTask}` +
+        ` · ${String(scored.turns).padStart(2)} turns${overExp}` +
+        ` · ${scored.errors} err  (${budget})\n`,
+    );
   }
   return aggregateTask(task, runs);
 }
