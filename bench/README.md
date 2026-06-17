@@ -95,6 +95,8 @@ Add an object to a file in `tasks/` (registered via `tasks/index.mjs`):
 {
   id: 'category.short-name',
   category: 'category',
+  expectedTurns: 3, // optional soft budget — logs a ⚠ when median turns exceed it
+  maxTurns: 8,      // optional hard ceiling — agent is stopped past this (falls back to CONFIG.maxTurns)
   async setup(client) { /* create fixtures */ return { /* state */ }; },
   prompt: (state) => `natural-language task referencing ${state.…}`,
   async grade({ client, state, telemetry }) {
@@ -110,9 +112,9 @@ signals (tool errors encountered, turns, tokens) and clean-run checks.
 
 ## Cost & caveats
 
-- Each run is a full agent session (tokens + minutes). A 7-task suite at 3 runs
-  is ~21 sessions; budget accordingly. This is a **release gate / nightly**, not
-  per-commit CI.
+- Each run is a full agent session (tokens + minutes). The suite is 32 tasks; at
+  3 runs that is ~96 agent sessions, so budget accordingly. This is a **release
+  gate / nightly**, not per-commit CI.
 - Pin the model; re-baseline when the model version changes (a model bump is a
   confounder, not a regression).
 - Reports (JSON) land in `bench/reports/` for cross-release diffing.

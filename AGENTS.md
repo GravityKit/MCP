@@ -360,7 +360,7 @@ Shorthand aliases: `TEST_GF_URL`, `TEST_GF_CONSUMER_KEY`, `TEST_GF_CONSUMER_SECR
 
 ```bash
 npm run test:unit      # Unit tests via custom runner
-npm run test:node      # node:test unit suites (field ops, helpers, ability-catalog)
+npm run test:node      # node:test unit suites (field ops, helpers, ability-catalog, bench grader/runner)
 npm run test:auth      # Authentication tests
 npm run test:forms     # Forms endpoint tests
 npm run test:entries   # Entries endpoint tests
@@ -371,7 +371,7 @@ npm run test:all       # Run everything sequentially
 npm test               # Integration tests (requires live API)
 ```
 
-Tests use a custom runner (`test/run.js`), not Jest/Mocha. Test helpers in `test/helpers.js` provide mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`). For integration tests, set `GRAVITY_FORMS_TEST_*` env vars pointing to a test WordPress site; test forms are prefixed with `TEST_` and auto-cleaned via `TestFormManager`.
+Two unit harnesses run side by side: the **custom `TestRunner`** (suites export a runner and are registered in `test/run.js`, run via `npm run test:unit`) and **`node:test`** (suites are listed in the `test:node` script in `package.json`, run via `npm run test:node`) — the latter includes the dev-only bench grader/runner tests (`test/bench-*.test.js`). A new suite only runs once it is registered in the matching place. `test/helpers.js` provides mock data generators (`generateMockForm`, `generateMockEntry`, `generateMockFeed`). For integration tests, set `GRAVITY_FORMS_TEST_*` env vars pointing to a test WordPress site; test forms are prefixed with `TEST_` and auto-cleaned via `TestFormManager`. **See `test/AGENTS.md` for which harness to use, how to register a new test, and how the `bench/` AI gate relates to the unit suites.**
 
 ### Building
 

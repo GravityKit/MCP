@@ -304,6 +304,9 @@ npm run bench:field-output
 
 # Field-storage validation against real add-ons
 npm run bench:field-storage
+
+# Front-end render test: a parent View shows a nested form's Summary Fields
+npm run bench:nested-forms
 ```
 
 ## Security

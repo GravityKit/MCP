@@ -23,7 +23,7 @@ This update adds additional guards to make sure Gravity Forms entries save corre
 ### 🐛 Fixed
 - **Improved support for complex field types**, including `address`, `chainedselect`, `survey_rank`, `date`, and the survey/quiz/poll fields.
 - **Corrected storage structures** for many field types, helping improve first-time success rates.
-- **`sorting.is_numeric` is interpreted strictly.** Sorting only is now valid only when it genuinely means true (`true`, `1`, `"true"`, `"1"`) and omitted otherwise so GF falls back to lexical ordering.
+- **`sorting.is_numeric` is interpreted strictly.** Sorting is now valid only when it genuinely means true (`true`, `1`, `"true"`, `"1"`) and omitted otherwise so GF falls back to lexical ordering.
 - **Improved cleanup** Any crashed or improperly-killed client left an orphaned process running.
 
 ### 💻 Developer Notes
