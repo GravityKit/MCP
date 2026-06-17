@@ -71,6 +71,18 @@ export const SITEMINTER = {
     env.BENCH_GF_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityforms')),
     env.BENCH_GV_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'GravityView')),
   ].filter(Boolean),
+  /**
+   * Real Gravity Forms add-ons whose field types the storage suite validates
+   * (chainedselect, signature, survey_rank). NOT minted for the release gate —
+   * only the field-storage suite asks for them — so the gate's surface stays
+   * minimal. These are the ACTUAL add-on plugins (symlinked + activated), never
+   * stubs: the round-trip must go through real add-on code.
+   */
+  addons: [
+    env.BENCH_CHAINEDSELECTS_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformschainedselects')),
+    env.BENCH_SIGNATURE_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformssignature')),
+    env.BENCH_SURVEY_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformssurvey')),
+  ].filter(Boolean),
 };
 
 /**

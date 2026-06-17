@@ -54,15 +54,32 @@ export function siteInfo(name = SITEMINTER.siteName) {
 }
 
 /**
+ * Active plugins on a minted site as { slug: version }. Used to PROVE a
+ * validation ran against the real add-ons (not stubs) before trusting it.
+ *
+ * @param {string} sitePath
+ * @returns {Record<string,string>}
+ */
+export function activePlugins(sitePath) {
+  const raw = wpCli(sitePath, ['plugin', 'list', '--status=active', '--fields=name,version', '--format=json']);
+  const out = {};
+  try {
+    for (const p of JSON.parse(raw)) out[p.name] = p.version;
+  } catch { /* tolerate format drift */ }
+  return out;
+}
+
+/**
  * Ensure the bench site exists + is provisioned, returning a target the gate
  * can run against. Reuses an existing site unless `fresh` is set.
  *
- * @param {{fresh?:boolean, log?:(m:string)=>void}} [opts]
+ * @param {{fresh?:boolean, log?:(m:string)=>void, name?:string, plugins?:string[]}} [opts]
+ *   name/plugins override the release-gate defaults (e.g. the field-storage
+ *   suite mints a distinct site that also includes the real add-on plugins).
  * @returns {Promise<{target:object, name:string, path:string, minted:boolean}>}
  */
-export async function provisionSite({ fresh = false, log = () => {} } = {}) {
+export async function provisionSite({ fresh = false, log = () => {}, name = SITEMINTER.siteName, plugins = SITEMINTER.plugins } = {}) {
   if (!SITEMINTER.dir) throw new Error('SITEMINTER_DIR is not set and siteminter could not be located.');
-  const name = SITEMINTER.siteName;
 
   let info = siteInfo(name);
   if (info && fresh) {
@@ -73,8 +90,8 @@ export async function provisionSite({ fresh = false, log = () => {} } = {}) {
 
   let minted = false;
   if (!info) {
-    log(`Minting "${name}" with: ${SITEMINTER.plugins.join(', ')} (first mint pulls Docker images — slow)…`);
-    sm(['mint', `--name=${name}`, `--plugins=${SITEMINTER.plugins.join(',')}`]);
+    log(`Minting "${name}" with: ${plugins.join(', ')} (first mint pulls Docker images — slow)…`);
+    sm(['mint', `--name=${name}`, `--plugins=${plugins.join(',')}`]);
     minted = true;
     info = siteInfo(name);
     if (!info) throw new Error(`mint succeeded but info for "${name}" is unavailable`);
