@@ -84,6 +84,10 @@ export const SITEMINTER = {
     env.BENCH_SURVEY_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformssurvey')),
     env.BENCH_POLLS_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformspolls')),
     env.BENCH_QUIZ_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityformsquiz')),
+    // GP Nested Forms is a GravityWiz "perk" — it only functions (e.g. renders
+    // the nested child table) when the Spellbook framework (formerly Gravity
+    // Perks) is also active. Without it the field falls back to raw child ids.
+    env.BENCH_SPELLBOOK_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'spellbook')),
     env.BENCH_NESTEDFORMS_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gp-nested-forms')),
   ].filter(Boolean),
 };

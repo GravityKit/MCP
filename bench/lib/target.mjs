@@ -172,11 +172,13 @@ export function makeClient(target) {
       return views.find((v) => String(v.title) === title) || null;
     },
 
-    /** Provision a View fixture (for tasks that edit an existing View). */
-    async createView(formId, title, templateId = 'gravityview-layout-builder') {
-      const res = await wp.post(`/wp-abilities/v1/abilities/gk-gravityview/view-create/run`, {
-        input: { title, form_id: formId, template_id: templateId },
-      });
+    /** Provision a View fixture (for tasks that edit an existing View). The
+     *  view-create ability defaults to a DRAFT; pass status:'publish' when the
+     *  View must render on the anonymous front-end. */
+    async createView(formId, title, templateId = 'gravityview-layout-builder', status) {
+      const input = { title, form_id: formId, template_id: templateId };
+      if (status) input.status = status;
+      const res = await wp.post(`/wp-abilities/v1/abilities/gk-gravityview/view-create/run`, { input });
       const id = Number(res.data?.view_id);
       if (!id) throw new Error(`createView failed (${res.status}): ${JSON.stringify(res.data).slice(0, 200)}`);
       return { id, title };

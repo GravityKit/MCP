@@ -35,7 +35,7 @@ function sm(args, { json = false } = {}) {
 }
 
 /** Run wp-cli inside a minted site via its wp-env, returning trimmed stdout. */
-function wpCli(sitePath, wpArgs) {
+export function wpCli(sitePath, wpArgs) {
   const wpEnv = join(SITEMINTER.dir, 'node_modules', '.bin', 'wp-env');
   const res = spawnSync(wpEnv, ['run', 'cli', 'wp', ...wpArgs], {
     cwd: sitePath,
