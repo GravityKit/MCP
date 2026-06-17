@@ -3,7 +3,7 @@
  * containing the right value; update/delete grade on persisted state.
  */
 
-import { uniqueLabel, noToolErrors } from './helpers.mjs';
+import { uniqueLabel, noToolErrors, calledOk } from './helpers.mjs';
 
 async function formWithEntries(client, entries) {
   const form = await client.createForm(uniqueLabel('BENCH Form'));
@@ -24,8 +24,9 @@ export default [
     },
     prompt: (s) => `Show me the details of Gravity Forms entry ${s.entryId}.`,
     async grade({ telemetry }) {
-      const ok = noToolErrors(telemetry) && /ada@example\.com/i.test(telemetry.finalText || '');
-      return { pass: ok, detail: ok ? '' : 'the entry email was not surfaced cleanly in the answer' };
+      const calledRead = calledOk(telemetry, 'get_entry') || calledOk(telemetry, 'list_entries');
+      const ok = noToolErrors(telemetry) && calledRead && /ada@example\.com/i.test(telemetry.finalText || '');
+      return { pass: ok, detail: ok ? '' : 'the entry email was not surfaced cleanly via a real read call' };
     },
     async teardown({ client, state }) { if (state.formId) await client.deleteForm(state.formId); },
   },
@@ -44,7 +45,7 @@ export default [
     prompt: (s) => `Find the entries on Gravity Forms form ${s.formId} whose Email is "ada@example.com".`,
     async grade({ telemetry }) {
       const text = telemetry.finalText || '';
-      const ok = noToolErrors(telemetry) && /ada@example\.com/i.test(text) && !/charles@example\.com/i.test(text);
+      const ok = noToolErrors(telemetry) && calledOk(telemetry, 'list_entries') && /ada@example\.com/i.test(text) && !/charles@example\.com/i.test(text);
       return { pass: ok, detail: ok ? '' : 'search did not isolate the matching entry' };
     },
     async teardown({ client, state }) { if (state.formId) await client.deleteForm(state.formId); },

@@ -10,8 +10,9 @@ async function seedBuilderView(client) {
   const title = uniqueLabel('BENCH View');
   const form = await client.createForm(uniqueLabel('BENCH Form'));
   const view = await client.createView(form.id, title, 'gravityview-layout-builder');
-  const before = areaKeyCount((await client.viewConfig(view.id)).fields);
-  return { formId: form.id, viewId: view.id, title, beforeAreas: before };
+  const cfg = await client.viewConfig(view.id);
+  const before = areaKeyCount(cfg.fields);
+  return { formId: form.id, viewId: view.id, title, beforeAreas: before, beforeAreaKeys: Object.keys(cfg.fields || {}) };
 }
 
 export default [
@@ -39,9 +40,12 @@ export default [
     prompt: (s) => `On the GravityView View "${s.title}" (id ${s.viewId}), add a two-column grid row and place the Email field in its left column.`,
     async grade({ client, state }) {
       const cfg = await client.viewConfig(state.viewId);
-      const moreAreas = areaKeyCount(cfg.fields) > state.beforeAreas;
-      const hasEmail = fieldIdsInTree(cfg.fields).includes('2');
-      return { pass: moreAreas && hasEmail, detail: moreAreas && hasEmail ? '' : `moreAreas=${moreAreas} emailPlaced=${hasEmail}` };
+      const areas = cfg.fields || {};
+      const moreAreas = areaKeyCount(areas) > state.beforeAreas;
+      const before = state.beforeAreaKeys || [];
+      const newAreas = Object.keys(areas).filter((k) => !before.includes(k));
+      const emailInNewArea = newAreas.some((k) => fieldIdsInTree({ [k]: areas[k] }).includes('2'));
+      return { pass: moreAreas && emailInNewArea, detail: moreAreas && emailInNewArea ? '' : `moreAreas=${moreAreas} emailInNewArea=${emailInNewArea}` };
     },
     async teardown({ client, state }) { await client.deleteView(state.viewId); await client.deleteForm(state.formId); },
   },

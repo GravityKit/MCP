@@ -6,7 +6,7 @@
  * Fixture form field ids: 1 = First Name, 2 = Email, 3 = Last Name.
  */
 
-import { uniqueLabel, fieldIdsInTree, findSlotById, slotsInTree } from './helpers.mjs';
+import { uniqueLabel, findSlotById, slotsInTree } from './helpers.mjs';
 
 async function seedTableView(client) {
   const title = uniqueLabel('BENCH View');
@@ -32,8 +32,9 @@ export default [
     prompt: (s) => `Add the Email field as a column to the GravityView View "${s.title}" (id ${s.viewId}).`,
     async grade({ client, state }) {
       const cfg = await client.viewConfig(state.viewId);
-      const ok = fieldIdsInTree(cfg.fields).includes('2');
-      return { pass: ok, detail: ok ? '' : `Email (id 2) not in fields; have [${fieldIdsInTree(cfg.fields).join(',')}]` };
+      const cols = columnIds(cfg);
+      const ok = cols.includes('2');
+      return { pass: ok, detail: ok ? '' : `Email (id 2) not in table columns; have [${cols.join(',')}]` };
     },
     async teardown({ client, state }) { await client.deleteView(state.viewId); await client.deleteForm(state.formId); },
   },
@@ -80,7 +81,7 @@ export default [
     async setup(client) { return seedTableView(client); },
     prompt: (s) => `On the GravityView View "${s.title}" (id ${s.viewId}), add First Name and Email as columns, then remove the First Name column (keep Email).`,
     async grade({ client, state }) {
-      const ids = fieldIdsInTree((await client.viewConfig(state.viewId)).fields);
+      const ids = columnIds(await client.viewConfig(state.viewId));
       const ok = ids.includes('2') && !ids.includes('1');
       return { pass: ok, detail: ok ? '' : `fields are [${ids.join(',')}] (want Email only)` };
     },
