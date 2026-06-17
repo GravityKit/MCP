@@ -122,8 +122,8 @@ test('generateCompoundInputs - creditcard field', async (t) => {
     assert.strictEqual(inputs[0].label, 'Card Number');
     assert.strictEqual(inputs[1].label, 'Expiration Date');
     assert.strictEqual(inputs[2].label, 'Security Code');
-    assert.strictEqual(inputs[3].label, 'Cardholder Name');
-    assert.strictEqual(inputs[4].label, 'Card Type');
+    assert.strictEqual(inputs[3].label, 'Card Type');
+    assert.strictEqual(inputs[4].label, 'Cardholder Name');
   });
 });
 

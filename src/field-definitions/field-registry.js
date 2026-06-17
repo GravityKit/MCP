@@ -1113,14 +1113,16 @@ export function generateCompoundInputs(field) {
     }
   }
 
-  // Credit card field sub-inputs.
+  // Credit card field sub-inputs. Per GF (class-gf-field-creditcard.php): .4 is
+  // Card Type and .5 is Cardholder Name; only .1 (masked number) and .4 (card
+  // type) are persisted. Mirrors generateSubInputs in field-manager.js.
   else if (field.type === 'creditcard') {
     subInputs.push(
       { id: `${baseId}.1`, label: 'Card Number', name: '' },
       { id: `${baseId}.2`, label: 'Expiration Date', name: '' },
       { id: `${baseId}.3`, label: 'Security Code', name: '' },
-      { id: `${baseId}.4`, label: 'Cardholder Name', name: '' },
-      { id: `${baseId}.5`, label: 'Card Type', name: '' }
+      { id: `${baseId}.4`, label: 'Card Type', name: '' },
+      { id: `${baseId}.5`, label: 'Cardholder Name', name: '' }
     );
   }
 
