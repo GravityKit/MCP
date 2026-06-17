@@ -963,6 +963,61 @@ export function validateFieldConfig(field) {
 }
 
 /**
+ * Fill in field ids for any fields that lack one, mirroring GF's max+1
+ * convention — so callers (and small models driving the MCP in natural
+ * language) don't have to hand-number fields. Explicit ids are preserved; new
+ * ids come from above the highest existing id and never collide. When a field
+ * receives a new id, any provided compound sub-input ids are re-based onto it
+ * (e.g. "2.3" → "10.3"). Non-array input passes through unchanged.
+ *
+ * @param {Array<object>} fields
+ * @returns {Array<object>} fields with ids filled in
+ */
+export function assignFieldIds(fields) {
+  if (!Array.isArray(fields)) {
+    return fields;
+  }
+
+  const used = new Set();
+  for (const field of fields) {
+    const id = Number(field?.id);
+    if (Number.isInteger(id) && id > 0) {
+      used.add(id);
+    }
+  }
+
+  let next = (used.size ? Math.max(...used) : 0) + 1;
+
+  return fields.map((field) => {
+    const id = Number(field?.id);
+    if (Number.isInteger(id) && id > 0) {
+      return field;
+    }
+
+    while (used.has(next)) {
+      next++;
+    }
+    const newId = next++;
+    used.add(newId);
+
+    // Re-base any provided compound sub-input ids onto the new field id.
+    if (Array.isArray(field?.inputs)) {
+      const inputs = field.inputs.map((input) => {
+        const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
+        if (hasDottedId) {
+          const sub = input.id.slice(input.id.indexOf('.') + 1);
+          return { ...input, id: `${newId}.${sub}` };
+        }
+        return input;
+      });
+      return { ...field, id: newId, inputs };
+    }
+
+    return { ...field, id: newId };
+  });
+}
+
+/**
  * Get all field types by category
  */
 export function getFieldsByCategory() {

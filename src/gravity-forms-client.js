@@ -10,7 +10,7 @@ import { AuthManager, validateRestApiAccess, flattenParams, rfc3986Encode } from
 import { ValidationFactory } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
-import { generateCompoundInputs } from './field-definitions/field-registry.js';
+import { generateCompoundInputs, assignFieldIds } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
 import { USER_AGENT } from './version.js';
@@ -354,6 +354,13 @@ export class GravityFormsClient {
    * Create new form with fields and settings
    */
   async createForm(params) {
+    // Auto-number any fields the caller left without an id (GF max+1), BEFORE
+    // validation — so a natural-language caller can describe fields without
+    // hand-assigning ids. Explicit ids are preserved; compound sub-inputs are
+    // re-based onto the assigned id.
+    if (params && Array.isArray(params.fields)) {
+      params = { ...params, fields: assignFieldIds(params.fields) };
+    }
     return this.validateAndCall('gf_create_form', params, async (validated) => {
       // Process fields to ensure compound types have proper inputs array.
       if (validated.fields && Array.isArray(validated.fields)) {
