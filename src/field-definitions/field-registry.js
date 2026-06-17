@@ -75,7 +75,10 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'number',
+      // GF stores number values as a TEXT string in the entry, not numeric.
+      // numberFormat (decimal_dot/decimal_comma/currency) is display/validation,
+      // not storage. (class-gf-field-number.php get_value_submission → string.)
+      type: 'string',
       format: 'single'
     },
     variants: {
@@ -514,7 +517,9 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
-      type: 'number',
+      // Like number, GF stores the quantity as a TEXT string in the entry.
+      // "numeric" is the field's purpose, not its storage shape.
+      type: 'string',
       format: 'single'
     }
   },
@@ -616,8 +621,12 @@ export const fieldRegistry = {
     supportsRequired: true,
     supportsConditionalLogic: true,
     storage: {
+      // The Signature add-on saves the drawn image to disk and stores its
+      // FILENAME (e.g. "<hash>.png") in the entry — not base64. The public URL
+      // is derived from the filename at display time (get_signature_url()).
+      // (class-gf-field-signature.php get_value_save_entry → maybe_save_signature.)
       type: 'string',
-      format: 'base64'
+      format: 'filename'
     }
   },
 
