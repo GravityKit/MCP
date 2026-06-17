@@ -45,16 +45,16 @@ export default [
   },
 
   {
-    id: 'views.duplicate',
+    id: 'views.clone',
     category: 'views',
     expectedTurns: 3,
     maxTurns: 8,
     async setup(client) { return seedView(client); },
-    prompt: (s) => `Duplicate the GravityView View "${s.title}" (id ${s.viewId}).`,
+    prompt: (s) => `Make a copy of the GravityView View "${s.title}" (id ${s.viewId}).`,
     async grade({ telemetry }) {
-      // Copy naming isn't contractually fixed, so grade on a clean duplicate call.
-      const ok = calledOk(telemetry, 'view_duplicate') && noToolErrors(telemetry);
-      return { pass: ok, detail: ok ? '' : 'no clean gv_view_duplicate call completed' };
+      // "Make a copy" is the natural-language ask; the tool is gv_view_clone.
+      const ok = calledOk(telemetry, 'view_clone') && noToolErrors(telemetry);
+      return { pass: ok, detail: ok ? '' : 'no clean gv_view_clone call completed' };
     },
     async teardown({ client, state }) { await client.deleteView(state.viewId); await client.deleteForm(state.formId); },
   },
