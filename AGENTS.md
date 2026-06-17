@@ -431,6 +431,7 @@ Skipping any step (especially CHANGELOG) leaves the release history incomplete.
 **Before tagging:**
 - Run **`npm run lint:docs`** — the offline doc-freshness guard (repo-map coverage, tool/field counts, no line citations). `prepublishOnly` runs it too.
 - Run **`npm run verify:tool-names` against a live site** — the `gv_*` tools are generated from the installed GravityView/Foundation Abilities catalog, so a catalog rename can silently leave the server `instructions` string, README, or the demo referencing tools that no longer exist. The script cross-checks every `gf_`/`gv_` name in prose against what the server registers and exits non-zero on a mismatch. Needs WordPress credentials (see GravityKit Environment). Dev-only — not shipped in the npm package.
+- Run **`npm run bench` — the AI release gate** (`bench/`). It drives the whole flow (forms/entries/views/fields/widgets/search/grid CRUD) through a **small model** (`claude-haiku-4-5`) over the MCP and exits non-zero if any task falls below the success threshold. A small model failing means the tool surface is too hard for an agent to use — fix descriptions/schemas/errors, not the gate. Needs the `claude` CLI + a `GRAVITY_FORMS_TEST_*`/`GRAVITY_FORMS_*` site running the code under test; slow + token-costly, so it's a release gate, not per-commit CI. Dev-only — not shipped.
 
 ## Related Resources
 
