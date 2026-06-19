@@ -5,7 +5,7 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.4.0] - 2026-06-17
+## [2.4.0] - 2026-06-19
 
 This update adds additional guards to make sure Gravity Forms entries save correctly for every field type, so an AI assistant gets the entry format right the first time. Adds explicit support for the `password` field type and Gravity Wiz Nested Forms, plus a benchmark suite that ensures the MCP works well with small models.
 
@@ -21,6 +21,7 @@ This update adds additional guards to make sure Gravity Forms entries save corre
 - **Fixes GravityKit tool fetching with one-shot clients.** Clients that read the ability catalog once (e.g. `claude -p`) now wait to receive the GravityKit ability list.
 
 ### 🐛 Fixed
+- **No-input GravityView tools (e.g. `gv_forms_list`) failed with "input is not of type object".** Readonly abilities called with no arguments sent the `/run` request with no `input` parameter, which the WordPress Abilities API rejected as a non-object (400). The loader now always sends an object-shaped input (`input=` on GET/DELETE, which WordPress reads as an empty object; `{input:{}}` on POST), so tools that take no arguments work.
 - **Improved support for complex field types**, including `address`, `chainedselect`, `survey_rank`, `date`, and the survey/quiz/poll fields.
 - **Corrected storage structures** for many field types, helping improve first-time success rates.
 - **`sorting.is_numeric` is interpreted strictly.** Sorting is now valid only when it genuinely means true (`true`, `1`, `"true"`, `"1"`) and omitted otherwise so GF falls back to lexical ordering.
