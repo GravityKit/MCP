@@ -109,13 +109,16 @@ jobs:
         if: steps.release.outputs.created == 'true'
         env:
           SLACK_RELEASE_NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_RELEASE_NOTIFICATION_WEBHOOK }}
+          # Bind expressions through env (quoted shell vars below) instead of
+          # interpolating ${{ }} into the run script — avoids template-to-shell injection.
+          VERSION: ${{ steps.guard.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           if [ -z "${SLACK_RELEASE_NOTIFICATION_WEBHOOK:-}" ]; then
             echo "SLACK_RELEASE_NOTIFICATION_WEBHOOK not set — skipping Slack announcement."
             exit 0
           fi
-          VERSION="${{ steps.guard.outputs.version }}"
-          LINK="https://github.com/${{ github.repository }}/releases/tag/v$VERSION"
+          LINK="https://github.com/$REPO/releases/tag/v$VERSION"
           # Extract this version's CHANGELOG section: lines between "## [VERSION]"
           # and the next "## [" header.
           NOTES="$(awk -v ver="$VERSION" '

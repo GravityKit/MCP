@@ -984,11 +984,33 @@ export function assignFieldIds(fields) {
     return fields;
   }
 
-  // Seed the auto-id counter above the highest explicit id.
+  // Rebase any dotted compound sub-input ids onto `parentId` so they always
+  // track the field's FINAL id — applied whether the id is preserved or newly
+  // generated, so a caller mismatch (id 5 with sub-input "9.1") never orphans
+  // sub-inputs. Non-array inputs / non-dotted ids pass through unchanged.
+  const rebaseInputs = (field, parentId) => {
+    if (!Array.isArray(field?.inputs)) {
+      return field;
+    }
+    const inputs = field.inputs.map((input) => {
+      const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
+      if (!hasDottedId) {
+        return input;
+      }
+      const sub = input.id.slice(input.id.indexOf('.') + 1);
+      return { ...input, id: `${parentId}.${sub}` };
+    });
+    return { ...field, inputs };
+  };
+
+  // Only SAFE positive integers count as explicit ids. Number.isInteger is true
+  // for values like 1e308 where `next++` can never advance (1e308 + 1 === 1e308),
+  // which would hang the reassignment loop — treat those as unset and give them a
+  // small sequential id instead.
   let next = 1;
   for (const field of fields) {
     const id = Number(field?.id);
-    if (Number.isInteger(id) && id > 0 && id >= next) {
+    if (Number.isSafeInteger(id) && id > 0 && id >= next) {
       next = id + 1;
     }
   }
@@ -998,10 +1020,11 @@ export function assignFieldIds(fields) {
   const claimed = new Set();
   return fields.map((field) => {
     const id = Number(field?.id);
-    const hasFreshExplicitId = Number.isInteger(id) && id > 0 && !claimed.has(id);
+    const hasFreshExplicitId = Number.isSafeInteger(id) && id > 0 && !claimed.has(id);
     if (hasFreshExplicitId) {
       claimed.add(id);
-      return field;
+      // Id preserved, but sub-inputs may still reference a stale parent — rebase.
+      return rebaseInputs(field, id);
     }
 
     while (claimed.has(next)) {
@@ -1010,20 +1033,7 @@ export function assignFieldIds(fields) {
     const newId = next++;
     claimed.add(newId);
 
-    // Re-base any provided compound sub-input ids onto the new field id.
-    if (Array.isArray(field?.inputs)) {
-      const inputs = field.inputs.map((input) => {
-        const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
-        if (hasDottedId) {
-          const sub = input.id.slice(input.id.indexOf('.') + 1);
-          return { ...input, id: `${newId}.${sub}` };
-        }
-        return input;
-      });
-      return { ...field, id: newId, inputs };
-    }
-
-    return { ...field, id: newId };
+    return rebaseInputs({ ...field, id: newId }, newId);
   });
 }
 

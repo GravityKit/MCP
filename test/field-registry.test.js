@@ -184,6 +184,25 @@ test('validateFieldConfig', async (t) => {
   });
 });
 
+test('assignFieldIds rebases dotted sub-inputs to a PRESERVED explicit id', () => {
+  // A field can keep its explicit id but carry sub-inputs that reference a stale
+  // parent (caller mismatch). They must be rebased onto the final id, not just
+  // when a new id is allocated.
+  const out = assignFieldIds([{ id: 5, type: 'address', inputs: [{ id: '9.1' }, { id: '9.2' }] }]);
+  assert.strictEqual(out[0].id, 5);
+  assert.deepStrictEqual(out[0].inputs.map((i) => i.id), ['5.1', '5.2']);
+});
+
+test('assignFieldIds terminates and stays unique with an out-of-range (1e308) id', () => {
+  // 1e308 is Number.isInteger-true but 1e308 + 1 === 1e308, so the old
+  // max+1 / next++ loop could never advance — an infinite-loop DoS. Such ids
+  // are treated as unset and reassigned a small sequential id.
+  const out = assignFieldIds([{ id: 1e308, type: 't' }, { type: 'e' }]);
+  const ids = out.map((f) => f.id);
+  assert.strictEqual(new Set(ids).size, ids.length, 'unique ids');
+  assert.ok(ids.every((id) => Number.isSafeInteger(id) && id > 0), 'all ids are safe positive integers');
+});
+
 test('assignFieldIds reassigns duplicate explicit ids so none collide', () => {
   const out = assignFieldIds([{ id: 5, type: 't' }, { id: 5, type: 'e' }]);
   const ids = out.map((f) => f.id);
