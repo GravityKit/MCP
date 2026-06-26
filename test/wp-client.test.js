@@ -11,6 +11,11 @@ import { WordPressClient } from '../src/wp-client.js';
 const creds = { GRAVITYKIT_WP_USERNAME: 'admin', GRAVITYKIT_WP_APP_PASSWORD: 'pw' };
 const make = (extra) => () => new WordPressClient({ ...creds, ...extra });
 
+test('self-signed certs: MCP flag enables it even when GF flag is the string "false"', () => {
+  const c = new WordPressClient({ ...creds, GRAVITYKIT_WP_URL: 'https://remote.example.com', GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS: 'false', MCP_ALLOW_SELF_SIGNED_CERTS: 'true' });
+  assert.strictEqual(c.allowSelfSigned, true);
+});
+
 test('allows HTTPS remote URLs', () => {
   assert.doesNotThrow(make({ GRAVITYKIT_WP_URL: 'https://remote.example.com' }));
 });

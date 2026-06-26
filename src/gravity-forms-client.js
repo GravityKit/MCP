@@ -91,6 +91,13 @@ export class GravityFormsClient {
     this.authManager = new AuthManager(this.config);
     this.baseURL = `${this.config.GRAVITY_FORMS_BASE_URL}/wp-json/gf/v2`;
 
+    // Allow self-signed certs when EITHER flag is explicitly 'true'. Compare each
+    // flag on its own — `A || B` short-circuits on a truthy string like 'false',
+    // which would let one flag mask the other.
+    const allowSelfSignedCerts =
+      this.config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS === 'true' ||
+      this.config.MCP_ALLOW_SELF_SIGNED_CERTS === 'true';
+
     // Initialize HTTP client with Basic Auth as primary method
     this.httpClient = axios.create({
       baseURL: this.baseURL,
@@ -113,7 +120,7 @@ export class GravityFormsClient {
       // Allow self-signed certificates for local development
       // Set GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true in .env for local dev environments
       httpsAgent: new https.Agent({
-        rejectUnauthorized: (this.config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS || this.config.MCP_ALLOW_SELF_SIGNED_CERTS) !== 'true'
+        rejectUnauthorized: !allowSelfSignedCerts
       })
     });
 
