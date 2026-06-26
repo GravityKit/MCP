@@ -27,6 +27,14 @@ export class FieldManager {
    * @returns {object} Field creation result with warnings
    */
   async addField(formId, fieldType, properties = {}, position = {}) {
+    if (typeof fieldType !== 'string' || fieldType.trim() === '') {
+      throw new Error('field_type is required and must be a non-empty string');
+    }
+    // Parameter defaults only cover `undefined`; coerce an explicit null so
+    // adversarial input can't crash createField or the position engine.
+    properties = properties || {};
+    position = position || {};
+
     // The registry is an ENHANCEMENT source, not a gate. Known types get
     // type-specific defaults and sub-inputs. Unknown types (third-party add-ons,
     // GravityKit, custom fields) are still created (Gravity Forms accepts them on
@@ -95,31 +103,46 @@ export class FieldManager {
   /**
    * Update existing field with dependency checking
    */
-  async updateField(formId, fieldId, updates = {}) {
+  async updateField(formId, fieldId, updates = {}, options = {}) {
+    const { force = false } = options;
+
     // Fetch form
     const { form } = await this.api.getForm({ id: formId });
-    
+
     // Find field
     const fieldIndex = form.fields?.findIndex(f => f.id == fieldId);
-    if (fieldIndex === -1) {
+    if (fieldIndex === undefined || fieldIndex === -1) {
       throw new Error(`Field ${fieldId} not found in form ${formId}`);
     }
-    
-    // Check dependencies
+
+    // Gate the write on dependencies BEFORE mutating, the way deleteField does.
+    // Saving first and reporting failure afterward persisted a "blocked" update
+    // and made the success:false response a lie.
     const dependencies = this.dependencyTracker?.scanFormDependencies(form, fieldId) || {};
-    
+    const hasBreakingDeps = dependencies.conditionalLogic?.length > 0;
+
+    if (hasBreakingDeps && !force) {
+      return {
+        success: false,
+        error: 'Field has dependencies that may be affected',
+        field_id: fieldId,
+        dependencies,
+        suggestion: 'Use force=true to update anyway'
+      };
+    }
+
     // Apply updates
     const originalField = { ...form.fields[fieldIndex] };
     form.fields[fieldIndex] = {
       ...originalField,
-      ...updates,
+      ...(updates || {}),
       id: originalField.id // Preserve ID
     };
     this.normalizeLayoutProperties(form.fields[fieldIndex], formId);
 
-    // Replace form via direct PUT (no re-fetch — we already have the full state)
+    // Replace form via direct PUT (no re-fetch; we already have the full state)
     const result = await this.api.replaceForm(formId, form);
-    
+
     return {
       success: true,
       field: result.form.fields[fieldIndex],
@@ -128,8 +151,7 @@ export class FieldManager {
         after: result.form.fields[fieldIndex]
       },
       warnings: {
-        dependencies: dependencies.conditionalLogic?.length > 0 ? 
-          ['Field has conditional logic dependencies'] : [],
+        dependencies: hasBreakingDeps ? ['Field has conditional logic dependencies'] : [],
         validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex])
       }
     };

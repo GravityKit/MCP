@@ -902,6 +902,9 @@ export function getStorageFormat(fieldType) {
  * Helper function to detect field variant
  */
 export function detectFieldVariant(field) {
+  if (!field || typeof field !== 'object') {
+    return 'default';
+  }
   const definition = fieldRegistry[field.type];
   if (!definition || !definition.variants) {
     return 'default';
@@ -927,6 +930,9 @@ export function detectFieldVariant(field) {
  * Validate field configuration
  */
 export function validateFieldConfig(field) {
+  if (!field || typeof field !== 'object') {
+    return { isValid: false, error: 'Field must be an object' };
+  }
   const definition = fieldRegistry[field.type];
 
   // Unknown / third-party types are tolerated, not rejected (Gravity Forms
@@ -1059,6 +1065,9 @@ export function getCompoundFieldInputs(fieldType) {
  * @returns {array|null} Array of input definitions or null if not a compound field.
  */
 export function generateCompoundInputs(field) {
+  if (!field || typeof field !== 'object') {
+    return null;
+  }
   const fieldDef = fieldRegistry[field.type];
 
   if (!fieldDef || !fieldDef.isCompound) {

@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { FieldManager } from '../src/field-operations/field-manager.js';
+import { PositionEngine } from '../src/field-operations/field-positioner.js';
 import FieldAwareValidator from '../src/config/field-validation.js';
 
 // Mock dependencies. Mirrors the GravityFormsClient contract FieldManager
@@ -321,23 +322,38 @@ test('FieldManager - updateField', async (t) => {
     assert.strictEqual(result.field.id, 2); // ID preserved
   });
 
-  await t.test('warns about dependencies', async () => {
+  // A blocking dependency must be detected BEFORE the form is written. The old
+  // code saved the change, then the handler returned success:false — so a
+  // "blocked" update was already persisted and the response lied.
+  await t.test('does not persist and reports failure when a dependency would break and force is false', async () => {
     const apiClient = createMockApiClient();
-    const registry = createMockRegistry();
-    const validator = createMockValidator();
-    const manager = new FieldManager(apiClient, registry, validator);
-    
-    // Mock dependency tracker with dependencies
+    let saved = false;
+    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
     manager.dependencyTracker = {
-      scanFormDependencies: () => ({
-        conditionalLogic: [{ field_id: 1, field_label: 'Name' }]
-      })
+      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
     };
 
-    const result = await manager.updateField(1, 2, { label: 'Updated' });
-    
+    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: false });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved, false, 'must NOT persist the change when blocked');
+    assert.match(result.suggestion || '', /force/);
+  });
+
+  await t.test('persists when force is true despite dependencies', async () => {
+    const apiClient = createMockApiClient();
+    let saved = false;
+    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = {
+      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
+    };
+
+    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: true });
+
     assert.strictEqual(result.success, true);
-    assert.ok(result.warnings.dependencies.length > 0);
+    assert.strictEqual(saved, true);
   });
 
   await t.test('throws for non-existent field', async () => {
@@ -525,5 +541,34 @@ test('FieldAwareValidator.getWarnings', async (t) => {
     assert.deepStrictEqual(v.getWarnings(null), []);
     assert.deepStrictEqual(v.getWarnings(undefined), []);
     assert.deepStrictEqual(v.getWarnings('nope'), []);
+  });
+});
+
+test('FieldManager - addField hardening (adversarial input)', async (t) => {
+  const mk = () => new FieldManager(createMockApiClient(), createMockRegistry(), createMockValidator());
+
+  await t.test('does not crash when properties is null', async () => {
+    const result = await mk().addField(1, 'text', null);
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.field.type, 'text');
+  });
+
+  await t.test('does not crash when position is null (real PositionEngine)', async () => {
+    const m = mk();
+    m.positionEngine = new PositionEngine();
+    const result = await m.addField(1, 'text', { label: 'X' }, null);
+    assert.strictEqual(result.success, true);
+  });
+
+  await t.test('rejects an empty-string field_type', async () => {
+    await assert.rejects(() => mk().addField(1, '', { label: 'X' }), /field_type/);
+  });
+
+  await t.test('rejects a null field_type', async () => {
+    await assert.rejects(() => mk().addField(1, null, { label: 'X' }), /field_type/);
+  });
+
+  await t.test('rejects a non-string field_type', async () => {
+    await assert.rejects(() => mk().addField(1, 123, { label: 'X' }), /field_type/);
   });
 });

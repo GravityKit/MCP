@@ -43,8 +43,8 @@ export class FieldAwareValidator {
       } else {
         errors.push({
           index: i,
-          fieldId: field.id,
-          fieldType: field.type,
+          fieldId: field?.id,
+          fieldType: field?.type,
           error: validation.error
         });
       }

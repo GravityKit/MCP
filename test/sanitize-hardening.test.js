@@ -15,6 +15,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitize, sanitizeUrl } from '../src/utils/sanitize.js';
 
+test('sanitize terminates on a circular reference (no stack overflow)', () => {
+  const o = { token: 'abcdefghijklmnop' };
+  o.self = o;
+  let out, err;
+  try { out = sanitize(o); } catch (e) { err = e; }
+  assert.ok(!err, 'must not throw on circular input');
+  assert.notStrictEqual(out.token, 'abcdefghijklmnop', 'token still masked');
+});
+
 // A value long enough that mask() returns the "abc****yz" form, so we can
 // assert the full value never survives anywhere.
 const SECRET_VALUE = 'PLAINTEXT-DO-NOT-LEAK-0123456789abcdef';

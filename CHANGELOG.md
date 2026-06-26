@@ -12,6 +12,8 @@ This release lets the field tools work with custom and third-party field types, 
 ### 🐛 Fixed
 - **`gf_add_field` now accepts custom and third-party field types.** Field types added by other plugins (Gravity Perks, Gravity Wiz, and similar add-ons) were previously rejected because they aren't in the built-in registry. They are now created normally, with a note when type-specific defaults or sub-inputs aren't available; pass `inputs`/`choices` explicitly for custom compound or choice fields.
 - **Unrecognized field types no longer leave an internal marker in saved forms** when creating or updating a form.
+- **`gf_update_field` no longer saves a change it then reports as blocked.** When a field had dependent conditional logic and `force` wasn't set, the update was written before the "use force to proceed" response, so the check protected nothing. The dependency check now runs before the write (matching `gf_delete_field`).
+- **Hardened tool-input handling.** Malformed or hostile input to the field, validation, and dependency helpers (empty/`null`/non-string field types, `null` properties or position, a `null` entry in a form's `fields`, non-scalar filter values, self-referential objects) now returns a clean error or is handled safely instead of failing opaquely.
 
 ## [2.4.0] - 2026-06-19
 

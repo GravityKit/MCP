@@ -21,8 +21,24 @@ import {
   BaseValidator,
 } from '../src/config/validation.js';
 import { buildEntriesQuery } from '../src/gravity-forms-client.js';
+import FieldAwareValidator from '../src/config/field-validation.js';
 
 const validate = (tool, input) => ValidationFactory.validateToolInput(tool, input);
+
+test('validateFormFields([null]) throws a clean validation error, not a TypeError', () => {
+  let err;
+  try { FieldAwareValidator.validateFormFields([null]); } catch (e) { err = e; }
+  assert.ok(err, 'should throw');
+  assert.notStrictEqual(err.constructor.name, 'TypeError');
+  assert.match(err.message, /must be an object/);
+});
+
+test('validateFieldFilter rejects a non-scalar (object) value instead of stringifying it', () => {
+  assert.throws(
+    () => BaseValidator.validateFieldFilter({ key: '1', operator: 'is', value: { a: 1 } }),
+    /value/
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Lax integer coercion is rejected (PositiveIntegerRule + BaseValidator.validateId)

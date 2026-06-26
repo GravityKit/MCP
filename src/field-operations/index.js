@@ -72,26 +72,9 @@ export const fieldOperationHandlers = {
   async gf_update_field(params, { fieldManager }) {
     const { form_id, field_id, properties, force = false } = params;
 
-    const result = await fieldManager.updateField(
-      form_id,
-      field_id,
-      properties
-    );
-
-    // Check for breaking changes if not forced
-    if (!force && result.warnings?.dependencies?.length > 0) {
-      return {
-        success: false,
-        error: 'Field has dependencies that may be affected',
-        ...result,
-        suggestion: 'Use force=true to update anyway'
-      };
-    }
-
-    return {
-      success: true,
-      ...result
-    };
+    // updateField gates the write on dependencies and returns the final
+    // success/failure shape; it no longer saves before reporting a block.
+    return fieldManager.updateField(form_id, field_id, properties, { force });
   },
 
   /**

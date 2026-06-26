@@ -43,11 +43,15 @@ function mask(value) {
 /**
  * Sanitize an object for logging
  */
-export function sanitize(obj) {
+export function sanitize(obj, seen = new WeakSet()) {
   if (!obj || typeof obj !== 'object') return obj;
 
+  // Cut cycles so logging a self-referential object can never stack-overflow.
+  if (seen.has(obj)) return Array.isArray(obj) ? [] : {};
+  seen.add(obj);
+
   if (Array.isArray(obj)) {
-    return obj.map(sanitize);
+    return obj.map((v) => sanitize(v, seen));
   }
 
   const result = {};
@@ -58,7 +62,7 @@ export function sanitize(obj) {
     if (isSensitive) {
       result[key] = mask(value);
     } else if (typeof value === 'object' && value !== null) {
-      result[key] = sanitize(value);
+      result[key] = sanitize(value, seen);
     } else {
       result[key] = value;
     }

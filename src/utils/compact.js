@@ -12,15 +12,19 @@
  * @param {*} obj - Value to compact
  * @returns {*} Compacted value
  */
-export function stripEmpty(obj) {
+export function stripEmpty(obj, seen = new WeakSet()) {
   if (Array.isArray(obj)) {
-    return obj.map(stripEmpty);
+    if (seen.has(obj)) return obj;
+    seen.add(obj);
+    return obj.map((v) => stripEmpty(v, seen));
   }
   if (obj !== null && typeof obj === 'object') {
+    if (seen.has(obj)) return obj;
+    seen.add(obj);
     const result = {};
     for (const [key, value] of Object.entries(obj)) {
       if (value === null || value === '') continue;
-      result[key] = stripEmpty(value);
+      result[key] = stripEmpty(value, seen);
     }
     return result;
   }
@@ -53,6 +57,9 @@ function isFieldKey(key) {
  * @returns {object} Entry with only core + field keys
  */
 export function stripEntryMeta(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return {};
+  }
   const result = {};
   for (const [key, value] of Object.entries(entry)) {
     if (CORE_ENTRY_KEYS.has(key) || isFieldKey(key)) {

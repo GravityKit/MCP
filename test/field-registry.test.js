@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig } from '../src/field-definitions/field-registry.js';
+import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig, detectFieldVariant } from '../src/field-definitions/field-registry.js';
 
 test('assignFieldIds', async (t) => {
   await t.test('assigns sequential ids when none are provided', () => {
@@ -181,6 +181,18 @@ test('validateFieldConfig', async (t) => {
   await t.test('accepts a well-formed known field', () => {
     const result = validateFieldConfig({ id: 7, type: 'text', label: 'Name' });
     assert.strictEqual(result.isValid, true);
+  });
+});
+
+test('field-registry null-input guards (no TypeError on hostile input)', async (t) => {
+  await t.test('validateFieldConfig(null) → {isValid:false}, no throw', () => {
+    assert.strictEqual(validateFieldConfig(null).isValid, false);
+  });
+  await t.test('detectFieldVariant(null) → "default", no throw', () => {
+    assert.strictEqual(detectFieldVariant(null), 'default');
+  });
+  await t.test('generateCompoundInputs(null) → null, no throw', () => {
+    assert.strictEqual(generateCompoundInputs(null), null);
   });
 });
 
