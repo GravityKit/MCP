@@ -225,16 +225,56 @@ test('FieldManager - addField', async (t) => {
     assert.strictEqual(result.position.index, 3);
   });
 
-  await t.test('rejects unknown field type', async () => {
+  // Custom / third-party field types (Gravity Perks, add-ons, GravityKit, the
+  // MailPot field a customer hit) are not in the static registry, yet Gravity
+  // Forms accepts them on the form PUT. addField must not gate on the registry;
+  // it degrades gracefully: create from caller properties, skip registry-derived
+  // defaults/sub-inputs, and warn.
+  await t.test('accepts an unknown field type instead of throwing', async () => {
     const apiClient = createMockApiClient();
     const registry = createMockRegistry();
     const validator = createMockValidator();
     const manager = new FieldManager(apiClient, registry, validator);
 
-    await assert.rejects(
-      async () => await manager.addField(1, 'unknown_type', {}),
-      /Unknown field type: unknown_type/
+    const result = await manager.addField(1, 'mailpot_custom', { label: 'Custom Field' });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.field.type, 'mailpot_custom');
+    assert.strictEqual(result.field.label, 'Custom Field');
+    assert.strictEqual(result.field.id, 4); // Next ID after 1,2,3
+  });
+
+  await t.test('warns when the field type is not in the registry', async () => {
+    const apiClient = createMockApiClient();
+    const registry = createMockRegistry();
+    const validator = createMockValidator();
+    const manager = new FieldManager(apiClient, registry, validator);
+
+    const result = await manager.addField(1, 'mailpot_custom', { label: 'Custom Field' });
+
+    assert.ok(Array.isArray(result.warnings));
+    assert.ok(
+      result.warnings.some((m) => /mailpot_custom/.test(m) && /registr/i.test(m)),
+      'expected a warning naming the unrecognized field type'
     );
+  });
+
+  await t.test('preserves caller-supplied inputs for an unknown compound-like type', async () => {
+    const apiClient = createMockApiClient();
+    const registry = createMockRegistry();
+    const validator = createMockValidator();
+    const manager = new FieldManager(apiClient, registry, validator);
+
+    const result = await manager.addField(1, 'custom_compound', {
+      label: 'Custom Compound',
+      inputs: [{ id: '4.1', label: 'Part A' }, { id: '4.2', label: 'Part B' }]
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.field.inputs, [
+      { id: '4.1', label: 'Part A' },
+      { id: '4.2', label: 'Part B' }
+    ]);
   });
 });
 

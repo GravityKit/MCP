@@ -451,7 +451,7 @@ test('Processes checkbox submission', () => {
 });
 
 // Test 10: Unknown Field Types
-test('Handles unknown field types gracefully', () => {
+test('Handles unknown field types gracefully without leaking an internal flag', () => {
   const fields = [
     {
       id: '1',
@@ -462,9 +462,11 @@ test('Handles unknown field types gracefully', () => {
 
   const validated = FieldAwareValidator.validateFormFields(fields);
   assertEqual(validated.length, 1, 'Should allow unknown field types');
-  // _unknown is intentionally retained (signals downstream code to handle gracefully)
-  // unlike _meta/_variant which are processing-only and stripped before return
-  assert(validated[0]._unknown === true, 'Should mark as unknown');
+  assertEqual(validated[0].type, 'custom_field_type', 'Should preserve the field type');
+  // The internal _unknown flag must NOT leak into the validated field: no
+  // production code reads it, and it was PUT verbatim to Gravity Forms. Unknown
+  // types are tolerated, not tagged.
+  assert(!('_unknown' in validated[0]), 'Should not leak the internal _unknown flag to Gravity Forms');
 });
 
 // Test 11: Validation Summary

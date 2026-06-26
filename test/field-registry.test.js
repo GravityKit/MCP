@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds } from '../src/field-definitions/field-registry.js';
+import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig } from '../src/field-definitions/field-registry.js';
 
 test('assignFieldIds', async (t) => {
   await t.test('assigns sequential ids when none are provided', () => {
@@ -160,6 +160,27 @@ test('generateCompoundInputs - non-compound fields', async (t) => {
     const inputs = generateCompoundInputs(field);
 
     assert.strictEqual(inputs, null);
+  });
+});
+
+test('validateFieldConfig', async (t) => {
+  // Unknown / third-party types are tolerated, not rejected: consistent with
+  // FieldManager.addField and the form-create validator. There is no config
+  // schema for a type we don't know, so there is nothing to reject.
+  await t.test('tolerates an unknown field type', () => {
+    const result = validateFieldConfig({ id: 7, type: 'mailpot_custom', label: 'Custom' });
+    assert.strictEqual(result.isValid, true);
+  });
+
+  await t.test('still rejects a known type missing required config (choice field without choices)', () => {
+    const result = validateFieldConfig({ id: 7, type: 'select', label: 'Pick' });
+    assert.strictEqual(result.isValid, false);
+    assert.match(result.error, /choices/i);
+  });
+
+  await t.test('accepts a well-formed known field', () => {
+    const result = validateFieldConfig({ id: 7, type: 'text', label: 'Name' });
+    assert.strictEqual(result.isValid, true);
   });
 });
 

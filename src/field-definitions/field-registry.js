@@ -928,12 +928,12 @@ export function detectFieldVariant(field) {
  */
 export function validateFieldConfig(field) {
   const definition = fieldRegistry[field.type];
-  
+
+  // Unknown / third-party types are tolerated, not rejected (Gravity Forms
+  // accepts them on save). With no config schema to check them against there is
+  // nothing to validate, so report valid and let GF own it.
   if (!definition) {
-    return {
-      isValid: false,
-      error: `Unknown field type: ${field.type}`
-    };
+    return { isValid: true };
   }
 
   // Check required properties

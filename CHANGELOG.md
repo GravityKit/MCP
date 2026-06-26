@@ -5,6 +5,14 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-06-25
+
+This release lets the field tools work with custom and third-party field types, not just the ones built into Gravity Forms.
+
+### 🐛 Fixed
+- **`gf_add_field` now accepts custom and third-party field types.** Field types added by other plugins (Gravity Perks, Gravity Wiz, and similar add-ons) were previously rejected because they aren't in the built-in registry. They are now created normally, with a note when type-specific defaults or sub-inputs aren't available; pass `inputs`/`choices` explicitly for custom compound or choice fields.
+- **Unrecognized field types no longer leave an internal marker in saved forms** when creating or updating a form.
+
 ## [2.4.0] - 2026-06-19
 
 This update adds additional guards to make sure Gravity Forms entries save correctly for every field type, so an AI assistant gets the entry format right the first time. Adds explicit support for the `password` field type and Gravity Wiz Nested Forms, plus a benchmark suite that ensures the MCP works well with small models.
@@ -236,6 +244,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.4.1]: https://github.com/GravityKit/MCP/releases/tag/v2.4.1
 [2.4.0]: https://github.com/GravityKit/MCP/releases/tag/v2.4.0
 [2.3.0]: https://github.com/GravityKit/MCP/releases/tag/v2.3.0
 [2.2.0]: https://github.com/GravityKit/MCP/releases/tag/v2.2.0

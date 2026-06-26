@@ -250,26 +250,32 @@ suite.test('Create Form: Should handle unicode and special characters', async ()
   TestAssert.equal(result.form.title, unicodeForm.title);
 });
 
-suite.test('Create Form: Should handle unknown field type gracefully', async () => {
-  const invalidForm = {
-    title: 'Invalid Form',
+suite.test('Create Form: Should accept an unknown field type without leaking _unknown to the API', async () => {
+  const customForm = {
+    title: 'Custom Field Form',
     fields: [
       { id: 1, type: 'custom_field_type', label: 'Custom Field' }
     ]
   };
 
-  // Mock should include the _unknown flag that would be added by field validation
   mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({
-    ...invalidForm,
+    ...customForm,
     id: 40,
     fields: [
-      { id: 1, type: 'custom_field_type', label: 'Custom Field', _unknown: true }
+      { id: 1, type: 'custom_field_type', label: 'Custom Field' }
     ]
   }));
 
-  const result = await client.createForm(invalidForm);
+  mockHttpClient.clearRequests();
+  const result = await client.createForm(customForm);
 
-  TestAssert.equal(result.form.fields[0]._unknown, true);
+  // Unknown types are tolerated (no throw) and round-trip back to the caller.
+  TestAssert.equal(result.form.fields[0].type, 'custom_field_type');
+
+  // The validated payload actually POSTed must not carry the internal _unknown flag.
+  const postReq = mockHttpClient.getRequests().find((r) => r.method === 'POST' && r.path === '/forms');
+  TestAssert.exists(postReq, 'expected a POST /forms request');
+  TestAssert.isFalse('_unknown' in postReq.config.data.fields[0], 'must not POST the internal _unknown flag');
 });
 
 // =================================

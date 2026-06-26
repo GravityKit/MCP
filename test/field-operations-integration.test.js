@@ -3,7 +3,7 @@
  * Tests the complete flow from MCP tool calls to API interactions
  */
 
-import { fieldOperationHandlers } from '../src/field-operations/index.js';
+import { fieldOperationHandlers, createFieldOperations } from '../src/field-operations/index.js';
 import { testConfig, TestFormManager } from '../src/config/test-config.js';
 import GravityFormsClient from '../src/gravity-forms-client.js';
 import fieldRegistry from '../src/field-definitions/field-registry.js';
@@ -43,100 +43,12 @@ async function setup() {
     // Create test form manager
     testFormManager = new TestFormManager(apiClient, testConfig);
 
-    // Initialize field operations
+    // Exercise the REAL field-operations layer (FieldManager plus the dependency
+    // and position engines), not a hand-rolled reimplementation. A local mock
+    // drifts from production behavior; createFieldOperations is exactly what
+    // src/index.js wires up, so this test catches real regressions.
     const validator = new FieldAwareValidator();
-    fieldOperations = {
-      fieldManager: {
-        addField: async (formId, fieldType, properties, position) => {
-          // Mock field manager for integration test
-          const form = await apiClient.getForm(formId);
-          const nextId = Math.max(...form.fields.map(f => parseInt(f.id) || 0), 0) + 1;
-          
-          const fieldDef = fieldRegistry[fieldType];
-          if (!fieldDef) {
-            throw new Error(`Unknown field type: ${fieldType}`);
-          }
-
-          const field = {
-            id: nextId,
-            type: fieldType,
-            label: properties.label || fieldDef.label || 'Untitled',
-            isRequired: properties.isRequired || false,
-            ...properties
-          };
-
-          // Add field to form
-          form.fields.push(field);
-          await apiClient.updateForm(form);
-
-          return {
-            success: true,
-            field,
-            form_id: formId,
-            position: { index: form.fields.length - 1 }
-          };
-        },
-        updateField: async (formId, fieldId, properties) => {
-          const form = await apiClient.getForm(formId);
-          const fieldIndex = form.fields.findIndex(f => f.id == fieldId);
-          
-          if (fieldIndex === -1) {
-            throw new Error(`Field ${fieldId} not found`);
-          }
-
-          const originalField = { ...form.fields[fieldIndex] };
-          form.fields[fieldIndex] = {
-            ...originalField,
-            ...properties,
-            id: originalField.id
-          };
-
-          await apiClient.updateForm(form);
-
-          return {
-            success: true,
-            field: form.fields[fieldIndex],
-            changes: {
-              before: originalField,
-              after: form.fields[fieldIndex]
-            },
-            warnings: { dependencies: [] }
-          };
-        },
-        deleteField: async (formId, fieldId, options = {}) => {
-          const form = await apiClient.getForm(formId);
-          const field = form.fields.find(f => f.id == fieldId);
-          
-          if (!field) {
-            throw new Error(`Field ${fieldId} not found`);
-          }
-
-          // Remove field
-          form.fields = form.fields.filter(f => f.id != fieldId);
-          await apiClient.updateForm(form);
-
-          return {
-            success: true,
-            deleted_field: {
-              id: field.id,
-              type: field.type,
-              label: field.label
-            },
-            dependencies: {},
-            actions_taken: []
-          };
-        }
-      },
-      dependencyTracker: {
-        scanFormDependencies: () => ({ conditionalLogic: [] }),
-        hasBreakingDependencies: () => false
-      },
-      positionEngine: {
-        calculatePosition: (fields, config) => fields.length
-      },
-      config: testConfig,
-      fieldRegistry
-    };
+    fieldOperations = createFieldOperations(apiClient, fieldRegistry, validator);
 
     console.log('✅ Test environment initialized');
   } catch (error) {
@@ -203,7 +115,7 @@ async function testAddField() {
     // Verify field was actually added
     const updatedForm = await apiClient.getForm(testForm.id);
     const addedField = updatedForm.fields.find(f => f.label === 'Comments');
-    
+
     if (addedField) {
       console.log('  ✅ Field verified in form');
       return true;
@@ -254,7 +166,7 @@ async function testUpdateField() {
     // Verify changes
     const updatedForm = await apiClient.getForm(testForm.id);
     const updatedField = updatedForm.fields.find(f => f.id == fieldToUpdate.id);
-    
+
     if (updatedField && updatedField.label === 'Email Address') {
       console.log('  ✅ Update verified in form');
       return true;
@@ -275,28 +187,28 @@ async function testListFieldTypes() {
   console.log('\n🔧 Testing gf_list_field_types...');
 
   try {
+    // gf_list_field_types returns { field_types, total } (or { error }) — no
+    // success/categories envelope.
     const result = await fieldOperationHandlers.gf_list_field_types({
-      category: 'standard',
-      include_variants: false
+      category: 'standard'
     }, fieldOperations);
 
-    if (result.success) {
-      console.log(`  ✅ Listed ${result.total} field types`);
-      console.log(`  📋 Categories: ${result.categories.join(', ')}`);
-      
-      // Check for expected field types
-      const hasText = result.field_types.some(f => f.type === 'text');
-      const hasEmail = result.field_types.some(f => f.type === 'email');
-      
-      if (hasText && hasEmail) {
-        console.log('  ✅ Expected field types found');
-        return true;
-      } else {
-        console.log('  ❌ Missing expected field types');
-        return false;
-      }
-    } else {
+    if (result.error) {
       console.log(`  ❌ Failed: ${result.error}`);
+      return false;
+    }
+
+    console.log(`  ✅ Listed ${result.total} field types`);
+
+    // Check for expected field types
+    const hasText = result.field_types.some(f => f.type === 'text');
+    const hasEmail = result.field_types.some(f => f.type === 'email');
+
+    if (hasText && hasEmail) {
+      console.log('  ✅ Expected field types found');
+      return true;
+    } else {
+      console.log('  ❌ Missing expected field types');
       return false;
     }
   } catch (error) {
@@ -337,7 +249,7 @@ async function testDeleteField() {
     // Verify field was deleted
     const updatedForm = await apiClient.getForm(testForm.id);
     const deletedField = updatedForm.fields.find(f => f.id == fieldToDelete.id);
-    
+
     if (!deletedField) {
       console.log('  ✅ Deletion verified in form');
       return true;
@@ -375,7 +287,7 @@ async function runTests() {
   await createTestForm();
 
   const results = [];
-  
+
   // Run all tests
   results.push(await testAddField());
   results.push(await testUpdateField());
@@ -387,7 +299,7 @@ async function runTests() {
   // Report results
   const passed = results.filter(r => r).length;
   const total = results.length;
-  
+
   console.log('\n📊 Integration Test Results:');
   console.log(`  ✅ Passed: ${passed}/${total}`);
   console.log(`  ❌ Failed: ${total - passed}/${total}`);

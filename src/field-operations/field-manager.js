@@ -27,48 +27,59 @@ export class FieldManager {
    * @returns {object} Field creation result with warnings
    */
   async addField(formId, fieldType, properties = {}, position = {}) {
-    // 1. Validate field type against registry
-    const fieldDef = this.registry[fieldType];
-    if (!fieldDef) {
-      throw new Error(`Unknown field type: ${fieldType}`);
-    }
+    // The registry is an ENHANCEMENT source, not a gate. Known types get
+    // type-specific defaults and sub-inputs. Unknown types (third-party add-ons,
+    // GravityKit, custom fields) are still created (Gravity Forms accepts them on
+    // save), just without those extras. Callers can pass `inputs`/`choices`
+    // explicitly for custom compound/choice fields.
+    const fieldDef = this.registry[fieldType] || null;
+    const isKnownType = fieldDef !== null;
 
-    // 2. Fetch current form via REST API
+    // Fetch current form via REST API
     const { form } = await this.api.getForm({ id: formId });
     
-    // 3. Generate unique integer field ID (max + 1 pattern)
+    // Generate unique integer field ID (max + 1 pattern)
     const fieldId = this.generateFieldId(form.fields || []);
     
-    // 4. Create field with type-specific defaults
-    const field = this.createField(fieldId, fieldType, properties, fieldDef);
-    
-    // 5. Generate compound sub-inputs if needed (address.1, name.3, etc.)
-    if (fieldDef.storage?.type === 'compound') {
+    // Create field with type-specific defaults (none for unknown types)
+    const field = this.createField(fieldId, fieldType, properties, fieldDef || {});
+
+    // Generate compound sub-inputs only for known compound types (address.1,
+    // name.3, …). Unknown types keep any caller-supplied `inputs` untouched.
+    const isCompoundType = fieldDef?.storage?.type === 'compound';
+    if (isCompoundType) {
       field.inputs = this.generateSubInputs(field, fieldDef);
     }
 
-    // 5b. Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
+    // Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
     this.normalizeLayoutProperties(field, formId);
     
-    // 6. Calculate insertion position (page-aware)
+    // Calculate insertion position (page-aware)
     const insertIndex = this.positionEngine?.calculatePosition(
       form.fields || [],
       position,
       form.pagination
     ) || form.fields?.length || 0;
     
-    // 7. Insert field at calculated position
+    // Insert field at calculated position
     if (!form.fields) form.fields = [];
     form.fields.splice(insertIndex, 0, field);
     
-    // 8. Replace form via direct PUT (no re-fetch — we already have the full state)
-    const updatedForm = await this.api.replaceForm(formId, form);
-    
-    // 9. Return result with validation warnings
+    // Replace form via direct PUT (no re-fetch; we already have the full state)
+    await this.api.replaceForm(formId, form);
+
+    // Surface field-shape warnings, plus a heads-up when the type is unrecognized.
+    const warnings = this.validator.getWarnings(field);
+    if (!isKnownType) {
+      warnings.unshift(
+        `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.`
+      );
+    }
+
     return {
       success: true,
       field: field,
-      warnings: this.validator.getWarnings(field),
+      warnings,
       form_id: formId,
       position: { 
         index: insertIndex, 
