@@ -94,7 +94,7 @@ export class GravityFormsClient {
     // Initialize HTTP client with Basic Auth as primary method
     this.httpClient = axios.create({
       baseURL: this.baseURL,
-      timeout: parseInt(config.GRAVITY_FORMS_TIMEOUT) || 30000,
+      timeout: parseInt(this.config.GRAVITY_FORMS_TIMEOUT, 10) || 30000,
       headers: {
         'User-Agent': USER_AGENT,
         'Accept': 'application/json'
@@ -113,7 +113,7 @@ export class GravityFormsClient {
       // Allow self-signed certificates for local development
       // Set GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=true in .env for local dev environments
       httpsAgent: new https.Agent({
-        rejectUnauthorized: (config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS || config.MCP_ALLOW_SELF_SIGNED_CERTS) !== 'true'
+        rejectUnauthorized: (this.config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS || this.config.MCP_ALLOW_SELF_SIGNED_CERTS) !== 'true'
       })
     });
 
