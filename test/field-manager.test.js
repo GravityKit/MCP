@@ -259,22 +259,41 @@ test('FieldManager - addField', async (t) => {
     );
   });
 
-  await t.test('preserves caller-supplied inputs for an unknown compound-like type', async () => {
+  await t.test('rebases caller-supplied dotted sub-input ids onto the generated field id (unknown type)', async () => {
     const apiClient = createMockApiClient();
     const registry = createMockRegistry();
     const validator = createMockValidator();
     const manager = new FieldManager(apiClient, registry, validator);
 
+    // The caller guessed parent id 9, but the form's next id is 4. Sub-inputs
+    // must follow the generated field id (4.x), not stay orphaned at 9.x. Labels
+    // and other props are preserved.
     const result = await manager.addField(1, 'custom_compound', {
       label: 'Custom Compound',
-      inputs: [{ id: '4.1', label: 'Part A' }, { id: '4.2', label: 'Part B' }]
+      inputs: [{ id: '9.1', label: 'Part A' }, { id: '9.2', label: 'Part B' }]
     });
 
     assert.strictEqual(result.success, true);
+    assert.strictEqual(result.field.id, 4);
     assert.deepStrictEqual(result.field.inputs, [
       { id: '4.1', label: 'Part A' },
       { id: '4.2', label: 'Part B' }
     ]);
+  });
+
+  await t.test('known compound type still gets registry sub-inputs keyed on the generated field id', async () => {
+    const apiClient = createMockApiClient();
+    const registry = createMockRegistry();
+    const validator = createMockValidator();
+    const manager = new FieldManager(apiClient, registry, validator);
+
+    const result = await manager.addField(1, 'address', { label: 'Mailing Address' });
+
+    assert.strictEqual(result.field.id, 4);
+    assert.deepStrictEqual(
+      result.field.inputs.map((i) => i.id),
+      ['4.1', '4.2', '4.3', '4.4', '4.5', '4.6']
+    );
   });
 });
 

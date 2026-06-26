@@ -44,11 +44,15 @@ export class FieldManager {
     // Create field with type-specific defaults (none for unknown types)
     const field = this.createField(fieldId, fieldType, properties, fieldDef || {});
 
-    // Generate compound sub-inputs only for known compound types (address.1,
-    // name.3, …). Unknown types keep any caller-supplied `inputs` untouched.
+    // Known compound types (address, name, …) regenerate sub-inputs from the
+    // registry, keyed off the generated field id. Otherwise caller-supplied
+    // `inputs` are kept, but their dotted sub-input ids are rebased onto the
+    // generated field id so the parent reference matches (mirrors assignFieldIds).
     const isCompoundType = fieldDef?.storage?.type === 'compound';
     if (isCompoundType) {
       field.inputs = this.generateSubInputs(field, fieldDef);
+    } else if (Array.isArray(field.inputs)) {
+      field.inputs = this.rebaseSubInputIds(field.inputs, fieldId);
     }
 
     // Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
@@ -200,6 +204,26 @@ export class FieldManager {
     }, 0);
     
     return maxId + 1;
+  }
+
+  /**
+   * Rebase dotted sub-input ids (e.g. "9.1") onto a new parent field id so each
+   * sub-input's parent reference matches the field it belongs to. Non-dotted and
+   * non-string ids pass through. Mirrors assignFieldIds in the field registry.
+   *
+   * @param {Array<object>} inputs
+   * @param {number|string} baseId
+   * @returns {Array<object>}
+   */
+  rebaseSubInputIds(inputs, baseId) {
+    return inputs.map((input) => {
+      const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
+      if (!hasDottedId) {
+        return input;
+      }
+      const sub = input.id.slice(input.id.indexOf('.') + 1);
+      return { ...input, id: `${baseId}.${sub}` };
+    });
   }
 
   /**
