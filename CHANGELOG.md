@@ -5,6 +5,17 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.1] - 2026-06-25
+
+This release lets the field tools work with custom and third-party field types (not just the ones built into Gravity Forms), and tightens input handling and security across the server.
+
+### 🐛 Fixed
+- **`gf_add_field` now accepts custom and third-party field types.** Field types added by other plugins were previously rejected because they aren't in the built-in registry. They are now created normally, with a note when type-specific defaults or sub-inputs aren't available; pass `inputs`/`choices` explicitly for custom compound or choice fields.
+- **Compound field sub-inputs stay consistent with the field's id.** When a field's id is auto-assigned or differs from the one supplied, its sub-input ids (e.g. `5.1`, `5.2`) are rebased to match, so `name`, `address`, and custom compound fields save to the right inputs.
+- **`gf_update_field` no longer saves a change it then reports as blocked.** When a field had dependent conditional logic and `force` wasn't set, the update was written before the "use force to proceed" response, so the check protected nothing. The dependency check now runs before the write (matching `gf_delete_field`).
+- **Hardened tool-input handling.** Malformed or hostile input to the field, validation, and dependency helpers (empty/`null`/non-string field types, `null` properties or position, a `null` entry in a form's `fields`, non-scalar filter values, self-referential objects) now returns a clean error or is handled safely instead of failing opaquely.
+- **Security and validation hardening.** Loopback detection no longer treats a remote `127.x` domain as local (which could have allowed Basic auth over plain HTTP); `Cookie` headers and values are masked in logs; confirmation-redirect URL validation accepts dotless hosts (localhost/intranet); and duplicate or out-of-range explicit field ids are corrected so generated forms stay valid (an out-of-range id can no longer stall form creation).
+
 ## [2.4.0] - 2026-06-19
 
 This update adds additional guards to make sure Gravity Forms entries save correctly for every field type, so an AI assistant gets the entry format right the first time. Adds explicit support for the `password` field type and Gravity Wiz Nested Forms, plus a benchmark suite that ensures the MCP works well with small models.
@@ -236,6 +247,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.4.1]: https://github.com/GravityKit/MCP/releases/tag/v2.4.1
 [2.4.0]: https://github.com/GravityKit/MCP/releases/tag/v2.4.0
 [2.3.0]: https://github.com/GravityKit/MCP/releases/tag/v2.3.0
 [2.2.0]: https://github.com/GravityKit/MCP/releases/tag/v2.2.0

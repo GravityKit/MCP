@@ -902,6 +902,9 @@ export function getStorageFormat(fieldType) {
  * Helper function to detect field variant
  */
 export function detectFieldVariant(field) {
+  if (!field || typeof field !== 'object') {
+    return 'default';
+  }
   const definition = fieldRegistry[field.type];
   if (!definition || !definition.variants) {
     return 'default';
@@ -927,13 +930,16 @@ export function detectFieldVariant(field) {
  * Validate field configuration
  */
 export function validateFieldConfig(field) {
+  if (!field || typeof field !== 'object') {
+    return { isValid: false, error: 'Field must be an object' };
+  }
   const definition = fieldRegistry[field.type];
-  
+
+  // Unknown / third-party types are tolerated, not rejected (Gravity Forms
+  // accepts them on save). With no config schema to check them against there is
+  // nothing to validate, so report valid and let GF own it.
   if (!definition) {
-    return {
-      isValid: false,
-      error: `Unknown field type: ${field.type}`
-    };
+    return { isValid: true };
   }
 
   // Check required properties
@@ -978,42 +984,56 @@ export function assignFieldIds(fields) {
     return fields;
   }
 
-  const used = new Set();
+  // Rebase any dotted compound sub-input ids onto `parentId` so they always
+  // track the field's FINAL id — applied whether the id is preserved or newly
+  // generated, so a caller mismatch (id 5 with sub-input "9.1") never orphans
+  // sub-inputs. Non-array inputs / non-dotted ids pass through unchanged.
+  const rebaseInputs = (field, parentId) => {
+    if (!Array.isArray(field?.inputs)) {
+      return field;
+    }
+    const inputs = field.inputs.map((input) => {
+      const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
+      if (!hasDottedId) {
+        return input;
+      }
+      const sub = input.id.slice(input.id.indexOf('.') + 1);
+      return { ...input, id: `${parentId}.${sub}` };
+    });
+    return { ...field, inputs };
+  };
+
+  // Only SAFE positive integers count as explicit ids. Number.isInteger is true
+  // for values like 1e308 where `next++` can never advance (1e308 + 1 === 1e308),
+  // which would hang the reassignment loop — treat those as unset and give them a
+  // small sequential id instead.
+  let next = 1;
   for (const field of fields) {
     const id = Number(field?.id);
-    if (Number.isInteger(id) && id > 0) {
-      used.add(id);
+    if (Number.isSafeInteger(id) && id > 0 && id >= next) {
+      next = id + 1;
     }
   }
 
-  let next = (used.size ? Math.max(...used) : 0) + 1;
-
+  // Keep the FIRST occurrence of each explicit id; reassign fields with no id OR
+  // a duplicate explicit id, so the result never contains colliding field ids.
+  const claimed = new Set();
   return fields.map((field) => {
     const id = Number(field?.id);
-    if (Number.isInteger(id) && id > 0) {
-      return field;
+    const hasFreshExplicitId = Number.isSafeInteger(id) && id > 0 && !claimed.has(id);
+    if (hasFreshExplicitId) {
+      claimed.add(id);
+      // Id preserved, but sub-inputs may still reference a stale parent — rebase.
+      return rebaseInputs(field, id);
     }
 
-    while (used.has(next)) {
+    while (claimed.has(next)) {
       next++;
     }
     const newId = next++;
-    used.add(newId);
+    claimed.add(newId);
 
-    // Re-base any provided compound sub-input ids onto the new field id.
-    if (Array.isArray(field?.inputs)) {
-      const inputs = field.inputs.map((input) => {
-        const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
-        if (hasDottedId) {
-          const sub = input.id.slice(input.id.indexOf('.') + 1);
-          return { ...input, id: `${newId}.${sub}` };
-        }
-        return input;
-      });
-      return { ...field, id: newId, inputs };
-    }
-
-    return { ...field, id: newId };
+    return rebaseInputs({ ...field, id: newId }, newId);
   });
 }
 
@@ -1059,6 +1079,9 @@ export function getCompoundFieldInputs(fieldType) {
  * @returns {array|null} Array of input definitions or null if not a compound field.
  */
 export function generateCompoundInputs(field) {
+  if (!field || typeof field !== 'object') {
+    return null;
+  }
   const fieldDef = fieldRegistry[field.type];
 
   if (!fieldDef || !fieldDef.isCompound) {

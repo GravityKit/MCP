@@ -20,7 +20,7 @@ export const VALIDATION_CONFIG = {
       maxLength: 254 // RFC 5321
     },
     url: {
-      pattern: /^https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$/,
+      pattern: /^https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}(\.[a-zA-Z0-9()]{1,6})?\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$/,
       maxLength: 2083 // IE limit
     },
     slug: {
@@ -104,13 +104,15 @@ export const VALIDATION_CONFIG = {
  * Get error message with field name and parameters
  */
 export function formatErrorMessage(template, field, params = {}) {
-  let message = template.replace('{field}', field);
-  
+  // split/join replaces EVERY placeholder and treats the value literally.
+  // String.replace(str, str) only swaps the first match and interprets `$&`/`$1`
+  // sequences in the replacement string.
+  let message = template.split('{field}').join(field);
+
   Object.keys(params).forEach(key => {
-    const placeholder = `{${key}}`;
-    message = message.replace(placeholder, params[key]);
+    message = message.split(`{${key}}`).join(String(params[key]));
   });
-  
+
   return message;
 }
 

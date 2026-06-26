@@ -23,7 +23,7 @@ const SENSITIVE_KEYS = [
   'consumer_key', 'consumer_secret',
   'authorization', 'auth', 'credential',
   'oauth_signature', 'bearer',
-  'credit_card', 'cvv', 'ssn'
+  'credit_card', 'cvv', 'ssn', 'cookie'
 ];
 
 /**
@@ -43,11 +43,15 @@ function mask(value) {
 /**
  * Sanitize an object for logging
  */
-export function sanitize(obj) {
+export function sanitize(obj, seen = new WeakSet()) {
   if (!obj || typeof obj !== 'object') return obj;
 
+  // Cut cycles so logging a self-referential object can never stack-overflow.
+  if (seen.has(obj)) return Array.isArray(obj) ? [] : {};
+  seen.add(obj);
+
   if (Array.isArray(obj)) {
-    return obj.map(sanitize);
+    return obj.map((v) => sanitize(v, seen));
   }
 
   const result = {};
@@ -58,7 +62,7 @@ export function sanitize(obj) {
     if (isSensitive) {
       result[key] = mask(value);
     } else if (typeof value === 'object' && value !== null) {
-      result[key] = sanitize(value);
+      result[key] = sanitize(value, seen);
     } else {
       result[key] = value;
     }
@@ -98,7 +102,7 @@ export function sanitizeHeaders(headers) {
   for (const [key, value] of Object.entries(headers)) {
     const keyLower = key.toLowerCase();
 
-    if (keyLower === 'authorization' || keyLower.includes('api-key')) {
+    if (keyLower === 'authorization' || keyLower.includes('api-key') || keyLower.includes('cookie')) {
       result[key] = mask(String(value));
     } else {
       result[key] = value;

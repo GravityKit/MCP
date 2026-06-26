@@ -43,8 +43,8 @@ export class FieldAwareValidator {
       } else {
         errors.push({
           index: i,
-          fieldId: field.id,
-          fieldType: field.type,
+          fieldId: field?.id,
+          fieldType: field?.type,
           error: validation.error
         });
       }
@@ -89,10 +89,12 @@ export class FieldAwareValidator {
         logger.warn(`[FieldValidator] Unknown field type '${field.type}' at ${path}`);
       }
 
-      // Allow unknown types but mark them
+      // Allow unknown types (third-party add-ons, GravityKit, custom fields).
+      // Gravity Forms accepts them on save; pass the field through unchanged. No
+      // internal flag is added: it would be PUT verbatim and nothing reads it.
       return {
         isValid: true,
-        field: { ...field, _unknown: true }
+        field: { ...field }
       };
     }
 

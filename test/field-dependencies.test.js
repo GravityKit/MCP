@@ -7,6 +7,21 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { DependencyTracker } from '../src/field-operations/field-dependencies.js';
 
+test('DependencyTracker null-input guards (no TypeError)', async (t) => {
+  const dt = new DependencyTracker();
+  await t.test('scanFormDependencies(null) returns empty deps, no throw', () => {
+    assert.deepStrictEqual(dt.scanFormDependencies(null, 1), {
+      conditionalLogic: [], calculations: [], mergeTags: [], dynamicPopulation: []
+    });
+  });
+  await t.test('hasBreakingDependencies(null) → false, no throw', () => {
+    assert.strictEqual(dt.hasBreakingDependencies(null), false);
+  });
+  await t.test('hasBreakingDependencies({}) → false, no throw', () => {
+    assert.strictEqual(dt.hasBreakingDependencies({}), false);
+  });
+});
+
 // Sample form with various dependencies
 const createTestForm = () => ({
   id: 1,

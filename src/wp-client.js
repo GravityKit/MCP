@@ -64,7 +64,11 @@ export class WordPressClient {
     }
     this.basicAuth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
 
-    this.allowSelfSigned = (this.config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS || this.config.MCP_ALLOW_SELF_SIGNED_CERTS) === 'true';
+    // Compare each flag on its own: `A || B` short-circuits on a truthy string
+    // like 'false', so one flag could otherwise mask the other.
+    this.allowSelfSigned =
+      this.config.GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS === 'true' ||
+      this.config.MCP_ALLOW_SELF_SIGNED_CERTS === 'true';
     this.timeoutMs = parseInt(this.config.GRAVITYKIT_TIMEOUT || this.config.GRAVITY_FORMS_TIMEOUT, 10) || 30000;
 
     // Rooted at the WP install. Subclasses may replace this with a

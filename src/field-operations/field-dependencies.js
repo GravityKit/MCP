@@ -18,6 +18,10 @@ export class DependencyTracker {
       dynamicPopulation: []
     };
 
+    if (!form || typeof form !== 'object') {
+      return dependencies;
+    }
+
     // 1. Check conditional logic dependencies in all fields
     this.scanConditionalLogic(form, fieldId, dependencies);
     
@@ -260,10 +264,13 @@ export class DependencyTracker {
    * Check if dependencies would break form functionality
    */
   hasBreakingDependencies(dependencies) {
+    if (!dependencies || typeof dependencies !== 'object') {
+      return false;
+    }
     return (
-      dependencies.conditionalLogic.length > 0 ||
-      dependencies.calculations.length > 0 ||
-      dependencies.mergeTags.length > 0
+      (dependencies.conditionalLogic?.length > 0) ||
+      (dependencies.calculations?.length > 0) ||
+      (dependencies.mergeTags?.length > 0)
     );
   }
 

@@ -21,8 +21,41 @@ import {
   BaseValidator,
 } from '../src/config/validation.js';
 import { buildEntriesQuery } from '../src/gravity-forms-client.js';
+import FieldAwareValidator from '../src/config/field-validation.js';
+import { formatErrorMessage } from '../src/config/validation-config.js';
+
+test('validateURL accepts a dotless host (localhost/intranet) for confirmation redirects', () => {
+  assert.equal(BaseValidator.validateURL('https://localhost/thanks'), 'https://localhost/thanks');
+  assert.equal(BaseValidator.validateURL('https://intranet/thanks'), 'https://intranet/thanks');
+});
+
+test('validateURL still rejects non-http(s) schemes', () => {
+  assert.throws(() => BaseValidator.validateURL('javascript:alert(1)'));
+  assert.throws(() => BaseValidator.validateURL('file:///etc/passwd'));
+  assert.throws(() => BaseValidator.validateURL('https://has space/x'));
+});
+
+test('formatErrorMessage replaces every {field} and treats values literally', () => {
+  assert.equal(formatErrorMessage('{field} or {field}', 'X'), 'X or X');
+  assert.equal(formatErrorMessage('{field} bad', 'a$&b'), 'a$&b bad');
+});
 
 const validate = (tool, input) => ValidationFactory.validateToolInput(tool, input);
+
+test('validateFormFields([null]) throws a clean validation error, not a TypeError', () => {
+  let err;
+  try { FieldAwareValidator.validateFormFields([null]); } catch (e) { err = e; }
+  assert.ok(err, 'should throw');
+  assert.notStrictEqual(err.constructor.name, 'TypeError');
+  assert.match(err.message, /must be an object/);
+});
+
+test('validateFieldFilter rejects a non-scalar (object) value instead of stringifying it', () => {
+  assert.throws(
+    () => BaseValidator.validateFieldFilter({ key: '1', operator: 'is', value: { a: 1 } }),
+    /value/
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Lax integer coercion is rejected (PositiveIntegerRule + BaseValidator.validateId)

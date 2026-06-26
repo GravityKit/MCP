@@ -29,7 +29,7 @@ export function buildToolList({ gfReady, gfToolDefs = [], fieldOpTools = [], abi
     ...(gfReady ? [...gfToolDefs, ...fieldOpTools] : []),
     ...(abilityDefs ?? []),
     gkReloadDef,
-  ];
+  ].filter(Boolean);
 }
 
 /**

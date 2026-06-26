@@ -1,6 +1,6 @@
 {
   "name": "@gravitykit/mcp",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "description": "Full-featured MCP server for Gravity Forms",
   "main": "src/index.js",
   "type": "module",

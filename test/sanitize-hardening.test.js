@@ -13,7 +13,34 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sanitize, sanitizeUrl } from '../src/utils/sanitize.js';
+import { sanitize, sanitizeUrl, sanitizeHeaders } from '../src/utils/sanitize.js';
+import { isLocalUrl } from '../src/config/auth.js';
+
+test('sanitizeHeaders masks a Cookie header (session credentials)', () => {
+  const out = sanitizeHeaders({ Cookie: 'wordpress_logged_in_x=secretsession12345' });
+  assert.notEqual(out.Cookie, 'wordpress_logged_in_x=secretsession12345');
+});
+
+test('sanitize masks a cookie-named key', () => {
+  const out = sanitize({ cookie: 'sessiondata1234567890' });
+  assert.notEqual(out.cookie, 'sessiondata1234567890');
+});
+
+test('isLocalUrl does not classify a remote 127.x domain as local', () => {
+  assert.equal(isLocalUrl('http://127.example.com'), false);
+  assert.equal(isLocalUrl('http://127.0.0.1.evil.com'), false);
+  assert.equal(isLocalUrl('http://127.0.0.1'), true);
+  assert.equal(isLocalUrl('http://localhost'), true);
+});
+
+test('sanitize terminates on a circular reference (no stack overflow)', () => {
+  const o = { token: 'abcdefghijklmnop' };
+  o.self = o;
+  let out, err;
+  try { out = sanitize(o); } catch (e) { err = e; }
+  assert.ok(!err, 'must not throw on circular input');
+  assert.notStrictEqual(out.token, 'abcdefghijklmnop', 'token still masked');
+});
 
 // A value long enough that mask() returns the "abc****yz" form, so we can
 // assert the full value never survives anywhere.

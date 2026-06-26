@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { FieldManager } from '../src/field-operations/field-manager.js';
+import { PositionEngine } from '../src/field-operations/field-positioner.js';
 import FieldAwareValidator from '../src/config/field-validation.js';
 
 // Mock dependencies. Mirrors the GravityFormsClient contract FieldManager
@@ -225,15 +226,74 @@ test('FieldManager - addField', async (t) => {
     assert.strictEqual(result.position.index, 3);
   });
 
-  await t.test('rejects unknown field type', async () => {
+  // Custom / third-party field types (Gravity Perks, add-ons, GravityKit, the
+  // MailPot field a customer hit) are not in the static registry, yet Gravity
+  // Forms accepts them on the form PUT. addField must not gate on the registry;
+  // it degrades gracefully: create from caller properties, skip registry-derived
+  // defaults/sub-inputs, and warn.
+  await t.test('accepts an unknown field type instead of throwing', async () => {
     const apiClient = createMockApiClient();
     const registry = createMockRegistry();
     const validator = createMockValidator();
     const manager = new FieldManager(apiClient, registry, validator);
 
-    await assert.rejects(
-      async () => await manager.addField(1, 'unknown_type', {}),
-      /Unknown field type: unknown_type/
+    const result = await manager.addField(1, 'mailpot_custom', { label: 'Custom Field' });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.field.type, 'mailpot_custom');
+    assert.strictEqual(result.field.label, 'Custom Field');
+    assert.strictEqual(result.field.id, 4); // Next ID after 1,2,3
+  });
+
+  await t.test('warns when the field type is not in the registry', async () => {
+    const apiClient = createMockApiClient();
+    const registry = createMockRegistry();
+    const validator = createMockValidator();
+    const manager = new FieldManager(apiClient, registry, validator);
+
+    const result = await manager.addField(1, 'mailpot_custom', { label: 'Custom Field' });
+
+    assert.ok(Array.isArray(result.warnings));
+    assert.ok(
+      result.warnings.some((m) => /mailpot_custom/.test(m) && /registr/i.test(m)),
+      'expected a warning naming the unrecognized field type'
+    );
+  });
+
+  await t.test('rebases caller-supplied dotted sub-input ids onto the generated field id (unknown type)', async () => {
+    const apiClient = createMockApiClient();
+    const registry = createMockRegistry();
+    const validator = createMockValidator();
+    const manager = new FieldManager(apiClient, registry, validator);
+
+    // The caller guessed parent id 9, but the form's next id is 4. Sub-inputs
+    // must follow the generated field id (4.x), not stay orphaned at 9.x. Labels
+    // and other props are preserved.
+    const result = await manager.addField(1, 'custom_compound', {
+      label: 'Custom Compound',
+      inputs: [{ id: '9.1', label: 'Part A' }, { id: '9.2', label: 'Part B' }]
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.field.id, 4);
+    assert.deepStrictEqual(result.field.inputs, [
+      { id: '4.1', label: 'Part A' },
+      { id: '4.2', label: 'Part B' }
+    ]);
+  });
+
+  await t.test('known compound type still gets registry sub-inputs keyed on the generated field id', async () => {
+    const apiClient = createMockApiClient();
+    const registry = createMockRegistry();
+    const validator = createMockValidator();
+    const manager = new FieldManager(apiClient, registry, validator);
+
+    const result = await manager.addField(1, 'address', { label: 'Mailing Address' });
+
+    assert.strictEqual(result.field.id, 4);
+    assert.deepStrictEqual(
+      result.field.inputs.map((i) => i.id),
+      ['4.1', '4.2', '4.3', '4.4', '4.5', '4.6']
     );
   });
 });
@@ -262,23 +322,38 @@ test('FieldManager - updateField', async (t) => {
     assert.strictEqual(result.field.id, 2); // ID preserved
   });
 
-  await t.test('warns about dependencies', async () => {
+  // A blocking dependency must be detected BEFORE the form is written. The old
+  // code saved the change, then the handler returned success:false — so a
+  // "blocked" update was already persisted and the response lied.
+  await t.test('does not persist and reports failure when a dependency would break and force is false', async () => {
     const apiClient = createMockApiClient();
-    const registry = createMockRegistry();
-    const validator = createMockValidator();
-    const manager = new FieldManager(apiClient, registry, validator);
-    
-    // Mock dependency tracker with dependencies
+    let saved = false;
+    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
     manager.dependencyTracker = {
-      scanFormDependencies: () => ({
-        conditionalLogic: [{ field_id: 1, field_label: 'Name' }]
-      })
+      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
     };
 
-    const result = await manager.updateField(1, 2, { label: 'Updated' });
-    
+    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: false });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved, false, 'must NOT persist the change when blocked');
+    assert.match(result.suggestion || '', /force/);
+  });
+
+  await t.test('persists when force is true despite dependencies', async () => {
+    const apiClient = createMockApiClient();
+    let saved = false;
+    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = {
+      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
+    };
+
+    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: true });
+
     assert.strictEqual(result.success, true);
-    assert.ok(result.warnings.dependencies.length > 0);
+    assert.strictEqual(saved, true);
   });
 
   await t.test('throws for non-existent field', async () => {
@@ -466,5 +541,34 @@ test('FieldAwareValidator.getWarnings', async (t) => {
     assert.deepStrictEqual(v.getWarnings(null), []);
     assert.deepStrictEqual(v.getWarnings(undefined), []);
     assert.deepStrictEqual(v.getWarnings('nope'), []);
+  });
+});
+
+test('FieldManager - addField hardening (adversarial input)', async (t) => {
+  const mk = () => new FieldManager(createMockApiClient(), createMockRegistry(), createMockValidator());
+
+  await t.test('does not crash when properties is null', async () => {
+    const result = await mk().addField(1, 'text', null);
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.field.type, 'text');
+  });
+
+  await t.test('does not crash when position is null (real PositionEngine)', async () => {
+    const m = mk();
+    m.positionEngine = new PositionEngine();
+    const result = await m.addField(1, 'text', { label: 'X' }, null);
+    assert.strictEqual(result.success, true);
+  });
+
+  await t.test('rejects an empty-string field_type', async () => {
+    await assert.rejects(() => mk().addField(1, '', { label: 'X' }), /field_type/);
+  });
+
+  await t.test('rejects a null field_type', async () => {
+    await assert.rejects(() => mk().addField(1, null, { label: 'X' }), /field_type/);
+  });
+
+  await t.test('rejects a non-string field_type', async () => {
+    await assert.rejects(() => mk().addField(1, 123, { label: 'X' }), /field_type/);
   });
 });

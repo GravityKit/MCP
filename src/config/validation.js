@@ -104,6 +104,13 @@ export class BaseValidator {
       throw new Error('Field filter must have a value');
     }
 
+    // Reject non-array objects: String({}) becomes "[object Object]", a silent
+    // garbage filter value. Arrays stay valid for the multi-value operators
+    // handled below; a plain object never is.
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      throw new Error('Field filter value must be a string, number, boolean, or array');
+    }
+
     // GF normalizes operators case-insensitively (IN/in/In all match), so accept
     // any case rather than rejecting valid GF operators.
     const validOperators = getEnumValues('fieldOperators');

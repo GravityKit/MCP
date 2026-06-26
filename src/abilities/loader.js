@@ -58,13 +58,13 @@ const GK_NAME_PATTERN = /^gk-[a-z0-9-]+\//;
  * @returns {'GET'|'POST'|'DELETE'}
  */
 export function methodForAbility(annotations = {}) {
-  if (annotations.readonly) return 'GET';
+  if (annotations?.readonly) return 'GET';
   // Foundation's run controller only accepts DELETE for abilities that
   // are BOTH destructive AND idempotent — matching WP-REST conventions
   // for HTTP DELETE. Destructive-but-not-idempotent operations (e.g.
   // view-delete with `force` defaulting to soft trash) must go through
   // POST so their non-idempotent semantics are explicit on the wire.
-  if (annotations.destructive && annotations.idempotent) return 'DELETE';
+  if (annotations?.destructive && annotations?.idempotent) return 'DELETE';
   return 'POST';
 }
 

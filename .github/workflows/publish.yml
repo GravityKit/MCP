@@ -80,6 +80,7 @@ jobs:
         run: npm publish --access public
 
       - name: Create GitHub Release
+        id: release
         if: steps.guard.outputs.published == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -96,3 +97,48 @@ jobs:
             --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md) for details.
 
           Install: \`npm install @gravitykit/mcp@$VERSION\` · [View on npm](https://www.npmjs.com/package/@gravitykit/mcp/v/$VERSION)"
+          # Signals the Slack step that a release was actually created this run
+          # (not an idempotent skip), so announcements never double-fire.
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Announce release to Slack
+        # Mirrors gktools' "Notify Slack": POST {link,version,changelog,product}
+        # to SLACK_RELEASE_NOTIFICATION_WEBHOOK so GravityKit MCP shows up in
+        # #release-announcements like every other plugin. Only after a release is
+        # actually created; never fails the job.
+        if: steps.release.outputs.created == 'true'
+        env:
+          SLACK_RELEASE_NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_RELEASE_NOTIFICATION_WEBHOOK }}
+          # Bind expressions through env (quoted shell vars below) instead of
+          # interpolating ${{ }} into the run script — avoids template-to-shell injection.
+          VERSION: ${{ steps.guard.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "${SLACK_RELEASE_NOTIFICATION_WEBHOOK:-}" ]; then
+            echo "SLACK_RELEASE_NOTIFICATION_WEBHOOK not set — skipping Slack announcement."
+            exit 0
+          fi
+          LINK="https://github.com/$REPO/releases/tag/v$VERSION"
+          # Extract this version's CHANGELOG section: lines between "## [VERSION]"
+          # and the next "## [" header.
+          NOTES="$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { capture=1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md)"
+          # jq builds the JSON so newlines/quotes in the changelog are escaped.
+          PAYLOAD="$(jq -n \
+            --arg link "$LINK" \
+            --arg version "$VERSION" \
+            --arg changelog "$NOTES" \
+            --arg product "GravityKit MCP" \
+            '{link:$link,version:$version,changelog:$changelog,product:$product}')"
+          # Non-fatal, like gktools: a bad Slack response only warns.
+          RESPONSE="$(curl -sS -X POST \
+            -H 'Content-Type: application/json' \
+            --data "$PAYLOAD" \
+            "$SLACK_RELEASE_NOTIFICATION_WEBHOOK" || true)"
+          echo "Slack response: $RESPONSE"
+          if ! printf '%s' "$RESPONSE" | grep -q '"ok":true'; then
+            echo "::warning::Slack release announcement did not return \"ok\":true."
+          fi

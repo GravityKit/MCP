@@ -7,6 +7,12 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs } from '../src/server-runtime.js';
 
+test('buildToolList: omits a missing gkReloadDef instead of emitting undefined', () => {
+  const list = buildToolList({ gfReady: false });
+  assert.ok(!list.includes(undefined), 'tool list must not contain undefined');
+  assert.ok(list.every((t) => t && typeof t.name === 'string'), 'every advertised tool has a name');
+});
+
 // --- runPlaneInit (#1: WP not blocked by a slow GF probe) ---
 
 test('runPlaneInit: WP plane initializes before a slow GF probe resolves', async () => {

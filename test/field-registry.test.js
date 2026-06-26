@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds } from '../src/field-definitions/field-registry.js';
+import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig, detectFieldVariant } from '../src/field-definitions/field-registry.js';
 
 test('assignFieldIds', async (t) => {
   await t.test('assigns sequential ids when none are provided', () => {
@@ -160,6 +160,65 @@ test('generateCompoundInputs - non-compound fields', async (t) => {
     const inputs = generateCompoundInputs(field);
 
     assert.strictEqual(inputs, null);
+  });
+});
+
+test('validateFieldConfig', async (t) => {
+  // Unknown / third-party types are tolerated, not rejected: consistent with
+  // FieldManager.addField and the form-create validator. There is no config
+  // schema for a type we don't know, so there is nothing to reject.
+  await t.test('tolerates an unknown field type', () => {
+    const result = validateFieldConfig({ id: 7, type: 'mailpot_custom', label: 'Custom' });
+    assert.strictEqual(result.isValid, true);
+  });
+
+  await t.test('still rejects a known type missing required config (choice field without choices)', () => {
+    const result = validateFieldConfig({ id: 7, type: 'select', label: 'Pick' });
+    assert.strictEqual(result.isValid, false);
+    assert.match(result.error, /choices/i);
+  });
+
+  await t.test('accepts a well-formed known field', () => {
+    const result = validateFieldConfig({ id: 7, type: 'text', label: 'Name' });
+    assert.strictEqual(result.isValid, true);
+  });
+});
+
+test('assignFieldIds rebases dotted sub-inputs to a PRESERVED explicit id', () => {
+  // A field can keep its explicit id but carry sub-inputs that reference a stale
+  // parent (caller mismatch). They must be rebased onto the final id, not just
+  // when a new id is allocated.
+  const out = assignFieldIds([{ id: 5, type: 'address', inputs: [{ id: '9.1' }, { id: '9.2' }] }]);
+  assert.strictEqual(out[0].id, 5);
+  assert.deepStrictEqual(out[0].inputs.map((i) => i.id), ['5.1', '5.2']);
+});
+
+test('assignFieldIds terminates and stays unique with an out-of-range (1e308) id', () => {
+  // 1e308 is Number.isInteger-true but 1e308 + 1 === 1e308, so the old
+  // max+1 / next++ loop could never advance — an infinite-loop DoS. Such ids
+  // are treated as unset and reassigned a small sequential id.
+  const out = assignFieldIds([{ id: 1e308, type: 't' }, { type: 'e' }]);
+  const ids = out.map((f) => f.id);
+  assert.strictEqual(new Set(ids).size, ids.length, 'unique ids');
+  assert.ok(ids.every((id) => Number.isSafeInteger(id) && id > 0), 'all ids are safe positive integers');
+});
+
+test('assignFieldIds reassigns duplicate explicit ids so none collide', () => {
+  const out = assignFieldIds([{ id: 5, type: 't' }, { id: 5, type: 'e' }]);
+  const ids = out.map((f) => f.id);
+  assert.strictEqual(new Set(ids).size, ids.length, 'no duplicate field ids');
+  assert.strictEqual(out[0].id, 5, 'first explicit id is preserved');
+});
+
+test('field-registry null-input guards (no TypeError on hostile input)', async (t) => {
+  await t.test('validateFieldConfig(null) → {isValid:false}, no throw', () => {
+    assert.strictEqual(validateFieldConfig(null).isValid, false);
+  });
+  await t.test('detectFieldVariant(null) → "default", no throw', () => {
+    assert.strictEqual(detectFieldVariant(null), 'default');
+  });
+  await t.test('generateCompoundInputs(null) → null, no throw', () => {
+    assert.strictEqual(generateCompoundInputs(null), null);
   });
 });
 

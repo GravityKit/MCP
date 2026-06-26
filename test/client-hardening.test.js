@@ -36,6 +36,31 @@ function makeClient() {
   return new GravityFormsClient(ENV);
 }
 
+// In test mode, resolveEnv() remaps GRAVITY_FORMS_TEST_TIMEOUT → GRAVITY_FORMS_TIMEOUT
+// on this.config; the constructor must read the timeout from the RESOLVED config,
+// not the raw one, or the test-site override is silently ignored.
+test('test-mode honors GRAVITY_FORMS_TEST_TIMEOUT', () => {
+  const c = new GravityFormsClient({
+    GRAVITYKIT_MCP_TEST_MODE: 'true',
+    GRAVITY_FORMS_TEST_BASE_URL: 'https://t.test',
+    GRAVITY_FORMS_TEST_CONSUMER_KEY: 'wp_user',
+    GRAVITY_FORMS_TEST_CONSUMER_SECRET: 'app pass word',
+    GRAVITY_FORMS_TEST_TIMEOUT: '5000',
+  });
+  assert.strictEqual(c.httpClient.defaults.timeout, 5000);
+});
+
+// Either ALLOW_SELF_SIGNED flag must enable self-signed independently. The old
+// `(A || B) !== 'true'` short-circuited on a truthy string like "false", so a
+// GRAVITY_FORMS flag of "false" masked an MCP flag of "true".
+test('self-signed certs: either flag enables independently (no masking)', () => {
+  const base = { GRAVITY_FORMS_BASE_URL: 'https://x', GRAVITY_FORMS_CONSUMER_KEY: 'u', GRAVITY_FORMS_CONSUMER_SECRET: 'p', GRAVITY_FORMS_AUTH_METHOD: 'basic' };
+  const reject = (cfg) => new GravityFormsClient({ ...base, ...cfg }).httpClient.defaults.httpsAgent.options.rejectUnauthorized;
+  assert.strictEqual(reject({ GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS: 'false', MCP_ALLOW_SELF_SIGNED_CERTS: 'true' }), false);
+  assert.strictEqual(reject({ GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS: 'true' }), false);
+  assert.strictEqual(reject({}), true);
+});
+
 // Build a fake axios-style error: a rejection whose .response carries the
 // GF body and status — exactly what axios exposes before any interceptor.
 function gfError(status, data) {

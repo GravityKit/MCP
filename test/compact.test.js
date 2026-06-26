@@ -12,6 +12,18 @@ import { TestRunner, TestAssert } from './helpers.js';
 
 const runner = new TestRunner('Compact Utility Tests');
 
+runner.test('stripEntryMeta: null input returns {} without throwing', () => {
+  TestAssert.deepEqual(stripEntryMeta(null), {});
+});
+
+runner.test('stripEmpty: terminates on a circular reference', () => {
+  const o = { a: 1, b: '' };
+  o.self = o;
+  const out = stripEmpty(o); // must not throw RangeError
+  TestAssert.equal(out.a, 1, 'real value kept');
+  TestAssert.equal(out.b, undefined, 'empty string still stripped');
+});
+
 // --- stripEmpty: basic value handling ---
 
 runner.test('stripEmpty: returns primitives unchanged', () => {

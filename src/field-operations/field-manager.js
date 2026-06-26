@@ -27,48 +27,71 @@ export class FieldManager {
    * @returns {object} Field creation result with warnings
    */
   async addField(formId, fieldType, properties = {}, position = {}) {
-    // 1. Validate field type against registry
-    const fieldDef = this.registry[fieldType];
-    if (!fieldDef) {
-      throw new Error(`Unknown field type: ${fieldType}`);
+    if (typeof fieldType !== 'string' || fieldType.trim() === '') {
+      throw new Error('field_type is required and must be a non-empty string');
     }
+    // Parameter defaults only cover `undefined`; coerce an explicit null so
+    // adversarial input can't crash createField or the position engine.
+    properties = properties || {};
+    position = position || {};
 
-    // 2. Fetch current form via REST API
+    // The registry is an ENHANCEMENT source, not a gate. Known types get
+    // type-specific defaults and sub-inputs. Unknown types (third-party add-ons,
+    // GravityKit, custom fields) are still created (Gravity Forms accepts them on
+    // save), just without those extras. Callers can pass `inputs`/`choices`
+    // explicitly for custom compound/choice fields.
+    const fieldDef = this.registry[fieldType] || null;
+    const isKnownType = fieldDef !== null;
+
+    // Fetch current form via REST API
     const { form } = await this.api.getForm({ id: formId });
     
-    // 3. Generate unique integer field ID (max + 1 pattern)
+    // Generate unique integer field ID (max + 1 pattern)
     const fieldId = this.generateFieldId(form.fields || []);
     
-    // 4. Create field with type-specific defaults
-    const field = this.createField(fieldId, fieldType, properties, fieldDef);
-    
-    // 5. Generate compound sub-inputs if needed (address.1, name.3, etc.)
-    if (fieldDef.storage?.type === 'compound') {
+    // Create field with type-specific defaults (none for unknown types)
+    const field = this.createField(fieldId, fieldType, properties, fieldDef || {});
+
+    // Known compound types (address, name, …) regenerate sub-inputs from the
+    // registry, keyed off the generated field id. Otherwise caller-supplied
+    // `inputs` are kept, but their dotted sub-input ids are rebased onto the
+    // generated field id so the parent reference matches (mirrors assignFieldIds).
+    const isCompoundType = fieldDef?.storage?.type === 'compound';
+    if (isCompoundType) {
       field.inputs = this.generateSubInputs(field, fieldDef);
+    } else if (Array.isArray(field.inputs)) {
+      field.inputs = this.rebaseSubInputIds(field.inputs, fieldId);
     }
 
-    // 5b. Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
+    // Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
     this.normalizeLayoutProperties(field, formId);
     
-    // 6. Calculate insertion position (page-aware)
+    // Calculate insertion position (page-aware)
     const insertIndex = this.positionEngine?.calculatePosition(
       form.fields || [],
       position,
       form.pagination
     ) || form.fields?.length || 0;
     
-    // 7. Insert field at calculated position
+    // Insert field at calculated position
     if (!form.fields) form.fields = [];
     form.fields.splice(insertIndex, 0, field);
     
-    // 8. Replace form via direct PUT (no re-fetch — we already have the full state)
-    const updatedForm = await this.api.replaceForm(formId, form);
-    
-    // 9. Return result with validation warnings
+    // Replace form via direct PUT (no re-fetch; we already have the full state)
+    await this.api.replaceForm(formId, form);
+
+    // Surface field-shape warnings, plus a heads-up when the type is unrecognized.
+    const warnings = this.validator.getWarnings(field);
+    if (!isKnownType) {
+      warnings.unshift(
+        `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.`
+      );
+    }
+
     return {
       success: true,
       field: field,
-      warnings: this.validator.getWarnings(field),
+      warnings,
       form_id: formId,
       position: { 
         index: insertIndex, 
@@ -80,31 +103,46 @@ export class FieldManager {
   /**
    * Update existing field with dependency checking
    */
-  async updateField(formId, fieldId, updates = {}) {
+  async updateField(formId, fieldId, updates = {}, options = {}) {
+    const { force = false } = options;
+
     // Fetch form
     const { form } = await this.api.getForm({ id: formId });
-    
+
     // Find field
     const fieldIndex = form.fields?.findIndex(f => f.id == fieldId);
-    if (fieldIndex === -1) {
+    if (fieldIndex === undefined || fieldIndex === -1) {
       throw new Error(`Field ${fieldId} not found in form ${formId}`);
     }
-    
-    // Check dependencies
+
+    // Gate the write on dependencies BEFORE mutating, the way deleteField does.
+    // Saving first and reporting failure afterward persisted a "blocked" update
+    // and made the success:false response a lie.
     const dependencies = this.dependencyTracker?.scanFormDependencies(form, fieldId) || {};
-    
+    const hasBreakingDeps = dependencies.conditionalLogic?.length > 0;
+
+    if (hasBreakingDeps && !force) {
+      return {
+        success: false,
+        error: 'Field has dependencies that may be affected',
+        field_id: fieldId,
+        dependencies,
+        suggestion: 'Use force=true to update anyway'
+      };
+    }
+
     // Apply updates
     const originalField = { ...form.fields[fieldIndex] };
     form.fields[fieldIndex] = {
       ...originalField,
-      ...updates,
+      ...(updates || {}),
       id: originalField.id // Preserve ID
     };
     this.normalizeLayoutProperties(form.fields[fieldIndex], formId);
 
-    // Replace form via direct PUT (no re-fetch — we already have the full state)
+    // Replace form via direct PUT (no re-fetch; we already have the full state)
     const result = await this.api.replaceForm(formId, form);
-    
+
     return {
       success: true,
       field: result.form.fields[fieldIndex],
@@ -113,8 +151,7 @@ export class FieldManager {
         after: result.form.fields[fieldIndex]
       },
       warnings: {
-        dependencies: dependencies.conditionalLogic?.length > 0 ? 
-          ['Field has conditional logic dependencies'] : [],
+        dependencies: hasBreakingDeps ? ['Field has conditional logic dependencies'] : [],
         validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex])
       }
     };
@@ -189,6 +226,26 @@ export class FieldManager {
     }, 0);
     
     return maxId + 1;
+  }
+
+  /**
+   * Rebase dotted sub-input ids (e.g. "9.1") onto a new parent field id so each
+   * sub-input's parent reference matches the field it belongs to. Non-dotted and
+   * non-string ids pass through. Mirrors assignFieldIds in the field registry.
+   *
+   * @param {Array<object>} inputs
+   * @param {number|string} baseId
+   * @returns {Array<object>}
+   */
+  rebaseSubInputIds(inputs, baseId) {
+    return inputs.map((input) => {
+      const hasDottedId = input && typeof input.id === 'string' && input.id.includes('.');
+      if (!hasDottedId) {
+        return input;
+      }
+      const sub = input.id.slice(input.id.indexOf('.') + 1);
+      return { ...input, id: `${baseId}.${sub}` };
+    });
   }
 
   /**
