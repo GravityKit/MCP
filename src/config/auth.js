@@ -18,11 +18,15 @@ import logger from '../utils/logger.js';
 export function isLocalUrl(baseUrl) {
   try {
     const { hostname } = new URL(baseUrl);
+    // 127.0.0.0/8 loopback must be a genuine IPv4: a remote domain like
+    // "127.example.com" also `startsWith('127.')` and must NOT count as local,
+    // or Basic auth would be allowed in the clear over plain HTTP to a remote host.
+    const isLoopbackIp = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
     return hostname === 'localhost'
       || hostname === '[::1]'
       || hostname === '::1'
       || hostname.endsWith('.localhost')
-      || hostname.startsWith('127.')
+      || isLoopbackIp
       || hostname.endsWith('.test')
       || hostname.endsWith('.local');
   } catch {

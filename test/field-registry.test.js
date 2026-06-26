@@ -184,6 +184,13 @@ test('validateFieldConfig', async (t) => {
   });
 });
 
+test('assignFieldIds reassigns duplicate explicit ids so none collide', () => {
+  const out = assignFieldIds([{ id: 5, type: 't' }, { id: 5, type: 'e' }]);
+  const ids = out.map((f) => f.id);
+  assert.strictEqual(new Set(ids).size, ids.length, 'no duplicate field ids');
+  assert.strictEqual(out[0].id, 5, 'first explicit id is preserved');
+});
+
 test('field-registry null-input guards (no TypeError on hostile input)', async (t) => {
   await t.test('validateFieldConfig(null) → {isValid:false}, no throw', () => {
     assert.strictEqual(validateFieldConfig(null).isValid, false);

@@ -984,27 +984,31 @@ export function assignFieldIds(fields) {
     return fields;
   }
 
-  const used = new Set();
+  // Seed the auto-id counter above the highest explicit id.
+  let next = 1;
   for (const field of fields) {
     const id = Number(field?.id);
-    if (Number.isInteger(id) && id > 0) {
-      used.add(id);
+    if (Number.isInteger(id) && id > 0 && id >= next) {
+      next = id + 1;
     }
   }
 
-  let next = (used.size ? Math.max(...used) : 0) + 1;
-
+  // Keep the FIRST occurrence of each explicit id; reassign fields with no id OR
+  // a duplicate explicit id, so the result never contains colliding field ids.
+  const claimed = new Set();
   return fields.map((field) => {
     const id = Number(field?.id);
-    if (Number.isInteger(id) && id > 0) {
+    const hasFreshExplicitId = Number.isInteger(id) && id > 0 && !claimed.has(id);
+    if (hasFreshExplicitId) {
+      claimed.add(id);
       return field;
     }
 
-    while (used.has(next)) {
+    while (claimed.has(next)) {
       next++;
     }
     const newId = next++;
-    used.add(newId);
+    claimed.add(newId);
 
     // Re-base any provided compound sub-input ids onto the new field id.
     if (Array.isArray(field?.inputs)) {

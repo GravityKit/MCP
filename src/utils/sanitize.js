@@ -23,7 +23,7 @@ const SENSITIVE_KEYS = [
   'consumer_key', 'consumer_secret',
   'authorization', 'auth', 'credential',
   'oauth_signature', 'bearer',
-  'credit_card', 'cvv', 'ssn'
+  'credit_card', 'cvv', 'ssn', 'cookie'
 ];
 
 /**
@@ -102,7 +102,7 @@ export function sanitizeHeaders(headers) {
   for (const [key, value] of Object.entries(headers)) {
     const keyLower = key.toLowerCase();
 
-    if (keyLower === 'authorization' || keyLower.includes('api-key')) {
+    if (keyLower === 'authorization' || keyLower.includes('api-key') || keyLower.includes('cookie')) {
       result[key] = mask(String(value));
     } else {
       result[key] = value;
