@@ -677,6 +677,11 @@ suite.test('methodForAbility: readonly → GET, destructive+idempotent → DELET
   TestAssert.equal(methodForAbility(), 'POST');
 });
 
+suite.test('methodForAbility: null / non-object annotations → POST (no throw)', () => {
+  TestAssert.equal(methodForAbility(null), 'POST');
+  TestAssert.equal(methodForAbility('nope'), 'POST');
+});
+
 // Standalone runner
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {
