@@ -307,6 +307,13 @@ export class GravityFormsClient {
         // Transform the error with proper message based on status code
         return this.handleApiError(error);
       }
+      // Standardized apiError from the response interceptor (handleApiError):
+      // it has no `.response`, but carries the WordPress status/code/body that
+      // wrapHandler surfaces to the agent. Rethrow untouched — wrapping it in
+      // a bare Error stripped exactly the detail an agent needs to self-correct.
+      if (error.status !== undefined || error.code !== undefined || error.details !== undefined) {
+        throw error;
+      }
       // Otherwise, wrap validation errors with tool name
       throw new Error(`${toolName} failed: ${error.message}`);
     }
