@@ -24,7 +24,7 @@ import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
-import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs } from './server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams } from './server-runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -776,6 +776,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Forms Management Handlers
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: params } = request.params;
+  // `params` keeps the control flags for wrapHandler (compact); `input` is
+  // what goes to the site — control params must never reach WordPress
+  // (a leaked `compact` persisted into saved form meta on gf_update_form).
+  const input = stripControlParams(params);
 
   // Ensure capability planes are initialized. Per-plane failures
   // surface as per-tool error responses below; throw only when
@@ -789,71 +793,71 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (name) {
     // Forms Management
     case 'gf_list_forms':
-      return wrapHandler(() => gravityFormsClient.listForms(params), params)();
+      return wrapHandler(() => gravityFormsClient.listForms(input), params)();
     case 'gf_get_form':
-      return wrapHandler(() => gravityFormsClient.getForm(params), params)();
+      return wrapHandler(() => gravityFormsClient.getForm(input), params)();
     case 'gf_create_form':
-      return wrapHandler(() => gravityFormsClient.createForm(params), params)();
+      return wrapHandler(() => gravityFormsClient.createForm(input), params)();
     case 'gf_update_form':
-      return wrapHandler(() => gravityFormsClient.updateForm(params), params)();
+      return wrapHandler(() => gravityFormsClient.updateForm(input), params)();
     case 'gf_delete_form':
-      return wrapHandler(() => gravityFormsClient.deleteForm(params), params)();
+      return wrapHandler(() => gravityFormsClient.deleteForm(input), params)();
     case 'gf_validate_form':
-      return wrapHandler(() => gravityFormsClient.validateForm(params), params)();
+      return wrapHandler(() => gravityFormsClient.validateForm(input), params)();
 
     // Entries Management
     case 'gf_list_entries':
       return wrapHandler(async () => {
-        const result = await gravityFormsClient.listEntries(params);
+        const result = await gravityFormsClient.listEntries(input);
         return params.compact !== false ? stripEntryMetaFromResponse(result) : result;
       }, params)();
     case 'gf_get_entry':
       return wrapHandler(async () => {
-        const result = await gravityFormsClient.getEntry(params);
+        const result = await gravityFormsClient.getEntry(input);
         return params.compact !== false ? stripEntryMetaFromResponse(result) : result;
       }, params)();
     case 'gf_create_entry':
       return wrapHandler(async () => {
-        const result = await gravityFormsClient.createEntry(params);
+        const result = await gravityFormsClient.createEntry(input);
         return params.compact !== false ? stripEntryMetaFromResponse(result) : result;
       }, params)();
     case 'gf_update_entry':
       return wrapHandler(async () => {
-        const result = await gravityFormsClient.updateEntry(params);
+        const result = await gravityFormsClient.updateEntry(input);
         return params.compact !== false ? stripEntryMetaFromResponse(result) : result;
       }, params)();
     case 'gf_delete_entry':
-      return wrapHandler(() => gravityFormsClient.deleteEntry(params), params)();
+      return wrapHandler(() => gravityFormsClient.deleteEntry(input), params)();
 
     // Form Submissions
     case 'gf_submit_form_data':
-      return wrapHandler(() => gravityFormsClient.submitFormData(params), params)();
+      return wrapHandler(() => gravityFormsClient.submitFormData(input), params)();
     case 'gf_validate_submission':
-      return wrapHandler(() => gravityFormsClient.validateSubmission(params), params)();
+      return wrapHandler(() => gravityFormsClient.validateSubmission(input), params)();
 
     // Notifications
     case 'gf_send_notifications':
-      return wrapHandler(() => gravityFormsClient.sendNotifications(params), params)();
+      return wrapHandler(() => gravityFormsClient.sendNotifications(input), params)();
 
     // Add-on Feeds
     case 'gf_list_feeds':
-      return wrapHandler(() => gravityFormsClient.listFeeds(params), params)();
+      return wrapHandler(() => gravityFormsClient.listFeeds(input), params)();
     case 'gf_get_feed':
-      return wrapHandler(() => gravityFormsClient.getFeed(params), params)();
+      return wrapHandler(() => gravityFormsClient.getFeed(input), params)();
     case 'gf_create_feed':
-      return wrapHandler(() => gravityFormsClient.createFeed(params), params)();
+      return wrapHandler(() => gravityFormsClient.createFeed(input), params)();
     case 'gf_update_feed':
-      return wrapHandler(() => gravityFormsClient.updateFeed(params), params)();
+      return wrapHandler(() => gravityFormsClient.updateFeed(input), params)();
     case 'gf_patch_feed':
-      return wrapHandler(() => gravityFormsClient.patchFeed(params), params)();
+      return wrapHandler(() => gravityFormsClient.patchFeed(input), params)();
     case 'gf_delete_feed':
-      return wrapHandler(() => gravityFormsClient.deleteFeed(params), params)();
+      return wrapHandler(() => gravityFormsClient.deleteFeed(input), params)();
 
     // Utilities
     case 'gf_get_field_filters':
-      return wrapHandler(() => gravityFormsClient.getFieldFilters(params), params)();
+      return wrapHandler(() => gravityFormsClient.getFieldFilters(input), params)();
     case 'gf_get_results':
-      return wrapHandler(() => gravityFormsClient.getResults(params), params)();
+      return wrapHandler(() => gravityFormsClient.getResults(input), params)();
 
     // Field Operations - Intelligent field management
     case 'gf_add_field':
@@ -861,28 +865,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!fieldOperations) {
           throw new Error('Field operations not initialized');
         }
-        return await fieldOperationHandlers.gf_add_field(params, fieldOperations);
+        return await fieldOperationHandlers.gf_add_field(input, fieldOperations);
       }, params)();
     case 'gf_update_field':
       return wrapHandler(async () => {
         if (!fieldOperations) {
           throw new Error('Field operations not initialized');
         }
-        return await fieldOperationHandlers.gf_update_field(params, fieldOperations);
+        return await fieldOperationHandlers.gf_update_field(input, fieldOperations);
       }, params)();
     case 'gf_delete_field':
       return wrapHandler(async () => {
         if (!fieldOperations) {
           throw new Error('Field operations not initialized');
         }
-        return await fieldOperationHandlers.gf_delete_field(params, fieldOperations);
+        return await fieldOperationHandlers.gf_delete_field(input, fieldOperations);
       }, params)();
     case 'gf_list_field_types':
       return wrapHandler(async () => {
         if (!fieldOperations) {
           throw new Error('Field operations not initialized');
         }
-        return await fieldOperationHandlers.gf_list_field_types(params, fieldOperations);
+        return await fieldOperationHandlers.gf_list_field_types(input, fieldOperations);
       }, params)();
 
     // GravityView Inspector — every gv_* tool routes through the
@@ -922,7 +926,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       switch (classifyAbilityCall({ name, hasWpClient: !!wpClient, handlers: abilityToolHandlers })) {
         case 'dispatch':
-          return wrapViewHandler(() => abilityToolHandlers[name](params), params)();
+          return wrapViewHandler(() => abilityToolHandlers[name](input), params)();
         case 'no-wp-client':
           return createErrorResponse(
             'WordPress client not initialized. Set GRAVITYKIT_WP_URL + GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD in .env (or reuse GRAVITY_FORMS_BASE_URL / GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET when the same WP install hosts both surfaces).'
