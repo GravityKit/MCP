@@ -343,6 +343,9 @@ export class FeedsValidator {
             }
             return true;
           })
+        )
+        .field('is_active', validate('is_active')
+          .boolean()
         );
     } else {
       schema

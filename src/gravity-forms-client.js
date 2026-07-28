@@ -899,7 +899,18 @@ export class GravityFormsClient {
    */
   async createFeed(params) {
     return this.validateAndCall('gf_create_feed', params, async (validated) => {
-      const response = await this.httpClient.post('/feeds', validated);
+      // GF's POST /feeds consumes only form_id/meta/addon_slug
+      // (GFAPI::add_feed) — is_active in the body is ignored and the feed is
+      // always created active. Honoring is_active:false takes a follow-up
+      // PATCH, which GF routes through GFAPI::update_feed_property.
+      const { is_active, ...createData } = validated;
+      const response = await this.httpClient.post('/feeds', createData);
+
+      if (is_active === false) {
+        const feedId = response.data?.id ?? response.data;
+        const patched = await this.httpClient.patch(`/feeds/${feedId}`, { is_active: false });
+        return { feed: patched.data };
+      }
 
       return {
         feed: response.data
