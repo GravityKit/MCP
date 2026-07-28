@@ -25,6 +25,7 @@ import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
 import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams } from './server-runtime.js';
+import { VERSION } from './version.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -39,7 +40,7 @@ dotenv.config({ path: join(__dirname, '..', '.env') });
 const server = new Server(
   {
     name: 'gravitykit-mcp',
-    version: '2.1.0'
+    version: VERSION
   },
   {
     capabilities: {
