@@ -175,15 +175,18 @@ function arrayToProperties(arr) {
  *   built-in (static) tool set — e.g. the released gf_* contract.
  *   Catalog abilities resolving to a reserved name are skipped with a
  *   warning so the dynamic pipeline can never shadow a shipped tool.
+ * @param {boolean} [options.allowDelete]  Mirrors the static gf_delete_*
+ *   gate (GRAVITY_FORMS_ALLOW_DELETE): when false, handlers for abilities
+ *   annotated `destructive` throw instead of executing.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
+export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelete = false } = {}) {
   try {
     const items = await fetchFoundationCatalogItems(wpClient);
     const entries = catalogItemsToEntries(items);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog', reservedNames);
+      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete });
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -192,7 +195,7 @@ export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
   }
 
   const entries = await fetchCoreEntries(wpClient);
-  return buildTools(wpClient, entries, 'wp-core', reservedNames);
+  return buildTools(wpClient, entries, 'wp-core', { reservedNames, allowDelete });
 }
 
 /**
@@ -336,10 +339,12 @@ async function fetchCoreEntries(wpClient) {
  * @param {object} wpClient WordPressClient instance.
  * @param {Array}  entries  Normalized tool entries.
  * @param {string} source   Which catalog produced the entries.
- * @param {Set<string>} [reservedNames] Names owned by the built-in tool set.
+ * @param {object} [options]
+ * @param {Set<string>} [options.reservedNames] Names owned by the built-in tool set.
+ * @param {boolean} [options.allowDelete] Execute destructive abilities (GRAVITY_FORMS_ALLOW_DELETE).
  * @returns {{ definitions: object[], handlers: Record<string, Function>, count: number, source: string }}
  */
-function buildTools(wpClient, entries, source, reservedNames) {
+function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false } = {}) {
   const definitions = [];
   const handlers = {};
   const claimedBy = new Map();
@@ -347,6 +352,16 @@ function buildTools(wpClient, entries, source, reservedNames) {
   if (reservedNames) {
     for (const name of reservedNames) {
       claimedBy.set(name, 'a built-in tool');
+    }
+  }
+
+  // Ability FQN → tool name across the whole catalog, so next_steps guidance
+  // (authored as ability names) can be surfaced under the names the agent
+  // can actually call.
+  const toolNameByAbility = new Map();
+  for (const entry of entries) {
+    if (!toolNameByAbility.has(entry.abilityName)) {
+      toolNameByAbility.set(entry.abilityName, entry.toolName);
     }
   }
 
@@ -358,29 +373,74 @@ function buildTools(wpClient, entries, source, reservedNames) {
     }
     claimedBy.set(entry.toolName, entry.abilityName);
 
-    // MCP tool definition. `normalizeInputSchema()` guarantees the
-    // shape MCP's Zod validator expects:
-    //   `{ type: 'object', properties: <Record<string,JSONSchema>>, … }`.
-    // Without it, abilities whose PHP serialisation produced an array
-    // (top-level or under `properties`) fail `tools/list` validation —
-    // see the helper's docblock for the two shapes we coerce.
+    const annotations  = entry.annotations || {};
+    const isDestructive = !!annotations.destructive;
+
+    let description = entry.description;
+    if (isDestructive) {
+      description += ' (requires GRAVITY_FORMS_ALLOW_DELETE=true)';
+    }
+    const nextStepsHint = formatNextSteps(annotations.next_steps, toolNameByAbility);
+    if (nextStepsHint) {
+      description += ` Next: ${nextStepsHint}`;
+    }
+
+    // `normalizeInputSchema()` guarantees the shape MCP's Zod validator
+    // expects — PHP-serialised array schemas otherwise fail `tools/list`.
+    // The MCP annotations mirror the ability's: without them clients get
+    // no destructive signal (no confirmation before gv_view_delete).
     definitions.push({
       name: entry.toolName,
-      description: entry.description,
+      description,
       inputSchema: normalizeInputSchema(entry.rawInputSchema),
+      annotations: {
+        readOnlyHint:   !!annotations.readonly,
+        destructiveHint: isDestructive,
+        idempotentHint: !!annotations.idempotent,
+        openWorldHint:  true,
+      },
     });
 
     // Closure captures the ability name + method so the dispatcher
-    // doesn't need to re-resolve them at call time. Destructive
-    // gating lives server-side: each ability's permission_callback
-    // (e.g. delete_post for view-delete) plus Foundation's
-    // per-ability enable/disable toggles.
+    // doesn't need to re-resolve them at call time. Server-side the
+    // ability's permission_callback and Foundation's enable/disable
+    // toggles still apply; the allowDelete gate below mirrors the
+    // static gf_delete_* client-side protection on top of that.
     const abilityName = entry.abilityName;
-    const method      = methodForAbility(entry.annotations);
-    handlers[entry.toolName] = async (params) => executeAbility(wpClient, abilityName, method, params || {});
+    const method      = methodForAbility(annotations);
+    handlers[entry.toolName] = async (params) => {
+      if (isDestructive && !allowDelete) {
+        throw new Error(`${entry.toolName} is a destructive operation. Delete operations are disabled. Set GRAVITY_FORMS_ALLOW_DELETE=true to enable.`);
+      }
+      return executeAbility(wpClient, abilityName, method, params || {});
+    };
   }
 
   return { definitions, handlers, count: definitions.length, source };
+}
+
+/**
+ * Render an ability's `next_steps` guidance ([{ability, when}, …], authored
+ * server-side) as a terse description suffix, translating ability FQNs to
+ * the MCP tool names the agent can call. Steps pointing at abilities that
+ * are not exposed as tools are dropped. Returns '' when nothing usable.
+ *
+ * @param {unknown} nextSteps
+ * @param {Map<string, string>} toolNameByAbility
+ * @returns {string}
+ */
+function formatNextSteps(nextSteps, toolNameByAbility) {
+  if (!Array.isArray(nextSteps)) return '';
+
+  const parts = [];
+  for (const step of nextSteps) {
+    if (!step || typeof step !== 'object' || typeof step.ability !== 'string') continue;
+    const toolName = toolNameByAbility.get(step.ability);
+    if (!toolName) continue;
+    const when = typeof step.when === 'string' && step.when !== '' ? ` (${step.when})` : '';
+    parts.push(`${toolName}${when}`);
+  }
+  return parts.join('; ');
 }
 
 /**

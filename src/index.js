@@ -187,7 +187,12 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
   if (abilityToolDefinitions) return;
   if (!abilitiesLoadPromise && Date.now() - abilitiesFailedAt < ABILITIES_RETRY_COOLDOWN_MS) return;
   if (!abilitiesLoadPromise) {
-    abilitiesLoadPromise = loadAbilitiesAsTools(wpClient, { reservedNames: RESERVED_TOOL_NAMES })
+    abilitiesLoadPromise = loadAbilitiesAsTools(wpClient, {
+      reservedNames: RESERVED_TOOL_NAMES,
+      // Same env gate the static gf_delete_* tools honor — destructive
+      // ability tools (gv_view_delete, …) must not be easier to run.
+      allowDelete: process.env.GRAVITY_FORMS_ALLOW_DELETE === 'true',
+    })
       .then(({ definitions, handlers, count, source }) => {
         abilityToolDefinitions = definitions;
         abilityToolHandlers = handlers;

@@ -229,7 +229,7 @@ await this.httpClient.put(`/resource/${id}`, merged);
 
 ### Delete Safety
 
-All GF delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.allowDelete` first, controlled by `GRAVITY_FORMS_ALLOW_DELETE=true`. Without it, deletes throw immediately.
+All GF delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.allowDelete` first, controlled by `GRAVITY_FORMS_ALLOW_DELETE=true`. Without it, deletes throw immediately. The same gate applies to ability-derived tools whose catalog annotations mark them `destructive` (e.g. `gv_view_delete`): the abilities loader refuses to execute them unless `GRAVITY_FORMS_ALLOW_DELETE=true`, and their MCP tool definitions carry `destructiveHint` so clients can confirm before running.
 
 ### Logging
 

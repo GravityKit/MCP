@@ -634,7 +634,8 @@ suite.test('executeAbility: non-empty input on a schemaless ability still sends 
 
 suite.test('executeAbility: empty input → DELETE sends params {input:\'\'} (parity with GET)', async () => {
   const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
-  const { handlers } = await loadAbilitiesAsTools(stub);
+  // allowDelete: this test pins the DELETE wire shape; gating has its own tests.
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDelete: true });
   await handlers.gv_schema_delete({});
   const run = findRun(stub, 'gk-gravityview/view-delete-hard');
   TestAssert.isTrue(!!run, 'DELETE ability must hit the run endpoint');
@@ -680,6 +681,163 @@ suite.test('methodForAbility: readonly → GET, destructive+idempotent → DELET
 suite.test('methodForAbility: null / non-object annotations → POST (no throw)', () => {
   TestAssert.equal(methodForAbility(null), 'POST');
   TestAssert.equal(methodForAbility('nope'), 'POST');
+});
+
+// ---------------------------------------------------------------------------
+// MCP annotations + destructive gating + next_steps surfacing. The loader
+// used to read ability annotations only to pick the HTTP method and then
+// DROP them from the tool definition — so gv_view_delete reached MCP clients
+// with no destructiveHint (no confirmation prompt) while the far less
+// dangerous gf_delete_* tools were both hinted AND env-gated.
+// ---------------------------------------------------------------------------
+
+function annotatedFoundationCatalog() {
+  return [
+    {
+      name: 'gk-gravityview/views-list',
+      description: 'List Views.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_views_list',
+    },
+    {
+      name: 'gk-gravityview/view-delete',
+      description: 'Delete a View.',
+      input_schema: { type: 'object', properties: { id: { type: 'integer' } } },
+      annotations: { destructive: true, idempotent: true },
+      enabled: true,
+      mcp_tool_name: 'gv_view_delete',
+    },
+    {
+      // Destructive but NOT idempotent → executes as POST, must still be gated.
+      name: 'gk-gravityview/view-trash',
+      description: 'Trash a View.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { destructive: true },
+      enabled: true,
+      mcp_tool_name: 'gv_view_trash',
+    },
+    {
+      name: 'gk-gravityview/view-create',
+      description: 'Create a View.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: {},
+      enabled: true,
+      mcp_tool_name: 'gv_view_create',
+    },
+  ];
+}
+
+suite.test('annotations: ability annotations map onto MCP tool annotations', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.deepEqual(byName.gv_views_list.annotations, {
+    readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+  });
+  TestAssert.deepEqual(byName.gv_view_delete.annotations, {
+    readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  });
+  TestAssert.deepEqual(byName.gv_view_trash.annotations, {
+    readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true,
+  });
+  TestAssert.deepEqual(byName.gv_view_create.annotations, {
+    readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+  });
+});
+
+suite.test('annotations: core-path meta.annotations map the same way', async () => {
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+  TestAssert.equal(tool.annotations.readOnlyHint, true);
+  TestAssert.equal(tool.annotations.destructiveHint, false);
+  TestAssert.equal(tool.annotations.openWorldHint, true);
+});
+
+suite.test('gating: destructive ability handlers refuse to run without allowDelete', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+
+  for (const toolName of ['gv_view_delete', 'gv_view_trash']) {
+    let threw = null;
+    try {
+      await handlers[toolName]({ id: 1 });
+    } catch (err) {
+      threw = err;
+    }
+    TestAssert.isTrue(!!threw, `${toolName} must throw when deletes are disabled`);
+    TestAssert.isTrue(
+      /GRAVITY_FORMS_ALLOW_DELETE/.test(threw.message),
+      `${toolName} error must name the env var, got: ${threw.message}`
+    );
+  }
+  const runs = stub.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(runs.length, 0, 'no gated call may reach the wire');
+});
+
+suite.test('gating: destructive handlers execute when allowDelete is true; method logic unchanged', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDelete: true });
+
+  await handlers.gv_view_delete({ id: 1 });
+  await handlers.gv_view_trash({});
+  const runs = stub.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(runs.length, 2);
+  TestAssert.equal(runs[0].method, 'DELETE', 'destructive+idempotent must stay DELETE');
+  TestAssert.equal(runs[1].method, 'POST', 'destructive non-idempotent must stay POST');
+});
+
+suite.test('gating: readonly and non-destructive handlers are never gated', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+
+  await handlers.gv_views_list({});
+  await handlers.gv_view_create({});
+  const runs = stub.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(runs.length, 2);
+  TestAssert.equal(runs[0].method, 'GET');
+  TestAssert.equal(runs[1].method, 'POST');
+});
+
+suite.test('gating: destructive tool descriptions state the ALLOW_DELETE requirement', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+  TestAssert.isTrue(/GRAVITY_FORMS_ALLOW_DELETE/.test(byName.gv_view_delete.description));
+  TestAssert.isTrue(/GRAVITY_FORMS_ALLOW_DELETE/.test(byName.gv_view_trash.description));
+  TestAssert.isTrue(!/GRAVITY_FORMS_ALLOW_DELETE/.test(byName.gv_views_list.description));
+});
+
+suite.test('next_steps: surfaced in the description, mapped to exposed tool names', async () => {
+  const catalog = annotatedFoundationCatalog();
+  // Foundation ships next_steps inside annotations ([{ability, when}, …]).
+  catalog[0].annotations = {
+    readonly: true,
+    next_steps: [
+      { ability: 'gk-gravityview/view-create', when: 'After picking a View to clone.' },
+      { ability: 'gk-gravityview/not-exposed', when: 'Never — not a registered tool.' },
+    ],
+  };
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const tool = definitions.find((d) => d.name === 'gv_views_list');
+  TestAssert.isTrue(
+    /gv_view_create/.test(tool.description),
+    `next-step ability must be named by its TOOL name, got: ${tool.description}`
+  );
+  TestAssert.isTrue(/After picking a View to clone\./.test(tool.description), 'the when-guidance must survive');
+  TestAssert.isTrue(!/not-exposed/.test(tool.description), 'steps pointing at unexposed abilities are dropped');
+});
+
+suite.test('next_steps: absent or malformed next_steps leave the description untouched', async () => {
+  const catalog = annotatedFoundationCatalog();
+  catalog[3].annotations = { next_steps: 'not-an-array' };
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+  TestAssert.equal(byName.gv_view_create.description, 'Create a View.');
 });
 
 // Standalone runner
