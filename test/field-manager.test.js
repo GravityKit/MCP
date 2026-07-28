@@ -572,3 +572,69 @@ test('FieldManager - addField hardening (adversarial input)', async (t) => {
     await assert.rejects(() => mk().addField(1, 123, { label: 'X' }), /field_type/);
   });
 });
+
+// Positioning must honor index 0. calculatePosition() legitimately returns 0
+// for prepend / index:0 / before-the-first-field, and a `|| fields.length`
+// fallback silently turned every one of those into an append while the
+// response reported the fallback index as if the placement succeeded.
+test('FieldManager - addField honors position index 0 (falsy-zero regression)', async (t) => {
+  const mk = () => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({
+        form: {
+          id: 1,
+          title: 'Test Form',
+          fields: [
+            { id: 1, type: 'text', label: 'A' },
+            { id: 2, type: 'text', label: 'B' },
+            { id: 3, type: 'text', label: 'C' }
+          ]
+        }
+      }),
+      replaceForm: async (formId, form) => {
+        puts.push(form);
+        return { form };
+      }
+    };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.positionEngine = new PositionEngine();
+    return { manager, puts };
+  };
+
+  await t.test('prepend inserts at the top and reports index 0', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'prepend' });
+    assert.strictEqual(result.position.index, 0);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['NEW', 'A', 'B', 'C']);
+  });
+
+  await t.test('index: 0 inserts at the top and reports index 0', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'index', reference: 0 });
+    assert.strictEqual(result.position.index, 0);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['NEW', 'A', 'B', 'C']);
+  });
+
+  await t.test('before the first field inserts at the top and reports index 0', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'before', reference: 1 });
+    assert.strictEqual(result.position.index, 0);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['NEW', 'A', 'B', 'C']);
+  });
+
+  await t.test('append still lands at the end', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'append' });
+    assert.strictEqual(result.position.index, 3);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['A', 'B', 'C', 'NEW']);
+  });
+
+  await t.test('without a position engine, falls back to append', async () => {
+    const { manager, puts } = mk();
+    manager.positionEngine = null;
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'prepend' });
+    assert.strictEqual(result.position.index, 3);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['A', 'B', 'C', 'NEW']);
+  });
+});

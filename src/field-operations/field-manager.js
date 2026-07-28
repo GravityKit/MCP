@@ -66,12 +66,12 @@ export class FieldManager {
     // Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
     this.normalizeLayoutProperties(field, formId);
     
-    // Calculate insertion position (page-aware)
-    const insertIndex = this.positionEngine?.calculatePosition(
-      form.fields || [],
-      position,
-      form.pagination
-    ) || form.fields?.length || 0;
+    // Calculate insertion position (page-aware). Never `||` this result:
+    // 0 is a legitimate index (prepend / index:0 / before-the-first-field)
+    // and a falsy fallback would silently append instead.
+    const insertIndex = this.positionEngine
+      ? this.positionEngine.calculatePosition(form.fields || [], position, form.pagination)
+      : (form.fields?.length || 0);
     
     // Insert field at calculated position
     if (!form.fields) form.fields = [];
