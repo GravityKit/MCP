@@ -8,6 +8,7 @@ import assert from 'node:assert';
 import { FieldManager } from '../src/field-operations/field-manager.js';
 import { PositionEngine } from '../src/field-operations/field-positioner.js';
 import FieldAwareValidator from '../src/config/field-validation.js';
+import { DependencyTracker } from '../src/field-operations/field-dependencies.js';
 
 // Mock dependencies. Mirrors the GravityFormsClient contract FieldManager
 // actually consumes: getForm() resolves { form } and replaceForm() does a
@@ -322,35 +323,94 @@ test('FieldManager - updateField', async (t) => {
     assert.strictEqual(result.field.id, 2); // ID preserved
   });
 
-  // A blocking dependency must be detected BEFORE the form is written. The old
-  // code saved the change, then the handler returned success:false — so a
-  // "blocked" update was already persisted and the response lied.
-  await t.test('does not persist and reports failure when a dependency would break and force is false', async () => {
-    const apiClient = createMockApiClient();
-    let saved = false;
-    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
-    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
-    manager.dependencyTracker = {
-      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
-    };
+  // Update gating contract: an update needs force only when it changes
+  // properties dependents consume (type/choices/inputs) AND the field has
+  // breaking dependents per the same hasBreakingDependencies set delete uses
+  // (conditional logic + calculations + merge tags). Cosmetic changes always
+  // proceed, with the dependency info still reported in warnings.
 
-    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: false });
+  const formWithDependents = () => ({
+    id: 1,
+    title: 'Deps Form',
+    fields: [
+      { id: 1, type: 'select', label: 'Color', choices: [{ text: 'Red', value: 'red' }] },
+      {
+        id: 2, type: 'text', label: 'Details',
+        conditionalLogic: { enabled: true, rules: [{ fieldId: 1, operator: 'is', value: 'red' }] }
+      },
+      { id: 3, type: 'number', label: 'Total', enableCalculation: true, calculationFormula: '{Qty:4} * 2' },
+      { id: 4, type: 'number', label: 'Qty' }
+    ]
+  });
+
+  const managerWithDeps = (apiClient) => {
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = new DependencyTracker();
+    return manager;
+  };
+
+  await t.test('cosmetic update (label) proceeds without force despite dependents', async () => {
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(1, 1, { label: 'Colour' }, { force: false });
+
+    assert.strictEqual(result.success, true, 'a label change cannot break a {fieldId,operator,value} rule');
+    assert.strictEqual(saved, true);
+    assert.ok(result.warnings.dependencies.length > 0, 'dependency info still surfaces as a warning');
+  });
+
+  await t.test('does not persist a choices change without force when conditional logic depends on the field', async () => {
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(
+      1, 1, { choices: [{ text: 'Green', value: 'green' }] }, { force: false }
+    );
 
     assert.strictEqual(result.success, false);
     assert.strictEqual(saved, false, 'must NOT persist the change when blocked');
     assert.match(result.suggestion || '', /force/);
   });
 
-  await t.test('persists when force is true despite dependencies', async () => {
-    const apiClient = createMockApiClient();
+  await t.test('gates a type change on a field referenced in a CALCULATION (delete parity)', async () => {
+    // The old gate checked only conditionalLogic, so rewriting a field a
+    // calculation formula consumes sailed through un-warned while a label
+    // tweak was blocked.
     let saved = false;
-    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
-    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
-    manager.dependencyTracker = {
-      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
     };
+    const result = await managerWithDeps(apiClient).updateField(1, 4, { type: 'text' }, { force: false });
 
-    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: true });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved, false);
+  });
+
+  await t.test('breaking-prop change on a field nobody depends on proceeds without force', async () => {
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => ({ form })
+    };
+    const result = await managerWithDeps(apiClient).updateField(1, 2, { type: 'textarea' }, { force: false });
+
+    assert.strictEqual(result.success, true);
+  });
+
+  await t.test('persists a gated change when force is true', async () => {
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(
+      1, 1, { choices: [{ text: 'Green', value: 'green' }] }, { force: true }
+    );
 
     assert.strictEqual(result.success, true);
     assert.strictEqual(saved, true);

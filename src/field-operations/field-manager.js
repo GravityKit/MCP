@@ -6,6 +6,15 @@
 import { createHash } from 'crypto';
 import { assignFieldIds } from '../field-definitions/field-registry.js';
 
+/**
+ * Field properties that dependents actually consume. Conditional-logic rules
+ * compare against the field's VALUES ({fieldId, operator, value}), and
+ * calculations / merge tags resolve by field id and read its value — so only
+ * changes to the value shape (type, choices, inputs) can break a dependent.
+ * Cosmetic properties (label, description, cssClass, …) never gate an update.
+ */
+const BREAKING_UPDATE_PROPS = ['type', 'choices', 'inputs'];
+
 export class FieldManager {
   constructor(apiClient, fieldRegistry, validator) {
     this.api = apiClient;
@@ -128,19 +137,24 @@ export class FieldManager {
       throw new Error(`Field ${fieldId} not found in form ${formId}`);
     }
 
-    // Gate the write on dependencies BEFORE mutating, the way deleteField does.
-    // Saving first and reporting failure afterward persisted a "blocked" update
-    // and made the success:false response a lie.
+    // Gate BEFORE mutating (matching deleteField): force is required only when
+    // the update touches BREAKING_UPDATE_PROPS and hasBreakingDependencies()
+    // finds dependents — the same set deleteField gates on. Cosmetic updates
+    // always proceed, or agents learn to pass force on every call.
     const dependencies = this.dependencyTracker?.scanFormDependencies(form, fieldId) || {};
-    const hasBreakingDeps = dependencies.conditionalLogic?.length > 0;
+    const hasBreakingDeps = typeof this.dependencyTracker?.hasBreakingDependencies === 'function'
+      ? this.dependencyTracker.hasBreakingDependencies(dependencies)
+      : false;
+    const touchesBreakingProps = Object.keys(updates || {})
+      .some((key) => BREAKING_UPDATE_PROPS.includes(key));
 
-    if (hasBreakingDeps && !force) {
+    if (hasBreakingDeps && touchesBreakingProps && !force) {
       return {
         success: false,
-        error: 'Field has dependencies that may be affected',
+        error: 'Update changes properties (type/choices/inputs) that dependent conditional logic, calculations, or merge tags rely on',
         field_id: fieldId,
         dependencies,
-        suggestion: 'Use force=true to update anyway'
+        suggestion: 'Use force=true to update anyway, or limit the update to cosmetic properties (label, description, cssClass, …)'
       };
     }
 
@@ -164,7 +178,9 @@ export class FieldManager {
         after: result.form.fields[fieldIndex]
       },
       warnings: {
-        dependencies: hasBreakingDeps ? ['Field has conditional logic dependencies'] : [],
+        dependencies: hasBreakingDeps
+          ? ['Field has dependents (conditional logic, calculations, or merge tags); value-shape changes (type/choices/inputs) require force']
+          : [],
         validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex])
       }
     };
