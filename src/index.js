@@ -714,12 +714,35 @@ const GF_TOOL_DEFINITIONS = [
   // Results (1 tool)
   {
     name: 'gf_get_results',
-    description: 'Get quiz/poll/survey results',
+    description: 'Get quiz/poll/survey results. Optional search narrows which entries are aggregated.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' }
+        form_id: { type: 'number', description: 'Form ID' },
+        search: {
+          type: 'object',
+          description: 'Entry search criteria (same shape as gf_list_entries search)',
+          properties: {
+            field_filters: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  value: { type: 'string' },
+                  operator: {
+                    type: 'string',
+                    enum: ['=', 'IS', 'CONTAINS', 'IS NOT', 'ISNOT', '<>', 'LIKE', 'NOT IN', 'NOTIN', 'IN', '>', '<', '>=', '<=']
+                  }
+                }
+              }
+            },
+            mode: { type: 'string', enum: ['all', 'any'] },
+            start_date: { type: 'string', description: 'YYYY-MM-DD' },
+            end_date: { type: 'string', description: 'YYYY-MM-DD' }
+          }
+        }
       },
       required: ['form_id']
     }

@@ -999,8 +999,10 @@ export class GravityFormsClient {
    */
   async getResults(params) {
     return this.validateAndCall('gf_get_results', params, async (validated) => {
-      const { form_id, ...searchParams } = validated;
-      const response = await this.httpClient.get(`/forms/${form_id}/results`, { params: searchParams });
+      const { form_id, search } = validated;
+      // GF reads /results search criteria as a JSON string, same as /entries.
+      const requestParams = search ? { search: JSON.stringify(search) } : {};
+      const response = await this.httpClient.get(`/forms/${form_id}/results`, { params: requestParams });
 
       return {
         results: response.data
