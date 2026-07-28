@@ -13,10 +13,16 @@
  * @returns {*} Compacted value
  */
 export function stripEmpty(obj, seen = new WeakSet()) {
+  // `seen` tracks the CURRENT recursion path only (delete on the way out):
+  // a genuine cycle bails, but a shared non-cyclic reference — the same
+  // choices array on two fields — is compacted at every occurrence. A
+  // permanent set returned the second occurrence raw, nulls intact.
   if (Array.isArray(obj)) {
     if (seen.has(obj)) return obj;
     seen.add(obj);
-    return obj.map((v) => stripEmpty(v, seen));
+    const result = obj.map((v) => stripEmpty(v, seen));
+    seen.delete(obj);
+    return result;
   }
   if (obj !== null && typeof obj === 'object') {
     if (seen.has(obj)) return obj;
@@ -26,6 +32,7 @@ export function stripEmpty(obj, seen = new WeakSet()) {
       if (value === null || value === '') continue;
       result[key] = stripEmpty(value, seen);
     }
+    seen.delete(obj);
     return result;
   }
   return obj;
