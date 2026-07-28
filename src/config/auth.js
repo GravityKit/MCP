@@ -60,10 +60,12 @@ export class BasicAuthHandler {
     const credentials = `${this.consumerKey}:${this.consumerSecret}`;
     const encodedCredentials = Buffer.from(credentials).toString('base64');
 
+    // Only the Authorization header: auth headers merge AFTER the axios
+    // defaults in the request interceptor, so anything else returned here
+    // (UA, Content-Type) would silently override the client's versioned
+    // defaults on every request.
     return {
-      'Authorization': `Basic ${encodedCredentials}`,
-      'Content-Type': 'application/json',
-      'User-Agent': 'Gravity MCP v1.0.0'
+      'Authorization': `Basic ${encodedCredentials}`
     };
   }
 
@@ -211,10 +213,9 @@ export class OAuth1Handler {
       `oauth_signature="${encodeURIComponent(signature)}"`
     ].join(', ');
 
+    // Only the Authorization header — see BasicAuthHandler.getAuthHeaders.
     return {
-      'Authorization': `OAuth ${authHeader}`,
-      'Content-Type': 'application/json',
-      'User-Agent': 'Gravity MCP v1.0.0'
+      'Authorization': `OAuth ${authHeader}`
     };
   }
 

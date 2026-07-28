@@ -38,3 +38,31 @@ test('WordPressClient User-Agent matches package version', () => {
 test('both clients agree on the User-Agent', () => {
   assert.equal(uaOf(gfClient()), uaOf(wpClient()));
 });
+
+// Defaults are not proof: the auth handlers' headers merge AFTER the axios
+// defaults in the request interceptor, so a stale UA there wins on the wire.
+// This test captures the header an actual HTTP server receives.
+test('the request that crosses the wire carries the versioned User-Agent', async () => {
+  const { createServer } = await import('node:http');
+  const seen = [];
+  const server = createServer((req, res) => {
+    seen.push(req.headers['user-agent']);
+    res.setHeader('Content-Type', 'application/json');
+    res.end('[]');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+
+  try {
+    const client = new GravityFormsClient({
+      GRAVITY_FORMS_BASE_URL: `http://127.0.0.1:${port}`,
+      GRAVITY_FORMS_CONSUMER_KEY: 'user',
+      GRAVITY_FORMS_CONSUMER_SECRET: 'pass',
+    });
+    await client.listForms({});
+    assert.equal(seen.length, 1, 'expected one captured request');
+    assert.equal(seen[0], expected, `wire User-Agent must be ${expected}, got ${seen[0]}`);
+  } finally {
+    server.close();
+  }
+});
