@@ -252,7 +252,14 @@ export class ValidationSchema {
     for (const [fieldName, chain] of Object.entries(this.fields)) {
       try {
         const value = data[fieldName];
-        validated[fieldName] = chain.validate(value);
+        const result = chain.validate(value);
+        // Only materialize keys that carry a value. A declared-but-omitted
+        // optional field would otherwise land as `key: undefined`, and a later
+        // fetch-then-merge spread copies that undefined over real fetched data
+        // (gf_update_feed shipped PUT bodies with no `meta` because of this).
+        if (result !== undefined) {
+          validated[fieldName] = result;
+        }
       } catch (error) {
         errors.push({
           field: fieldName,

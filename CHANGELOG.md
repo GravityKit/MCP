@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 🐛 Fixed
+- **`gf_update_feed` no longer wipes a feed's settings on a partial update.** Updating one property (for example toggling `is_active`) sent the feed back to WordPress without its `meta`, erasing the feed's entire configuration. Validation now leaves out fields the caller did not send, so the existing settings are preserved. The same fix keeps `gf_patch_feed` from sending phantom empty fields.
 - **Guidance for side-by-side (horizontal) search bars.** Asked to arrange a View's search fields in one horizontal row, agents set the search bar's `search_layout` setting, which persists but changes nothing, leaving the fields stacked. The server instructions now document the mechanism GravityView actually renders: add an `area_settings` entry with `layout: "row"` into the search bar's `search_fields_section` position bucket (read it with `gv_view_config_get`, write it back with `gv_view_widget_patch`). A new `search.horizontal-layout` release-gate task guards this end to end on a small model.
 
 ## [2.4.1] - 2026-06-25
