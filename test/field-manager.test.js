@@ -638,3 +638,83 @@ test('FieldManager - addField honors position index 0 (falsy-zero regression)', 
     assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['A', 'B', 'C', 'NEW']);
   });
 });
+
+// A caller-supplied properties.id must never corrupt the form: entries key on
+// field id, so a duplicate id breaks entry values, conditional logic, and merge
+// tags. Explicit ids follow the same contract gf_create_form applies via
+// assignFieldIds: fresh safe positive integers are preserved; duplicate,
+// non-numeric, and out-of-range ids are replaced with a generated id.
+test('FieldManager - addField properties.id cannot create duplicate field ids', async (t) => {
+  const mk = () => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({
+        form: {
+          id: 1,
+          title: 'Test Form',
+          fields: [
+            { id: 1, type: 'text', label: 'A' },
+            { id: 2, type: 'text', label: 'B' },
+            { id: 3, type: 'text', label: 'C' }
+          ]
+        }
+      }),
+      replaceForm: async (formId, form) => {
+        puts.push(form);
+        return { form };
+      }
+    };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.positionEngine = new PositionEngine();
+    return { manager, puts };
+  };
+
+  await t.test('duplicate explicit id is replaced and the form has no colliding ids', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'DUP', id: 2 });
+    const ids = puts[0].fields.map((f) => f.id);
+    assert.strictEqual(new Set(ids).size, ids.length, `field ids must be unique, got ${ids}`);
+    assert.strictEqual(result.field.id, 4);
+    assert.ok(
+      result.warnings.some((m) => /id/.test(m) && /2/.test(m)),
+      'expected a warning that the requested id was not used'
+    );
+  });
+
+  await t.test('a fresh explicit id is preserved', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'X', id: 100 });
+    assert.strictEqual(result.field.id, 100);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.id), [1, 2, 3, 100]);
+  });
+
+  await t.test('non-numeric explicit id falls back to a generated id', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'X', id: 'abc' });
+    assert.strictEqual(result.field.id, 4);
+  });
+
+  await t.test('out-of-range explicit ids (0, negative, unsafe) fall back to a generated id', async () => {
+    for (const bad of [0, -5, 1e308]) {
+      const { manager } = mk();
+      const result = await manager.addField(1, 'text', { label: 'X', id: bad });
+      assert.strictEqual(result.field.id, 4, `id ${bad} must not be used verbatim`);
+    }
+  });
+
+  await t.test('properties.type cannot override the declared field type', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'X', type: 'html' });
+    assert.strictEqual(result.field.type, 'text');
+  });
+
+  await t.test('compound sub-inputs are keyed to the FINAL id when a duplicate id was replaced', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'address', { label: 'Addr', id: 2 });
+    assert.strictEqual(result.field.id, 4);
+    assert.ok(result.field.inputs.length > 0, 'compound field must have sub-inputs');
+    for (const input of result.field.inputs) {
+      assert.match(String(input.id), /^4\./, `sub-input ${input.id} must be based on the final id`);
+    }
+  });
+});

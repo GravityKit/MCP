@@ -4,6 +4,7 @@
  */
 
 import { createHash } from 'crypto';
+import { assignFieldIds } from '../field-definitions/field-registry.js';
 
 export class FieldManager {
   constructor(apiClient, fieldRegistry, validator) {
@@ -45,10 +46,17 @@ export class FieldManager {
 
     // Fetch current form via REST API
     const { form } = await this.api.getForm({ id: formId });
-    
-    // Generate unique integer field ID (max + 1 pattern)
-    const fieldId = this.generateFieldId(form.fields || []);
-    
+
+    // Resolve the field id through the same contract gf_create_form uses
+    // (assignFieldIds): a caller-supplied fresh safe positive integer is
+    // preserved; duplicate / non-numeric / out-of-range ids are replaced with
+    // a generated max+1 id. Entries key on field id, so a duplicate would
+    // corrupt the form and every subsequent entry.
+    const requestedId = properties.id;
+    const numbered = assignFieldIds([...(form.fields || []), { id: requestedId }]);
+    const fieldId = Number(numbered[numbered.length - 1].id);
+    const requestedIdRejected = requestedId !== undefined && Number(requestedId) !== fieldId;
+
     // Create field with type-specific defaults (none for unknown types)
     const field = this.createField(fieldId, fieldType, properties, fieldDef || {});
 
@@ -82,6 +90,11 @@ export class FieldManager {
 
     // Surface field-shape warnings, plus a heads-up when the type is unrecognized.
     const warnings = this.validator.getWarnings(field);
+    if (requestedIdRejected) {
+      warnings.unshift(
+        `Requested field id ${JSON.stringify(requestedId)} could not be used (duplicate, non-numeric, or out of range); assigned id ${fieldId} instead.`
+      );
+    }
     if (!isKnownType) {
       warnings.unshift(
         `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.`
@@ -252,6 +265,10 @@ export class FieldManager {
    * Create field with intelligent defaults from registry
    */
   createField(id, type, properties, fieldDef) {
+    // `id` and `type` are resolved by addField and must not be overridable via
+    // the properties spread — a caller-supplied properties.id after the spread
+    // was how duplicate field ids (form corruption) got in.
+    const { id: _requestedId, type: _requestedType, ...safeProperties } = properties;
     return {
       id,
       type,
@@ -263,7 +280,7 @@ export class FieldManager {
       visibility: properties.visibility || 'visible',
       cssClass: properties.cssClass || '',
       ...this.getTypeSpecificDefaults(type, fieldDef),
-      ...properties
+      ...safeProperties
     };
   }
 
