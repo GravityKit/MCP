@@ -1,0 +1,15 @@
+# Keep the extension bundle to the runtime surface.
+# The release build stages from `npm pack`, so these matter only when packing the
+# working tree directly (e.g. `mcpb pack .` during development).
+test/
+scripts/
+bench/
+reports/
+docs/
+build/
+.github/
+*.test.js
+.env
+.env.*
+AGENTS.md
+CLAUDE.md

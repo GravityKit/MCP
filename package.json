@@ -37,6 +37,7 @@
     "test:coverage": "echo 'Running all tests with coverage analysis' && npm run test:all",
     "lint:package": "publint",
     "lint:docs": "node scripts/check-docs.mjs",
+    "build:mcpb": "node scripts/build-mcpb.mjs",
     "prepublishOnly": "npm run test:unit && npm run test:node && npm run test:field-validation && npm run test:views && npm run lint:package && npm run lint:docs"
   },
   "keywords": [

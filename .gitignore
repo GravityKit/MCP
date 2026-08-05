@@ -74,3 +74,6 @@ debug.log
 
 # Claude local settings
 .claude/settings.local.json
+
+# Built Claude Desktop extension bundles
+build/
