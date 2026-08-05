@@ -4,7 +4,7 @@
   "display_name": "GravityKit for Gravity Forms",
   "version": "2.4.1",
   "description": "Build, edit, and query your Gravity Forms with Claude.",
-  "long_description": "Connects Claude to the Gravity Forms on your WordPress site. Create and edit forms, add and rearrange fields, read and update entries, manage add-on feeds, and answer questions about your submissions in plain language.\n\nWhen GravityKit Foundation is active on the site, tools for GravityKit products (GravityView Views, fields, widgets, and search) are added automatically.\n\nYou will need your site address, your WordPress username, and a WordPress application password. Deleting forms and entries is turned off unless you switch it on below.",
+  "long_description": "Connects Claude to the Gravity Forms on your WordPress site: create and edit forms, add and rearrange fields, read and update entries, manage add-on feeds, and answer questions about your submissions in plain language. When GravityKit Foundation is active on the site, tools for GravityKit products such as GravityView are added automatically.\n\nSetup asks for three things: your site address, your WordPress username, and a WordPress application password (in WordPress, go to Users > Profile > Application Passwords, add one named \"Claude\", and copy it including the spaces). Deleting forms and entries stays off unless you turn it on during setup.",
   "author": {
     "name": "GravityKit",
     "url": "https://www.gravitykit.com"
@@ -47,26 +47,26 @@
     "site_url": {
       "type": "string",
       "title": "Your website address",
-      "description": "The full address of your WordPress site, for example https://yoursite.com",
+      "description": "https://yoursite.com",
       "required": true
     },
     "username": {
       "type": "string",
       "title": "Your WordPress username",
-      "description": "The username you sign in to WordPress with. Not your email address.",
+      "description": "Not your email address",
       "required": true
     },
     "app_password": {
       "type": "string",
       "title": "Application password",
-      "description": "In WordPress, go to Users > Profile > Application Passwords, add one named \"Claude\", and paste it here including the spaces. This is not your login password, and you can revoke it at any time.",
+      "description": "Users > Profile > Application Passwords, spaces and all",
       "sensitive": true,
       "required": true
     },
     "allow_delete": {
       "type": "boolean",
       "title": "Allow Claude to delete forms, entries, and feeds",
-      "description": "Off by default. Deletions move items to the Trash in WordPress, where you can restore them.",
+      "description": "Deletions move items to the Trash, where you can restore them.",
       "default": false,
       "required": false
     }
