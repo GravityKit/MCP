@@ -11,6 +11,8 @@
 import { TestRunner, TestAssert } from './helpers.js';
 import {
   normalizeInputSchema,
+  normalizeMcpAnnotations,
+  resolveAbilityDeletePolicy,
   loadAbilitiesAsTools,
   methodForAbility,
   FOUNDATION_CATALOG_ROUTE,
@@ -140,6 +142,46 @@ suite.test('normalizeInputSchema: never mutates its input', () => {
   const before = JSON.stringify(input);
   normalizeInputSchema(input);
   TestAssert.equal(JSON.stringify(input), before, 'input was mutated');
+});
+
+suite.test('normalizeMcpAnnotations: preserves ability safety metadata for MCP clients', () => {
+  TestAssert.deepEqual(
+    normalizeMcpAnnotations({ readonly: true, destructive: false, idempotent: true }),
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  );
+  TestAssert.deepEqual(
+    normalizeMcpAnnotations({ destructive: true, idempotent: false }),
+    {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  );
+});
+
+suite.test('resolveAbilityDeletePolicy: product override wins and otherwise inherits the GF flag', () => {
+  TestAssert.equal(resolveAbilityDeletePolicy({}), false);
+  TestAssert.equal(resolveAbilityDeletePolicy({ GRAVITY_FORMS_ALLOW_DELETE: 'true' }), true);
+  TestAssert.equal(
+    resolveAbilityDeletePolicy({
+      GRAVITY_FORMS_ALLOW_DELETE: 'true',
+      GRAVITYKIT_ALLOW_DELETE: 'false',
+    }),
+    false,
+  );
+  TestAssert.equal(
+    resolveAbilityDeletePolicy({
+      GRAVITY_FORMS_ALLOW_DELETE: 'false',
+      GRAVITYKIT_ALLOW_DELETE: 'true',
+    }),
+    true,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -343,6 +385,50 @@ suite.test('catalog path: handlers execute via /wp-abilities/v1 run route with a
   TestAssert.isTrue(!!run, 'handler must hit the run endpoint');
   TestAssert.equal(run.url, '/wp-json/wp-abilities/v1/abilities/gk-gravitycharts/charts-list/run');
   TestAssert.equal(run.method, 'GET');
+});
+
+suite.test('catalog path: destructive abilities inherit the local delete gate', async () => {
+  const destructive = [{
+    name: 'gk-gravityview/view-delete',
+    description: 'Delete a View.',
+    input_schema: { type: 'object', properties: { id: { type: 'integer' } } },
+    annotations: { destructive: true, idempotent: true },
+    enabled: true,
+    mcp_tool_name: 'gv_view_delete',
+  }];
+  const blocked = buildCatalogStubGvClient([destructive]);
+  const blockedLoad = await loadAbilitiesAsTools(blocked, { allowDelete: false });
+  let blockedError;
+  try {
+    await blockedLoad.handlers.gv_view_delete({ id: 42 });
+  } catch (error) {
+    blockedError = error;
+  }
+  TestAssert.isTrue(!!blockedError, 'destructive ability must be rejected when delete is disabled');
+  TestAssert.isTrue(/GRAVITYKIT_ALLOW_DELETE=true/.test(blockedError.message), blockedError.message);
+  TestAssert.equal(
+    blocked.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run')).length,
+    0,
+    'blocked destructive abilities must not reach WordPress',
+  );
+
+  const allowed = buildCatalogStubGvClient([destructive]);
+  const allowedLoad = await loadAbilitiesAsTools(allowed, { allowDelete: true });
+  await allowedLoad.handlers.gv_view_delete({ id: 42 });
+  const run = allowed.requests.find((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(run.method, 'DELETE');
+});
+
+suite.test('catalog path: generated definitions include MCP annotations', async () => {
+  const stub = buildCatalogStubGvClient([syntheticFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const listTool = definitions.find((d) => d.name === 'gv_views_list');
+  TestAssert.deepEqual(listTool.annotations, {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  });
 });
 
 suite.test('catalog path: paginates via X-WP-TotalPages', async () => {
@@ -634,7 +720,7 @@ suite.test('executeAbility: non-empty input on a schemaless ability still sends 
 
 suite.test('executeAbility: empty input → DELETE sends params {input:\'\'} (parity with GET)', async () => {
   const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
-  const { handlers } = await loadAbilitiesAsTools(stub);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDelete: true });
   await handlers.gv_schema_delete({});
   const run = findRun(stub, 'gk-gravityview/view-delete-hard');
   TestAssert.isTrue(!!run, 'DELETE ability must hit the run endpoint');

@@ -85,7 +85,7 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 ### Field Operations (4 tools)
 - `gf_add_field`        - Add fields with intelligent positioning
 - `gf_update_field`     - Update fields with dependency checking
-- `gf_delete_field`     - Delete fields with cascade options
+- `gf_delete_field`     - Delete fields with cascade options (requires ALLOW_DELETE=true)
 - `gf_list_field_types` - List the 46 supported field types (summary by default; `detail=true` for full metadata, `include_variants=true` for variants)
 
 ### Submissions (2 tools)
@@ -167,7 +167,8 @@ Set these as environment variables — in your MCP client's `env` block (the `np
 ### Optional Settings
 - `GRAVITY_FORMS_AUTH_METHOD`          - Override auto-selection: `basic` or `oauth`/`oauth1` (normally leave unset)
 - `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false` - Allow Basic auth to a REMOTE plain-HTTP host (credentials visible to the network)
-- `GRAVITY_FORMS_ALLOW_DELETE=false`   - Enable delete operations
+- `GRAVITY_FORMS_ALLOW_DELETE=false`   - Enable Gravity Forms delete operations (forms, fields, entries, feeds)
+- `GRAVITYKIT_ALLOW_DELETE=false`      - Override destructive GravityKit ability access; inherits `GRAVITY_FORMS_ALLOW_DELETE` when unset
 - `GRAVITY_FORMS_TIMEOUT=30000`        - Request timeout (ms)
 - `GRAVITY_FORMS_MAX_RETRIES=3`        - Max retry attempts for failed requests
 - `GRAVITY_FORMS_DEBUG=false`          - Enable debug logging
