@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { FieldManager } from '../src/field-operations/field-manager.js';
+import { fieldOperationTools } from '../src/field-operations/index.js';
 import { PositionEngine } from '../src/field-operations/field-positioner.js';
 import FieldAwareValidator from '../src/config/field-validation.js';
 
@@ -13,6 +14,7 @@ import FieldAwareValidator from '../src/config/field-validation.js';
 // actually consumes: getForm() resolves { form } and replaceForm() does a
 // direct PUT resolving { form } (see field-manager.js).
 const createMockApiClient = () => ({
+  allowDelete: true,
   getForm: async () => ({
     form: {
       id: 1,
@@ -370,6 +372,29 @@ test('FieldManager - updateField', async (t) => {
 });
 
 test('FieldManager - deleteField', async (t) => {
+  await t.test('advertises the same ALLOW_DELETE requirement as the other delete tools', () => {
+    const tool = fieldOperationTools.find((definition) => definition.name === 'gf_delete_field');
+    assert.match(tool.description, /ALLOW_DELETE=true/);
+  });
+
+  await t.test('requires the same ALLOW_DELETE gate as form, entry, and feed deletion', async () => {
+    const apiClient = createMockApiClient();
+    apiClient.allowDelete = false;
+    let saved = false;
+    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = {
+      scanFormDependencies: () => ({ conditionalLogic: [] }),
+      hasBreakingDependencies: () => false
+    };
+
+    await assert.rejects(
+      () => manager.deleteField(1, 2),
+      /GRAVITY_FORMS_ALLOW_DELETE=true/
+    );
+    assert.strictEqual(saved, false, 'a blocked field deletion must not persist the form');
+  });
+
   await t.test('deletes field without dependencies', async () => {
     const apiClient = createMockApiClient();
     const registry = createMockRegistry();

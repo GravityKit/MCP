@@ -317,7 +317,7 @@ export const fieldOperationTools = [
   },
   {
     name: 'gf_delete_field',
-    description: 'Delete a field (checks dependencies)',
+    description: 'Delete a field (checks dependencies; requires ALLOW_DELETE=true)',
     annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',

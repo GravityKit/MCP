@@ -69,6 +69,44 @@ export function methodForAbility(annotations = {}) {
 }
 
 /**
+ * Translate WordPress Abilities annotations to MCP ToolAnnotations.
+ * Keeping these hints on dynamic tools lets clients distinguish reads from
+ * mutations and destructive calls instead of treating every catalog tool as
+ * unclassified. Unknown/null WordPress annotations are omitted so MCP's
+ * conservative defaults remain in force.
+ *
+ * @param {object} annotations Ability meta.annotations.
+ * @returns {object} MCP ToolAnnotations.
+ */
+export function normalizeMcpAnnotations(annotations = {}) {
+  const normalized = {};
+  const mappings = [
+    ['readonly', 'readOnlyHint'],
+    ['destructive', 'destructiveHint'],
+    ['idempotent', 'idempotentHint'],
+  ];
+  for (const [source, target] of mappings) {
+    if (typeof annotations?.[source] === 'boolean') {
+      normalized[target] = annotations[source];
+    }
+  }
+  normalized.openWorldHint = true;
+  return normalized;
+}
+
+/**
+ * Resolve the local destructive-ability gate. A product-specific setting can
+ * override the Gravity Forms setting; otherwise one full-access credential can
+ * use a single delete switch across both capability planes.
+ */
+export function resolveAbilityDeletePolicy(env = process.env) {
+  if (env.GRAVITYKIT_ALLOW_DELETE !== undefined) {
+    return env.GRAVITYKIT_ALLOW_DELETE === 'true';
+  }
+  return env.GRAVITY_FORMS_ALLOW_DELETE === 'true';
+}
+
+/**
  * Coerce an ability's `input_schema` payload into a JSON Schema object the
  * MCP runtime can validate (`{ type: "object", properties: {...} }`).
  *
@@ -175,15 +213,20 @@ function arrayToProperties(arr) {
  *   built-in (static) tool set — e.g. the released gf_* contract.
  *   Catalog abilities resolving to a reserved name are skipped with a
  *   warning so the dynamic pipeline can never shadow a shipped tool.
+ * @param {boolean} [options.allowDelete] Allow destructive dynamic abilities.
+ *   Defaults to GRAVITYKIT_ALLOW_DELETE, then GRAVITY_FORMS_ALLOW_DELETE.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
+export async function loadAbilitiesAsTools(
+  wpClient,
+  { reservedNames, allowDelete = resolveAbilityDeletePolicy() } = {},
+) {
   try {
     const items = await fetchFoundationCatalogItems(wpClient);
     const entries = catalogItemsToEntries(items);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog', reservedNames);
+      return buildTools(wpClient, entries, 'foundation-catalog', reservedNames, allowDelete);
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -192,7 +235,7 @@ export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
   }
 
   const entries = await fetchCoreEntries(wpClient);
-  return buildTools(wpClient, entries, 'wp-core', reservedNames);
+  return buildTools(wpClient, entries, 'wp-core', reservedNames, allowDelete);
 }
 
 /**
@@ -337,9 +380,10 @@ async function fetchCoreEntries(wpClient) {
  * @param {Array}  entries  Normalized tool entries.
  * @param {string} source   Which catalog produced the entries.
  * @param {Set<string>} [reservedNames] Names owned by the built-in tool set.
+ * @param {boolean} allowDelete Whether destructive ability handlers may run.
  * @returns {{ definitions: object[], handlers: Record<string, Function>, count: number, source: string }}
  */
-function buildTools(wpClient, entries, source, reservedNames) {
+function buildTools(wpClient, entries, source, reservedNames, allowDelete) {
   const definitions = [];
   const handlers = {};
   const claimedBy = new Map();
@@ -368,16 +412,26 @@ function buildTools(wpClient, entries, source, reservedNames) {
       name: entry.toolName,
       description: entry.description,
       inputSchema: normalizeInputSchema(entry.rawInputSchema),
+      annotations: normalizeMcpAnnotations(entry.annotations),
     });
 
     // Closure captures the ability name + method so the dispatcher
-    // doesn't need to re-resolve them at call time. Destructive
-    // gating lives server-side: each ability's permission_callback
-    // (e.g. delete_post for view-delete) plus Foundation's
-    // per-ability enable/disable toggles.
+    // doesn't need to re-resolve them at call time. Destructive calls need
+    // both the local opt-in and the server-side permission_callback (e.g.
+    // delete_post for view-delete); Foundation's per-ability enable/disable
+    // toggles remain an additional server-side boundary.
     const abilityName = entry.abilityName;
     const method      = methodForAbility(entry.annotations);
-    handlers[entry.toolName] = async (params) => executeAbility(wpClient, abilityName, method, params || {});
+    const isDestructive = entry.annotations?.destructive === true;
+    handlers[entry.toolName] = async (params) => {
+      if (isDestructive && !allowDelete) {
+        throw new Error(
+          'Destructive GravityKit abilities are disabled. Set GRAVITYKIT_ALLOW_DELETE=true '
+          + '(or GRAVITY_FORMS_ALLOW_DELETE=true as the shared fallback) to enable.',
+        );
+      }
+      return executeAbility(wpClient, abilityName, method, params || {});
+    };
   }
 
   return { definitions, handlers, count: definitions.length, source };

@@ -161,6 +161,10 @@ export class FieldManager {
    * Delete field with comprehensive dependency analysis
    */
   async deleteField(formId, fieldId, options = {}) {
+    if (!this.api.allowDelete) {
+      throw new Error('Delete operations are disabled. Set GRAVITY_FORMS_ALLOW_DELETE=true to enable.');
+    }
+
     const { cascade = false, force = false } = options;
     
     // Fetch form
