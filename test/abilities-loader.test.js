@@ -157,11 +157,15 @@ suite.test('normalizeMcpAnnotations: preserves ability safety metadata for MCP c
   TestAssert.deepEqual(
     normalizeMcpAnnotations({ destructive: true, idempotent: false }),
     {
-      readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
+  );
+  TestAssert.deepEqual(
+    normalizeMcpAnnotations({ readonly: null, destructive: null, idempotent: null }),
+    { openWorldHint: true },
+    'unknown WordPress annotations must stay unknown instead of being advertised as false',
   );
 });
 
@@ -425,8 +429,6 @@ suite.test('catalog path: generated definitions include MCP annotations', async 
   const listTool = definitions.find((d) => d.name === 'gv_views_list');
   TestAssert.deepEqual(listTool.annotations, {
     readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: false,
     openWorldHint: true,
   });
 });

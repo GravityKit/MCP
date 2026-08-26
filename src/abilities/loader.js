@@ -72,18 +72,26 @@ export function methodForAbility(annotations = {}) {
  * Translate WordPress Abilities annotations to MCP ToolAnnotations.
  * Keeping these hints on dynamic tools lets clients distinguish reads from
  * mutations and destructive calls instead of treating every catalog tool as
- * unclassified.
+ * unclassified. Unknown/null WordPress annotations are omitted so MCP's
+ * conservative defaults remain in force.
  *
  * @param {object} annotations Ability meta.annotations.
  * @returns {object} MCP ToolAnnotations.
  */
 export function normalizeMcpAnnotations(annotations = {}) {
-  return {
-    readOnlyHint: annotations?.readonly === true,
-    destructiveHint: annotations?.destructive === true,
-    idempotentHint: annotations?.idempotent === true,
-    openWorldHint: true,
-  };
+  const normalized = {};
+  const mappings = [
+    ['readonly', 'readOnlyHint'],
+    ['destructive', 'destructiveHint'],
+    ['idempotent', 'idempotentHint'],
+  ];
+  for (const [source, target] of mappings) {
+    if (typeof annotations?.[source] === 'boolean') {
+      normalized[target] = annotations[source];
+    }
+  }
+  normalized.openWorldHint = true;
+  return normalized;
 }
 
 /**
