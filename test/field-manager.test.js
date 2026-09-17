@@ -25,7 +25,9 @@ const createMockApiClient = () => ({
       ]
     }
   }),
-  replaceForm: async (formId, form) => ({ form })
+  replaceForm: async (formId, form) => ({ form }),
+  // The real client sets this from GRAVITY_FORMS_ALLOW_DELETE; deletes read it.
+  allowDelete: true
 });
 
 const createMockRegistry = () => ({
@@ -777,4 +779,31 @@ test('FieldManager - addField properties.id cannot create duplicate field ids', 
       assert.match(String(input.id), /^4\./, `sub-input ${input.id} must be based on the final id`);
     }
   });
+});
+
+// --- delete gate (contributed by @mechkw, PR #13) ---
+
+test('deleteField refuses when deletes are disabled', async () => {
+  // deleteForm, deleteEntry and deleteFeed all gate on this; deleteField did not,
+  // so a server set to refuse deletions still let a field go — and a deleted field
+  // does not land in the Trash the way a form or entry does.
+  const api = createMockApiClient();
+  api.allowDelete = false;
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  await assert.rejects(
+    () => manager.deleteField(1, 2),
+    /GRAVITY_FORMS_ALLOW_DELETE/,
+    'the refusal must name the switch that enables it'
+  );
+});
+
+test('deleteField still works when deletes are permitted', async () => {
+  // The control: refusing unconditionally would pass the test above.
+  const api = createMockApiClient();
+  api.allowDelete = true;
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.deleteField(1, 2);
+  assert.ok(result, 'a permitted delete still returns a result');
 });

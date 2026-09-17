@@ -579,8 +579,18 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
 
   for (const entry of surviving) {
     const annotations  = entry.annotations || {};
-    const isDestructive = !!annotations.destructive;
-    const isPermitted   = !isDestructive || destructiveIsPermitted(entry.toolName, permitted);
+    // What we PUBLISH follows the spec, which defaults an omitted destructiveHint to
+    // true: an ability that declares neither `destructive` nor `readonly` is unknown,
+    // and reporting unknown as safe would vouch for a tool on the strength of the
+    // product having forgotten to say. WordPress core defaults annotations to null,
+    // so this is reachable rather than theoretical.
+    const declaresDestructive = typeof annotations.destructive === 'boolean';
+    const isDestructive = declaresDestructive ? annotations.destructive : !annotations.readonly;
+    // What we BLOCK keys on an explicit declaration only. Gating on the unknown case
+    // would make a product that forgot its annotations look broken rather than unsafe,
+    // and the published hint already carries the warning.
+    const isPermitted   = ! ( declaresDestructive && annotations.destructive )
+      || destructiveIsPermitted(entry.toolName, permitted);
 
     let description = entry.description;
     if (isDestructive && !isPermitted) {

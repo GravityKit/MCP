@@ -541,6 +541,38 @@ suite.test('loadAbilitiesAsTools: tool 57 repro — properties:[] becomes proper
   TestAssert.deepEqual(tool.inputSchema.properties, {});
 });
 
+suite.test('an ability that declares nothing is published as destructive, not as safe', async () => {
+  // WordPress core defaults ability annotations to null and Foundation passes them
+  // through, so "declares nothing" is reachable. The MCP spec defaults an omitted
+  // destructiveHint to TRUE, so reporting false here would tell a client a tool is
+  // safe on the strength of the product having forgotten to say.
+  for (const unstated of [null, {}]) {
+    const entries = syntheticCatalog();
+    const target  = entries.find((a) => a.name.endsWith('layouts-list'));
+    target.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: unstated };
+
+    const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(entries));
+    const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+    TestAssert.isTrue(!!tool, `an unannotated ability is still published (${JSON.stringify(unstated)})`);
+    TestAssert.isTrue(tool.annotations.destructiveHint, `unknown must not be reported as safe (${JSON.stringify(unstated)})`);
+  }
+});
+
+suite.test('an ability that declares readonly is not called destructive', async () => {
+  // The control: defaulting everything to destructive would pass the test above
+  // and mislabel every read-only tool on the site.
+  const catalog = syntheticCatalog();
+  const entry = catalog.find((a) => a.name.endsWith('layouts-list'));
+  entry.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: { readonly: true } };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isFalse(tool.annotations.destructiveHint, 'a declared readonly ability is safe');
+  TestAssert.isTrue(tool.annotations.readOnlyHint);
+});
+
 suite.test('loadAbilitiesAsTools: a reserved param never reaches the published tool', async () => {
   // The end-to-end path a client's tools/list takes. stripControlParams removes
   // `compact`/`test_mode` from every call before it leaves this server, so a tool
@@ -803,7 +835,7 @@ function annotatedFoundationCatalog() {
       name: 'gk-gravityview/view-create',
       description: 'Create a View.',
       input_schema: { type: 'object', properties: {} },
-      annotations: {},
+      annotations: { destructive: false },
       enabled: true,
       mcp_tool_name: 'gv_view_create',
     },
