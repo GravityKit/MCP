@@ -491,11 +491,14 @@ async function fetchCoreEntries(wpClient, skipped = [], retry = {}) {
  * @param {unknown} raw The catalog's `output_schema`.
  * @returns {object|undefined}
  */
-function normalizeOutputSchema(raw) {
+export function normalizeOutputSchema(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   if (raw.type !== 'object') return undefined;
 
-  const properties = raw.properties && !Array.isArray(raw.properties) ? raw.properties : {};
+  // Truthy is not enough: MCP requires an object here, and publishing a string or a
+  // number makes a client reject the whole tool definition rather than one field.
+  const isMap = raw.properties && typeof raw.properties === 'object' && !Array.isArray(raw.properties);
+  const properties = isMap ? raw.properties : {};
 
   return { ...raw, properties };
 }
@@ -591,11 +594,11 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
     // so this is reachable rather than theoretical.
     const declaresDestructive = typeof annotations.destructive === 'boolean';
     const isDestructive = declaresDestructive ? annotations.destructive : !annotations.readonly;
-    // What we BLOCK keys on an explicit declaration only. Gating on the unknown case
-    // would make a product that forgot its annotations look broken rather than unsafe,
-    // and the published hint already carries the warning.
-    const isPermitted   = ! ( declaresDestructive && annotations.destructive )
-      || destructiveIsPermitted(entry.toolName, permitted);
+    // The gate follows the hint. An ability we report as destructive must also be
+    // treated as one: gating only explicit declarations meant an unannotated ability
+    // was announced as unsafe and then executed anyway for an operator who had
+    // permitted nothing. Naming it in the allow-list still runs it.
+    const isPermitted   = ! isDestructive || destructiveIsPermitted(entry.toolName, permitted);
 
     let description = entry.description;
     if (isDestructive && !isPermitted) {

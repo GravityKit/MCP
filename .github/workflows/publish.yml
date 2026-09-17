@@ -79,8 +79,23 @@ jobs:
         # automatically before the package is published.
         run: npm publish --access public
 
+      - name: Skip when this release already exists
+        id: relguard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Deliberately independent of the npm guard. If npm publish succeeds and a later
+        # step fails, a rerun sees published=true; hanging the release on that would skip
+        # the build and the release forever, with no path back but a manual upload.
+        run: |
+          VERSION="${{ steps.guard.outputs.version }}"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build the Claude Desktop extension
-        if: steps.guard.outputs.published == 'false'
+        if: steps.relguard.outputs.exists == 'false'
         # Attached to the release below. The copy is deliberate: the versioned name
         # is what people download and keep, while the fixed name is what
         # /releases/latest/download/gravitykit-mcp.mcpb resolves to, so the README
@@ -92,15 +107,11 @@ jobs:
 
       - name: Create GitHub Release
         id: release
-        if: steps.guard.outputs.published == 'false'
+        if: steps.relguard.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.guard.outputs.version }}"
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release v$VERSION already exists — skipping."
-            exit 0
-          fi
           gh release create "v$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
             --title "v$VERSION" \

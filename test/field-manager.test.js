@@ -394,6 +394,22 @@ test('FieldManager - updateField', async (t) => {
     assert.strictEqual(saved, false);
   });
 
+  await t.test('gates an inputType change, which moves the value without touching type', async () => {
+    // survey/product/post_category keep `type` fixed and pick their storage shape with
+    // `inputType`: radio -> checkbox turns one stored value into dot-notation
+    // sub-inputs, so a dependent rule reads an address that no longer holds it.
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(1, 1, { inputType: 'checkbox' }, { force: false });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved, false, 'must NOT persist the change when blocked');
+    assert.match(result.suggestion || '', /force/);
+  });
+
   await t.test('breaking-prop change on a field nobody depends on proceeds without force', async () => {
     const apiClient = {
       getForm: async () => ({ form: formWithDependents() }),

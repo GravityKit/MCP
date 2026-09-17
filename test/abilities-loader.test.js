@@ -11,6 +11,7 @@
 import { TestRunner, TestAssert } from './helpers.js';
 import {
   normalizeInputSchema,
+  normalizeOutputSchema,
   loadAbilitiesAsTools,
   methodForAbility,
   FOUNDATION_CATALOG_ROUTE,
@@ -287,7 +288,7 @@ function syntheticCatalog() {
         { name: 'view_id', type: 'integer', required: true },
         { name: 'field_id', type: 'string', required: true },
       ],
-      meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_view_field_add', annotations: {} },
+      meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_view_field_add', annotations: { destructive: false } },
     },
     // Bug shape #2 — properties is an array (tool 57).
     {
@@ -301,7 +302,7 @@ function syntheticCatalog() {
       name: 'core/unrelated-ability',
       description: 'Should not be exposed',
       input_schema: { type: 'object', properties: {} },
-      meta: { annotations: {} },
+      meta: { annotations: { destructive: false } },
     },
   ];
 }
@@ -371,7 +372,7 @@ function syntheticFoundationCatalog() {
       name: 'gk-gravityview/view-status-set',
       description: 'Disabled ability',
       input_schema: { type: 'object', properties: {} },
-      annotations: {},
+      annotations: { destructive: false },
       enabled: false,
       mcp_tool_name: 'gv_view_status_set',
     },
@@ -457,7 +458,7 @@ suite.test('coexistence: Gravity Forms own abilities (feature-abilities-api) are
       input_schema: { type: 'object', properties: {} },
       meta: {
         mcp: { public: true },
-        annotations: { readonly: true, destructive: false, idempotent: true },
+        annotations: { destructive: false },
         show_in_rest: true,
       },
     },
@@ -466,7 +467,7 @@ suite.test('coexistence: Gravity Forms own abilities (feature-abilities-api) are
       name: 'gravityforms/myaddon/my-action',
       description: 'Add-on ability.',
       input_schema: { type: 'object', properties: {} },
-      meta: { mcp: { public: true }, annotations: {}, show_in_rest: true },
+      meta: { mcp: { public: true }, annotations: { destructive: false }, show_in_rest: true },
     },
   ];
   const { definitions, source } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
@@ -594,10 +595,11 @@ suite.test('a tool name with no underscore has no prefix, not a truncated one', 
   }
 });
 
-suite.test('an ability that states nothing is not silently gated', async () => {
-  // The hint says destructive (spec default), but BLOCKING keys on an explicit
-  // declaration -- otherwise a product that forgot its annotations looks broken
-  // rather than unsafe. This guards the clause added alongside that change.
+suite.test('an ability that states nothing IS gated, because unknown means destructive', async () => {
+  // We publish destructiveHint: true for an unannotated ability, following the spec.
+  // Gating on an explicit declaration only was internally inconsistent: it told the
+  // client "this is destructive" and then ran it anyway, so an operator who permitted
+  // nothing still got the call executed.
   const catalog = syntheticCatalog();
   const target = catalog.find((a) => a.name.endsWith('layouts-list'));
   target.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: null };
@@ -605,12 +607,37 @@ suite.test('an ability that states nothing is not silently gated', async () => {
   const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
   const tool = definitions.find((d) => d.name === 'gv_layouts_list');
 
-  TestAssert.isTrue(tool.annotations.destructiveHint, 'unstated is reported as destructive');
-  TestAssert.isFalse(
+  TestAssert.isTrue(tool.annotations.destructiveHint, 'unstated is reported destructive');
+  TestAssert.isTrue(
     /disabled on this server/.test(tool.description),
-    'but it is not blocked, because nothing declared it destructive'
+    'and is gated the same way, so the hint and the policy agree'
   );
 });
+
+suite.test('an unannotated ability is permitted once the allow-list names it', async () => {
+  // The control: gating everything unknown unconditionally would pass the test above
+  // and leave no way to run the tool at all.
+  const catalog = syntheticCatalog();
+  const target = catalog.find((a) => a.name.endsWith('layouts-list'));
+  target.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: null };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog), { allowDestructive: ['gv'] });
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isFalse(/disabled on this server/.test(tool.description), 'naming it permits it');
+});
+
+suite.test('normalizeOutputSchema: a non-object properties value is not published', () => {
+  // MCP requires properties to be an object; publishing a string here makes a client
+  // reject the whole tool definition.
+  for (const bad of ['nope', 42, true]) {
+    const out = normalizeOutputSchema({ type: 'object', properties: bad });
+    TestAssert.deepEqual(out.properties, {}, `properties ${JSON.stringify(bad)} must be dropped`);
+  }
+  const good = normalizeOutputSchema({ type: 'object', properties: { id: { type: 'integer' } } });
+  TestAssert.deepEqual(Object.keys(good.properties), ['id'], 'a real properties map survives');
+});
+
 
 suite.test('an ability that declares nothing is published as destructive, not as safe', async () => {
   // WordPress core defaults ability annotations to null and Foundation passes them
@@ -701,7 +728,7 @@ function inputSchemaFenceCatalog() {
       name: 'gk-gravityview/view-create',
       description: 'POST with object input_schema',
       input_schema: { type: 'object', properties: { title: { type: 'string' } } },
-      annotations: {},
+      annotations: { destructive: false },
       enabled: true,
       mcp_tool_name: 'gv_schema_post',
     },
@@ -725,7 +752,7 @@ function inputSchemaFenceCatalog() {
       name: 'gk-gravityview/ping-post',
       description: 'POST with NO input_schema',
       // No input_schema key at all.
-      annotations: {},
+      annotations: { destructive: false },
       enabled: true,
       mcp_tool_name: 'gv_noschema_post',
     },
@@ -1030,7 +1057,9 @@ suite.test('next_steps: surfaced in the description, mapped to exposed tool name
 
 suite.test('next_steps: absent or malformed next_steps leave the description untouched', async () => {
   const catalog = annotatedFoundationCatalog();
-  catalog[3].annotations = { next_steps: 'not-an-array' };
+  // Merge, don't replace: clobbering the whole object drops `destructive: false`,
+  // which would gate the tool and append a suffix this test reads as the bug.
+  catalog[3].annotations = { ...catalog[3].annotations, next_steps: 'not-an-array' };
   const stub = buildCatalogStubGvClient([catalog]);
   const { definitions } = await loadAbilitiesAsTools(stub);
   const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
@@ -1170,7 +1199,7 @@ suite.test('next_steps: never advertises a tool the collision guard dropped', as
     name: 'gk-other/views-list',
     description: 'A second product claiming the same tool name.',
     input_schema: { type: 'object', properties: {} },
-    annotations: {},
+    annotations: { destructive: false },
     enabled: true,
     mcp_tool_name: 'gv_views_list',
   });
@@ -1306,7 +1335,7 @@ suite.test('diagnostics: every skipped ability is reported in-band, with its rea
     name: 'gk-other/views-list',
     description: 'A second product claiming a taken tool name.',
     input_schema: { type: 'object', properties: {} },
-    annotations: {},
+    annotations: { destructive: false },
     enabled: true,
     mcp_tool_name: 'gv_views_list',
   });
@@ -1314,7 +1343,7 @@ suite.test('diagnostics: every skipped ability is reported in-band, with its rea
     name: 'gk-nameless/thing-get',
     description: 'Registered without a tool name.',
     input_schema: { type: 'object', properties: {} },
-    annotations: {},
+    annotations: { destructive: false },
     enabled: true,
     mcp_tool_name: '',
   });

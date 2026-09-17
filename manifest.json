@@ -74,7 +74,7 @@
     "allow_destructive": {
       "type": "string",
       "title": "Allow only some destructive tools (optional)",
-      "description": "Comma-separated. Use a product prefix (gmig for migrations, gv for Views, gf for Gravity Forms), an exact tool name, or \"all\". Leave empty to use the checkbox above, which permits everything.",
+      "description": "Comma-separated. Use a product prefix (gmig for migrations, gv for Views), an exact tool name, or \"all\". This covers GravityKit product tools only \u2014 deleting forms, entries, feeds and fields is governed by the checkbox above, not by this field. Leave empty to use the checkbox alone.",
       "required": false,
       "default": ""
     }
@@ -124,7 +124,7 @@
     },
     {
       "name": "gf_delete_field",
-      "description": "Remove a field from a form"
+      "description": "Remove a field from a form (requires the delete permission to be enabled)"
     },
     {
       "name": "gf_list_field_types",

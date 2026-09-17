@@ -41,12 +41,45 @@ if (!raw) {
 }
 
 const report = JSON.parse(raw);
-const found = Object.keys(report.vulnerabilities || {});
+
+// `npm audit --json` exits nonzero and writes {"error": …} when it cannot reach the
+// registry. Treating a missing `vulnerabilities` key as "none found" would turn that
+// into a pass -- the exact defect this gate replaced.
+if (report.error) {
+  console.error(`npm audit failed: ${report.error.summary || report.error.detail || JSON.stringify(report.error)}`);
+  process.exit(2);
+}
+
+if (!report.vulnerabilities || typeof report.vulnerabilities !== 'object' || !report.metadata) {
+  console.error('npm audit returned no recognisable audit report — treating as a broken check, not a pass.');
+  process.exit(2);
+}
+
+const found = Object.keys(report.vulnerabilities);
+
+// Allowing a package is not allowing every future advisory against it, so each entry
+// records the advisories reviewed at the time. A new advisory id on an allowlisted
+// package fails until somebody looks at it and adds it.
+const advisoryIds = (info) => (info.via || [])
+  .filter((v) => typeof v === 'object' && v.url)
+  .map((v) => v.url.replace(/.*\//, ''))
+  .sort();
+
 const unexpected = found.filter((name) => !(name in allowed));
+const unreviewed = [];
+
+for (const name of found.filter((n) => n in allowed)) {
+  const entry    = allowed[name];
+  const reviewed = Array.isArray(entry.advisories) ? entry.advisories : null;
+  if (!reviewed) continue; // reason-only entry: package-level, as before
+
+  const fresh = advisoryIds(report.vulnerabilities[name]).filter((id) => !reviewed.includes(id));
+  if (fresh.length) unreviewed.push({ name, fresh });
+}
 const stale = Object.keys(allowed).filter((name) => !found.includes(name));
 
 for (const name of found.filter((n) => n in allowed)) {
-  console.log(`allowed   ${name} — ${allowed[name]}`);
+  console.log(`allowed   ${name} — ${allowed[name].reason || allowed[name]}`);
 }
 
 // An entry that no longer matches anything means the dependency was fixed or
@@ -54,6 +87,15 @@ for (const name of found.filter((n) => n in allowed)) {
 // to excuse something.
 for (const name of stale) {
   console.log(`stale     ${name} — no longer reported; remove it from the allowlist`);
+}
+
+if (unreviewed.length) {
+  console.error('\nAllowlisted package(s) carry advisories nobody has reviewed:\n');
+  for (const { name, fresh } of unreviewed) {
+    console.error(`  ${name}: ${fresh.join(', ')}`);
+  }
+  console.error('\nReview them, then add the ids to that package\'s "advisories" in .github/audit-allowlist.json.');
+  process.exit(1);
 }
 
 if (unexpected.length === 0) {

@@ -66,6 +66,7 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
    - Prefer a Gravity Forms key pair? Use `"GRAVITY_FORMS_CONSUMER_KEY": "ck_…"` and `"GRAVITY_FORMS_CONSUMER_SECRET": "cs_…"`.
    - Local dev with self-signed certs: add `"GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS": "true"` to the `env` block.
    - Pin a version with `@gravitykit/mcp@x.y.z` if you don't want `npx` tracking latest.
+   - Set `GRAVITYKIT_WP_URL`, `GRAVITYKIT_WP_USERNAME` and `GRAVITYKIT_WP_APP_PASSWORD` in the same `env` block if you use the GravityKit product tools. The two planes resolve credentials separately, so without them the `gv_*`/`gmig_*` tools can pick up values inherited from your shell and talk to a different site than the `gf_*` tools do.
 
 ## Available Tools
 
