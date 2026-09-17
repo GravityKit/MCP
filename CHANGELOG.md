@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This release makes GravityKit product tools first-class: they now publish output schemas and return structured results, destructive ones can be permitted per product instead of all or nothing, and a site with more than 50 abilities exposes all of them. GravityKit MCP also installs into Claude Desktop as a one-click extension. Gravity Forms tools gain accurate errors, correct feed and field handling, and descriptions that match what they actually do.
+
 ### 🚀 Added
 - **A Claude Desktop extension.** GravityKit MCP now builds as a one-click `.mcpb` bundle (`npm run build:mcpb`), so connecting Claude Desktop to a site is installing a file and filling in four fields — site address, WordPress username, application password, and what the assistant is allowed to delete — rather than hand-editing a JSON config. The bundle carries its own dependencies and installs nothing.
 - **Product tools now publish an output schema, a title, and structured results.** Generated tools described only their input, so a client had to guess the shape of what came back and could not validate it. Each now declares its result shape and a human-readable title, and returns `structuredContent` alongside the text, which clients that support it can read directly.
