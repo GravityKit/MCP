@@ -1063,6 +1063,90 @@ suite.test('ability results are not compacted: a null-valued key survives', asyn
   TestAssert.equal(result.import_state, 'idle');
 });
 
+suite.test('outputSchema: published when the ability declares a usable one', async () => {
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].label = 'List Views';
+  catalog[0].output_schema = {
+    type:       'object',
+    properties: { views: { type: 'array', description: 'Every View.' } },
+    required:   ['views'],
+  };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.equal(byName.gv_views_list.outputSchema?.type, 'object');
+  TestAssert.equal(
+    byName.gv_views_list.outputSchema?.properties?.views?.description,
+    'Every View.',
+    'the property descriptions are the documentation this exists to publish'
+  );
+  TestAssert.equal(byName.gv_views_list.title, 'List Views', 'the ability label is the tool title');
+});
+
+suite.test('outputSchema: WP\'s empty-array default is not published as a schema', async () => {
+  // An ability that declares no output schema gets `[]` from WP, and MCP requires
+  // type: object. Publishing the empty array would make every call fail validation.
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].output_schema = [];
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.equal(byName.gv_views_list.outputSchema, undefined);
+});
+
+suite.test('outputSchema: a schema that is not type object is not published', async () => {
+  // MCP requires a tool schema to be type: object. An ability declaring an array
+  // return would otherwise publish a schema the client refuses to validate
+  // against, failing every call to a tool that works.
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].output_schema = { type: 'array', items: { type: 'string' } };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.equal(byName.gv_views_list.outputSchema, undefined);
+});
+
+suite.test('outputSchema: PHP-serialised empty properties are coerced to an object', async () => {
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].output_schema = { type: 'object', properties: [] };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isTrue(
+    byName.gv_views_list.outputSchema?.properties && !Array.isArray(byName.gv_views_list.outputSchema.properties),
+    'an array of properties fails the client\'s validator'
+  );
+});
+
+suite.test('a tool that publishes an outputSchema returns structuredContent matching it', async () => {
+  // The spec: if a tool declares outputSchema, the result MUST carry
+  // structuredContent conforming to it. Publishing one without the other is
+  // worse than publishing neither.
+  const { abilityToolResult } = await import('../src/utils/compact.js');
+
+  const envelope = abilityToolResult({ views: [], next: null });
+
+  TestAssert.isTrue('structuredContent' in envelope, 'a declared outputSchema obliges structuredContent');
+  TestAssert.isTrue('next' in envelope.structuredContent, 'structuredContent must match the declared schema, nulls included');
+  TestAssert.equal(envelope.content[0].type, 'text', 'the text content stays for clients that ignore structured output');
+});
+
+suite.test('structuredContent is omitted for a payload that is not an object', async () => {
+  // An array or a scalar is not a valid structuredContent payload.
+  const { abilityToolResult } = await import('../src/utils/compact.js');
+
+  TestAssert.isFalse('structuredContent' in abilityToolResult([1, 2, 3]), 'an array must not be sent as structuredContent');
+  TestAssert.isFalse('structuredContent' in abilityToolResult('ok'), 'a scalar must not be sent as structuredContent');
+});
+
 // Standalone runner
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {

@@ -21,7 +21,7 @@ import fieldRegistry from './field-definitions/field-registry.js';
 import FieldAwareValidator from './config/field-validation.js';
 import logger from './utils/logger.js';
 import { sanitize } from './utils/sanitize.js';
-import { stripEmpty, stripEntryMetaFromResponse, shapeAbilityResult } from './utils/compact.js';
+import { stripEmpty, stripEntryMetaFromResponse, abilityToolResult } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
 import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams } from './server-runtime.js';
@@ -296,10 +296,7 @@ function wrapViewHandler(handler, params = {}) {
     }
     try {
       const result = await handler();
-      const output = shapeAbilityResult(result, params);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(output) }],
-      };
+      return abilityToolResult(result, params);
     } catch (error) {
       // Axios errors carry response.data — when the server speaks
       // the inspector REST envelope, that's the most useful payload.

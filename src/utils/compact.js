@@ -116,3 +116,25 @@ export default { stripEmpty, stripEntryMeta, stripEntryMetaFromResponse };
 export function shapeAbilityResult(result, { compact = false } = {}) {
   return compact === true ? stripEmpty(result) : result;
 }
+
+/**
+ * The MCP result envelope for an ability call.
+ *
+ * `structuredContent` rides alongside the text content because a tool that
+ * publishes an `outputSchema` is obliged to return data matching it, and the
+ * server publishes one for every ability that declares it. Sent only for a plain
+ * object: an array or a scalar is not a valid `structuredContent` payload.
+ *
+ * @param {*} result The ability's payload.
+ * @param {{compact?: boolean}} [options] Passed through to {@see shapeAbilityResult}.
+ * @returns {{content: object[], structuredContent?: object}}
+ */
+export function abilityToolResult(result, options = {}) {
+  const output = shapeAbilityResult(result, options);
+  const isPlainObject = output !== null && typeof output === 'object' && !Array.isArray(output);
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(output) }],
+    ...(isPlainObject ? { structuredContent: output } : {}),
+  };
+}

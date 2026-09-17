@@ -265,8 +265,10 @@ function catalogItemsToEntries(items) {
       abilityName:    item.name,
       toolName:       item.mcp_tool_name,
       description:    item.description || item.label || item.name,
-      rawInputSchema: item.input_schema,
-      annotations:    item.annotations && typeof item.annotations === 'object' ? item.annotations : {},
+      rawInputSchema:  item.input_schema,
+      rawOutputSchema: item.output_schema,
+      label:           typeof item.label === 'string' ? item.label : undefined,
+      annotations:     item.annotations && typeof item.annotations === 'object' ? item.annotations : {},
     });
   }
 
@@ -337,8 +339,10 @@ async function fetchCoreEntries(wpClient) {
       abilityName:    ability.name,
       toolName:       meta.mcp_tool_name,
       description:    ability.description || ability.label || ability.name,
-      rawInputSchema: ability.input_schema,
-      annotations:    meta.annotations && typeof meta.annotations === 'object' ? meta.annotations : {},
+      rawInputSchema:  ability.input_schema,
+      rawOutputSchema: ability.output_schema,
+      label:           typeof ability.label === 'string' ? ability.label : undefined,
+      annotations:     meta.annotations && typeof meta.annotations === 'object' ? meta.annotations : {},
     });
   }
 
@@ -347,6 +351,27 @@ async function fetchCoreEntries(wpClient) {
   }
 
   return entries;
+}
+
+/**
+ * An ability's `output_schema`, or undefined when it has none worth publishing.
+ *
+ * WordPress defaults an undeclared output schema to `[]`, and MCP requires a
+ * tool schema to be `type: 'object'`, so an empty array must not be published —
+ * a client validating against it would reject every call. PHP's array-vs-object
+ * serialisation also turns an empty `properties` map into `[]`, the same shape
+ * `normalizeInputSchema()` coerces.
+ *
+ * @param {unknown} raw The catalog's `output_schema`.
+ * @returns {object|undefined}
+ */
+function normalizeOutputSchema(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  if (raw.type !== 'object') return undefined;
+
+  const properties = raw.properties && !Array.isArray(raw.properties) ? raw.properties : {};
+
+  return { ...raw, properties };
 }
 
 /**
@@ -442,10 +467,16 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
     // expects — PHP-serialised array schemas otherwise fail `tools/list`.
     // The MCP annotations mirror the ability's: without them clients get
     // no destructive signal (no confirmation before gv_view_delete).
+    const outputSchema = normalizeOutputSchema(entry.rawOutputSchema);
+
     definitions.push({
       name: entry.toolName,
+      ...(entry.label ? { title: entry.label } : {}),
       description,
       inputSchema: normalizeInputSchema(entry.rawInputSchema),
+      // Only when the ability declares a usable one: the spec obliges a tool
+      // that publishes an outputSchema to return matching structuredContent.
+      ...(outputSchema ? { outputSchema } : {}),
       annotations: {
         readOnlyHint:   !!annotations.readonly,
         destructiveHint: isDestructive,
