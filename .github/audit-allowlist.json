@@ -1,0 +1,14 @@
+{
+  "comment": "Production dependencies with known advisories that this server does not execute. Anything NOT listed here fails the Security workflow. Review the reasons whenever the SDK is upgraded: an entry stops being true the moment src/ imports an HTTP transport.",
+  "reviewed": "2026-09-17",
+  "allowed": {
+    "hono": "Reached only through @modelcontextprotocol/sdk's HTTP transport. src/index.js imports server/stdio.js and never server/streamableHttp.js, so this code is installed but never loaded.",
+    "@hono/node-server": "Same path as hono: the SDK's HTTP transport, which this server does not use.",
+    "express-rate-limit": "SDK HTTP transport dependency. No HTTP listener runs in a stdio server.",
+    "ip-address": "Reached through express-rate-limit, itself part of the SDK's unused HTTP transport.",
+    "path-to-regexp": "Reached through express, part of the SDK's unused HTTP transport.",
+    "body-parser": "Reached through express, part of the SDK's unused HTTP transport.",
+    "qs": "Reached through express, part of the SDK's unused HTTP transport.",
+    "fast-uri": "Reached through ajv, which the SDK loads for schema validation. The advisories are URI host-confusion and SSRF in code paths this server does not reach: it validates tool input schemas, it does not resolve URIs from them."
+  }
+}

@@ -23,6 +23,8 @@ This release makes GravityKit product tools first-class: they now publish output
 - **The server's own instructions describe both planes.** They documented only Gravity Forms tools, leaving an assistant to discover the product tools by accident, and the guidance they did carry had narrowed to one GravityView feature.
 
 ### 🔒 Security
+- **Updated the Model Context Protocol SDK to 1.30.0 and `form-data` to 4.0.6.** The `form-data` bump closes a published advisory reachable through the HTTP client. The SDK move carries no protocol change — the server still speaks 2025-11-25.
+- **The security workflow can now fail.** It ran `npm audit` in a form that could not report a problem, which is how the outdated axios went unnoticed for four months. It now fails on any production advisory that is not named, with its reason, in `.github/audit-allowlist.json`, and it runs on `develop` as well as `main`.
 - **Updated axios, the library the server uses to talk to your site, to 1.18.0.** The version we shipped had a run of published advisories, including ones that could leak proxy credentials or let a crafted URL slip past NO_PROXY. 1.18.0 has none open. Contributed by @anupamme (#14).
 
 ### 🐛 Fixed
