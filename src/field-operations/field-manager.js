@@ -4,6 +4,21 @@
  */
 
 import { createHash } from 'crypto';
+import { assignFieldIds } from '../field-definitions/field-registry.js';
+
+/**
+ * Field properties that dependents actually consume. Conditional-logic rules
+ * compare against the field's VALUES ({fieldId, operator, value}), and
+ * calculations / merge tags resolve by field id and read its value — so only
+ * changes to the value shape can break a dependent. Cosmetic properties (label,
+ * description, cssClass, …) never gate an update.
+ *
+ * `inputType` belongs here even though `type` is listed: survey, product and
+ * post_category fields keep `type` fixed and pick their storage shape with
+ * `inputType`, so radio -> checkbox turns one stored value into dot-notation
+ * sub-inputs and a dependent rule reads an address that no longer holds it.
+ */
+const BREAKING_UPDATE_PROPS = ['type', 'inputType', 'choices', 'inputs'];
 
 export class FieldManager {
   constructor(apiClient, fieldRegistry, validator) {
@@ -45,10 +60,17 @@ export class FieldManager {
 
     // Fetch current form via REST API
     const { form } = await this.api.getForm({ id: formId });
-    
-    // Generate unique integer field ID (max + 1 pattern)
-    const fieldId = this.generateFieldId(form.fields || []);
-    
+
+    // Resolve the field id through the same contract gf_create_form uses
+    // (assignFieldIds): a caller-supplied fresh safe positive integer is
+    // preserved; duplicate / non-numeric / out-of-range ids are replaced with
+    // a generated max+1 id. Entries key on field id, so a duplicate would
+    // corrupt the form and every subsequent entry.
+    const requestedId = properties.id;
+    const numbered = assignFieldIds([...(form.fields || []), { id: requestedId }]);
+    const fieldId = Number(numbered[numbered.length - 1].id);
+    const requestedIdRejected = requestedId !== undefined && Number(requestedId) !== fieldId;
+
     // Create field with type-specific defaults (none for unknown types)
     const field = this.createField(fieldId, fieldType, properties, fieldDef || {});
 
@@ -66,12 +88,12 @@ export class FieldManager {
     // Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
     this.normalizeLayoutProperties(field, formId);
     
-    // Calculate insertion position (page-aware)
-    const insertIndex = this.positionEngine?.calculatePosition(
-      form.fields || [],
-      position,
-      form.pagination
-    ) || form.fields?.length || 0;
+    // Calculate insertion position (page-aware). Never `||` this result:
+    // 0 is a legitimate index (prepend / index:0 / before-the-first-field)
+    // and a falsy fallback would silently append instead.
+    const insertIndex = this.positionEngine
+      ? this.positionEngine.calculatePosition(form.fields || [], position, form.pagination)
+      : (form.fields?.length || 0);
     
     // Insert field at calculated position
     if (!form.fields) form.fields = [];
@@ -82,6 +104,11 @@ export class FieldManager {
 
     // Surface field-shape warnings, plus a heads-up when the type is unrecognized.
     const warnings = this.validator.getWarnings(field);
+    if (requestedIdRejected) {
+      warnings.unshift(
+        `Requested field id ${JSON.stringify(requestedId)} could not be used (duplicate, non-numeric, or out of range); assigned id ${fieldId} instead.`
+      );
+    }
     if (!isKnownType) {
       warnings.unshift(
         `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.`
@@ -115,19 +142,24 @@ export class FieldManager {
       throw new Error(`Field ${fieldId} not found in form ${formId}`);
     }
 
-    // Gate the write on dependencies BEFORE mutating, the way deleteField does.
-    // Saving first and reporting failure afterward persisted a "blocked" update
-    // and made the success:false response a lie.
+    // Gate BEFORE mutating (matching deleteField): force is required only when
+    // the update touches BREAKING_UPDATE_PROPS and hasBreakingDependencies()
+    // finds dependents — the same set deleteField gates on. Cosmetic updates
+    // always proceed, or agents learn to pass force on every call.
     const dependencies = this.dependencyTracker?.scanFormDependencies(form, fieldId) || {};
-    const hasBreakingDeps = dependencies.conditionalLogic?.length > 0;
+    const hasBreakingDeps = typeof this.dependencyTracker?.hasBreakingDependencies === 'function'
+      ? this.dependencyTracker.hasBreakingDependencies(dependencies)
+      : false;
+    const touchesBreakingProps = Object.keys(updates || {})
+      .some((key) => BREAKING_UPDATE_PROPS.includes(key));
 
-    if (hasBreakingDeps && !force) {
+    if (hasBreakingDeps && touchesBreakingProps && !force) {
       return {
         success: false,
-        error: 'Field has dependencies that may be affected',
+        error: 'Update changes properties (type/choices/inputs) that dependent conditional logic, calculations, or merge tags rely on',
         field_id: fieldId,
         dependencies,
-        suggestion: 'Use force=true to update anyway'
+        suggestion: 'Use force=true to update anyway, or limit the update to cosmetic properties (label, description, cssClass, …)'
       };
     }
 
@@ -151,7 +183,9 @@ export class FieldManager {
         after: result.form.fields[fieldIndex]
       },
       warnings: {
-        dependencies: hasBreakingDeps ? ['Field has conditional logic dependencies'] : [],
+        dependencies: hasBreakingDeps
+          ? ['Field has dependents (conditional logic, calculations, or merge tags); value-shape changes (type/choices/inputs) require force']
+          : [],
         validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex])
       }
     };
@@ -161,6 +195,12 @@ export class FieldManager {
    * Delete field with comprehensive dependency analysis
    */
   async deleteField(formId, fieldId, options = {}) {
+    // Unlike a form or entry, a deleted field does not go to the Trash: the config
+    // is gone and its entry data is orphaned. Gate it as the other deletes are.
+    if (!this.api.allowDelete) {
+      throw new Error('Delete operations are disabled. Set GRAVITY_FORMS_ALLOW_DELETE=true to enable.');
+    }
+
     const { cascade = false, force = false } = options;
     
     // Fetch form
@@ -252,6 +292,10 @@ export class FieldManager {
    * Create field with intelligent defaults from registry
    */
   createField(id, type, properties, fieldDef) {
+    // `id` and `type` are resolved by addField and must not be overridable via
+    // the properties spread — a caller-supplied properties.id after the spread
+    // was how duplicate field ids (form corruption) got in.
+    const { id: _requestedId, type: _requestedType, ...safeProperties } = properties;
     return {
       id,
       type,
@@ -263,7 +307,7 @@ export class FieldManager {
       visibility: properties.visibility || 'visible',
       cssClass: properties.cssClass || '',
       ...this.getTypeSpecificDefaults(type, fieldDef),
-      ...properties
+      ...safeProperties
     };
   }
 

@@ -79,7 +79,7 @@ multi-step flows (add-then-act) graded on final persisted state.
 | `views` | update settings (page size), set status (publish), duplicate, delete |
 | `view-fields` | add, add-with-label, reorder, remove |
 | `view-widgets` | add (footer), add-then-remove |
-| `search` | add a search field, add + configure its input type (5-piece identity) |
+| `search` | add a search field, add + configure its input type (5-piece identity), horizontal (side-by-side) layout |
 | `grid` | add a Layout Builder grid row, add row + place a field |
 
 Several tasks double as **regression guards** for the contract work — e.g.

@@ -2,9 +2,9 @@ name: Security
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   schedule:
     # Run security scan weekly on Monday at 2 AM UTC
     - cron: '0 2 * * 1'
@@ -12,27 +12,29 @@ on:
 jobs:
   security:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Run npm audit
-        run: npm audit --audit-level=moderate || true
-        continue-on-error: true
-      
+
+      # Fails on any production advisory not named in .github/audit-allowlist.json.
+      # Never `|| true` or continue-on-error here: a step that cannot fail reports
+      # success on a vulnerable tree.
+      - name: Audit production dependencies
+        run: node scripts/audit-gate.mjs
+
       - name: Run CodeQL Analysis
         uses: github/codeql-action/init@v3
         with:
           languages: javascript
-      
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3

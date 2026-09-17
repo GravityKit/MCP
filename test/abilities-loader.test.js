@@ -11,6 +11,7 @@
 import { TestRunner, TestAssert } from './helpers.js';
 import {
   normalizeInputSchema,
+  normalizeOutputSchema,
   loadAbilitiesAsTools,
   methodForAbility,
   FOUNDATION_CATALOG_ROUTE,
@@ -55,17 +56,45 @@ suite.test('normalizeInputSchema: passes a valid schema through unchanged', () =
   TestAssert.deepEqual(out.required, ['id']);
 });
 
+suite.test('normalizeInputSchema: never advertises a param the server consumes', () => {
+  // `compact` and `test_mode` are stripped from every call before it reaches
+  // WordPress (stripControlParams). An ability that declares either would be
+  // advertising a parameter the caller can never actually send, so the published
+  // schema must not carry it.
+  const out = normalizeInputSchema({
+    type: 'object',
+    properties: { id: { type: 'integer' }, compact: { type: 'boolean' }, test_mode: { type: 'boolean' } },
+    required: ['id', 'compact'],
+  });
+
+  TestAssert.deepEqual(Object.keys(out.properties), ['id'], 'server-owned names must not be published');
+  TestAssert.deepEqual(out.required, ['id'], 'a stripped param must not stay required — nothing could satisfy it');
+});
+
+suite.test('normalizeInputSchema: leaves an ability that declares neither alone', () => {
+  // The control: dropping unconditionally would pass the test above while
+  // deleting ordinary parameters.
+  const out = normalizeInputSchema({
+    type: 'object',
+    properties: { id: { type: 'integer' }, compact_view: { type: 'boolean' } },
+    required: ['id'],
+  });
+
+  TestAssert.deepEqual(Object.keys(out.properties), ['id', 'compact_view'], 'only the exact names are reserved');
+  TestAssert.deepEqual(out.required, ['id']);
+});
+
 suite.test('normalizeInputSchema: wraps a top-level array (tools 29-36 bug)', () => {
   // The bug Claude Code surfaced: abilities 29-36 emitted `input_schema`
   // as a raw array, blowing MCP's `expected object, received array` Zod check.
   const arrayShaped = [
     { name: 'view_id', type: 'integer', required: true, description: 'The View ID.' },
-    { name: 'compact', type: 'boolean', description: 'Strip empty fields.' },
+    { name: 'verbose', type: 'boolean', description: 'Include every field.' },
   ];
   const out = normalizeInputSchema(arrayShaped);
   assertValidMcpInputSchema(out);
   TestAssert.isTrue('view_id' in out.properties, 'view_id property derived from entry.name');
-  TestAssert.isTrue('compact' in out.properties, 'compact property derived from entry.name');
+  TestAssert.isTrue('verbose' in out.properties, 'verbose property derived from entry.name');
   TestAssert.deepEqual(out.required, ['view_id'], 'required: true lifts to outer required array');
   // Ensure the descriptor's `name` was stripped from the value (now it's the key).
   TestAssert.equal(out.properties.view_id.name, undefined);
@@ -173,6 +202,39 @@ function buildStubGvClient(catalog) {
 }
 
 /**
+ * Stub gvClient whose Foundation catalog 404s and whose WP-core catalog is
+ * PAGINATED: `corePages` is an array of item-arrays, served by `page`, with
+ * X-WP-TotalPages set. Core's list endpoint paginates at 50 per page by
+ * default, so a site with more abilities than that is the normal case rather
+ * than an edge one.
+ */
+function buildCorePaginatedStubGvClient(corePages) {
+  const requests = [];
+  return {
+    baseUrl: 'https://test.invalid',
+    requests,
+    httpClient: {
+      request: async (config) => {
+        requests.push(config);
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          const err = new Error('Request failed with status code 404');
+          err.response = { status: 404 };
+          throw err;
+        }
+        if (config.url === CORE_ABILITIES_ROUTE) {
+          const page = config.params?.page || 1;
+          return {
+            data:    corePages[page - 1] || [],
+            headers: { 'x-wp-totalpages': String(corePages.length) },
+          };
+        }
+        return { data: { ok: true }, headers: {} };
+      },
+    },
+  };
+}
+
+/**
  * Stub gvClient whose Foundation catalog responds with the given pages
  * (array of item-arrays; X-WP-TotalPages = pages.length). Core-catalog
  * requests serve `coreCatalog`. Records every request config in
@@ -215,7 +277,7 @@ function syntheticCatalog() {
     {
       name: 'gk-gravityview/layouts-list',
       description: 'List installed layouts',
-      input_schema: { type: 'object', properties: { compact: { type: 'boolean' } } },
+      input_schema: { type: 'object', properties: { verbose: { type: 'boolean' } } },
       meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: { readonly: true } },
     },
     // Bug shape #1 — input_schema is itself an array (tools 29-36).
@@ -226,7 +288,7 @@ function syntheticCatalog() {
         { name: 'view_id', type: 'integer', required: true },
         { name: 'field_id', type: 'string', required: true },
       ],
-      meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_view_field_add', annotations: {} },
+      meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_view_field_add', annotations: { destructive: false } },
     },
     // Bug shape #2 — properties is an array (tool 57).
     {
@@ -240,7 +302,7 @@ function syntheticCatalog() {
       name: 'core/unrelated-ability',
       description: 'Should not be exposed',
       input_schema: { type: 'object', properties: {} },
-      meta: { annotations: {} },
+      meta: { annotations: { destructive: false } },
     },
   ];
 }
@@ -310,7 +372,7 @@ function syntheticFoundationCatalog() {
       name: 'gk-gravityview/view-status-set',
       description: 'Disabled ability',
       input_schema: { type: 'object', properties: {} },
-      annotations: {},
+      annotations: { destructive: false },
       enabled: false,
       mcp_tool_name: 'gv_view_status_set',
     },
@@ -396,7 +458,7 @@ suite.test('coexistence: Gravity Forms own abilities (feature-abilities-api) are
       input_schema: { type: 'object', properties: {} },
       meta: {
         mcp: { public: true },
-        annotations: { readonly: true, destructive: false, idempotent: true },
+        annotations: { destructive: false },
         show_in_rest: true,
       },
     },
@@ -405,7 +467,7 @@ suite.test('coexistence: Gravity Forms own abilities (feature-abilities-api) are
       name: 'gravityforms/myaddon/my-action',
       description: 'Add-on ability.',
       input_schema: { type: 'object', properties: {} },
-      meta: { mcp: { public: true }, annotations: {}, show_in_rest: true },
+      meta: { mcp: { public: true }, annotations: { destructive: false }, show_in_rest: true },
     },
   ];
   const { definitions, source } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
@@ -480,11 +542,160 @@ suite.test('loadAbilitiesAsTools: tool 57 repro — properties:[] becomes proper
   TestAssert.deepEqual(tool.inputSchema.properties, {});
 });
 
+suite.test('allowDestructive "all" permits every destructive tool', async () => {
+  // The value the desktop extension's checkbox produces, and the one most people
+  // set by hand. It had no test at all.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub, { allowDestructive: ['all'] });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  for (const name of ['gv_view_delete', 'gv_view_trash']) {
+    TestAssert.isFalse(
+      /disabled on this server/.test(byName[name].description),
+      `${name} must not be marked disabled when everything is permitted`
+    );
+  }
+});
+
+suite.test('a product prefix permits that product only, not its neighbors', async () => {
+  // The whole point of the list over the old boolean. Permitting gv must not
+  // permit a Migrate tool that happens to be destructive.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gv'] });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isFalse(/disabled on this server/.test(byName.gv_view_delete.description), 'gv is permitted');
+
+  const other = await loadAbilitiesAsTools(stub, { allowDestructive: ['gmig'] });
+  const otherByName = Object.fromEntries(other.definitions.map((d) => [d.name, d]));
+  TestAssert.isTrue(
+    /disabled on this server/.test(otherByName.gv_view_delete.description),
+    'permitting gmig must not permit a gv tool'
+  );
+});
+
+suite.test('a tool name with no underscore has no prefix, not a truncated one', async () => {
+  // toolName.slice(0, indexOf('_')) is slice(0, -1) when there is no underscore,
+  // which returns the name minus its LAST CHARACTER rather than ''. An allow-list
+  // holding that near-miss string would permit the tool.
+  const catalog = annotatedFoundationCatalog();
+  const target = catalog.find((a) => a.mcp_tool_name === 'gv_view_delete');
+  target.mcp_tool_name = 'destroyeverything';
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  for (const permitted of [[''], ['destroyeverythin']]) {
+    const { definitions } = await loadAbilitiesAsTools(stub, { allowDestructive: permitted });
+    const tool = definitions.find((d) => d.name === 'destroyeverything');
+
+    TestAssert.isTrue(!!tool, 'the tool is still published');
+    TestAssert.isTrue(
+      /disabled on this server/.test(tool.description),
+      `${JSON.stringify(permitted)} must not permit a tool it does not name`
+    );
+  }
+});
+
+suite.test('an ability that states nothing IS gated, because unknown means destructive', async () => {
+  // We publish destructiveHint: true for an unannotated ability, following the spec.
+  // Gating on an explicit declaration only was internally inconsistent: it told the
+  // client "this is destructive" and then ran it anyway, so an operator who permitted
+  // nothing still got the call executed.
+  const catalog = syntheticCatalog();
+  const target = catalog.find((a) => a.name.endsWith('layouts-list'));
+  target.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: null };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isTrue(tool.annotations.destructiveHint, 'unstated is reported destructive');
+  TestAssert.isTrue(
+    /disabled on this server/.test(tool.description),
+    'and is gated the same way, so the hint and the policy agree'
+  );
+});
+
+suite.test('an unannotated ability is permitted once the allow-list names it', async () => {
+  // The control: gating everything unknown unconditionally would pass the test above
+  // and leave no way to run the tool at all.
+  const catalog = syntheticCatalog();
+  const target = catalog.find((a) => a.name.endsWith('layouts-list'));
+  target.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: null };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog), { allowDestructive: ['gv'] });
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isFalse(/disabled on this server/.test(tool.description), 'naming it permits it');
+});
+
+suite.test('normalizeOutputSchema: a non-object properties value is not published', () => {
+  // MCP requires properties to be an object; publishing a string here makes a client
+  // reject the whole tool definition.
+  for (const bad of ['nope', 42, true]) {
+    const out = normalizeOutputSchema({ type: 'object', properties: bad });
+    TestAssert.deepEqual(out.properties, {}, `properties ${JSON.stringify(bad)} must be dropped`);
+  }
+  const good = normalizeOutputSchema({ type: 'object', properties: { id: { type: 'integer' } } });
+  TestAssert.deepEqual(Object.keys(good.properties), ['id'], 'a real properties map survives');
+});
+
+
+suite.test('an ability that declares nothing is published as destructive, not as safe', async () => {
+  // WordPress core defaults ability annotations to null and Foundation passes them
+  // through, so "declares nothing" is reachable. The MCP spec defaults an omitted
+  // destructiveHint to TRUE, so reporting false here would tell a client a tool is
+  // safe on the strength of the product having forgotten to say.
+  for (const unstated of [null, {}]) {
+    const entries = syntheticCatalog();
+    const target  = entries.find((a) => a.name.endsWith('layouts-list'));
+    target.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: unstated };
+
+    const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(entries));
+    const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+    TestAssert.isTrue(!!tool, `an unannotated ability is still published (${JSON.stringify(unstated)})`);
+    TestAssert.isTrue(tool.annotations.destructiveHint, `unknown must not be reported as safe (${JSON.stringify(unstated)})`);
+  }
+});
+
+suite.test('an ability that declares readonly is not called destructive', async () => {
+  // The control: defaulting everything to destructive would pass the test above
+  // and mislabel every read-only tool on the site.
+  const catalog = syntheticCatalog();
+  const entry = catalog.find((a) => a.name.endsWith('layouts-list'));
+  entry.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: { readonly: true } };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isFalse(tool.annotations.destructiveHint, 'a declared readonly ability is safe');
+  TestAssert.isTrue(tool.annotations.readOnlyHint);
+});
+
+suite.test('loadAbilitiesAsTools: a reserved param never reaches the published tool', async () => {
+  // The end-to-end path a client's tools/list takes. stripControlParams removes
+  // `compact`/`test_mode` from every call before it leaves this server, so a tool
+  // advertising one would promise input that can never arrive.
+  const catalog = syntheticCatalog();
+  const entry = catalog.find((a) => a.name.endsWith('layouts-list'));
+  entry.input_schema = {
+    type: 'object',
+    properties: { verbose: { type: 'boolean' }, compact: { type: 'boolean' }, test_mode: { type: 'boolean' } },
+    required: ['compact'],
+  };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isTrue(!!tool, 'the tool is still published — a reserved name must not drop the whole ability');
+  TestAssert.deepEqual(Object.keys(tool.inputSchema.properties), ['verbose']);
+  TestAssert.deepEqual(tool.inputSchema.required, []);
+});
+
 suite.test('loadAbilitiesAsTools: healthy schema passes through untouched', async () => {
   const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
   const tool = definitions.find((d) => d.name === 'gv_layouts_list');
   TestAssert.isTrue(!!tool);
-  TestAssert.deepEqual(tool.inputSchema.properties, { compact: { type: 'boolean' } });
+  TestAssert.deepEqual(tool.inputSchema.properties, { verbose: { type: 'boolean' } });
 });
 
 // ---------------------------------------------------------------------------
@@ -517,7 +728,7 @@ function inputSchemaFenceCatalog() {
       name: 'gk-gravityview/view-create',
       description: 'POST with object input_schema',
       input_schema: { type: 'object', properties: { title: { type: 'string' } } },
-      annotations: {},
+      annotations: { destructive: false },
       enabled: true,
       mcp_tool_name: 'gv_schema_post',
     },
@@ -541,7 +752,7 @@ function inputSchemaFenceCatalog() {
       name: 'gk-gravityview/ping-post',
       description: 'POST with NO input_schema',
       // No input_schema key at all.
-      annotations: {},
+      annotations: { destructive: false },
       enabled: true,
       mcp_tool_name: 'gv_noschema_post',
     },
@@ -634,7 +845,8 @@ suite.test('executeAbility: non-empty input on a schemaless ability still sends 
 
 suite.test('executeAbility: empty input → DELETE sends params {input:\'\'} (parity with GET)', async () => {
   const stub = buildCatalogStubGvClient([inputSchemaFenceCatalog()]);
-  const { handlers } = await loadAbilitiesAsTools(stub);
+  // allowDelete: this test pins the DELETE wire shape; gating has its own tests.
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDelete: true });
   await handlers.gv_schema_delete({});
   const run = findRun(stub, 'gk-gravityview/view-delete-hard');
   TestAssert.isTrue(!!run, 'DELETE ability must hit the run endpoint');
@@ -680,6 +892,658 @@ suite.test('methodForAbility: readonly → GET, destructive+idempotent → DELET
 suite.test('methodForAbility: null / non-object annotations → POST (no throw)', () => {
   TestAssert.equal(methodForAbility(null), 'POST');
   TestAssert.equal(methodForAbility('nope'), 'POST');
+});
+
+// ---------------------------------------------------------------------------
+// MCP annotations + destructive gating + next_steps surfacing. The loader
+// used to read ability annotations only to pick the HTTP method and then
+// DROP them from the tool definition — so gv_view_delete reached MCP clients
+// with no destructiveHint (no confirmation prompt) while the far less
+// dangerous gf_delete_* tools were both hinted AND env-gated.
+// ---------------------------------------------------------------------------
+
+function annotatedFoundationCatalog() {
+  return [
+    {
+      name: 'gk-gravityview/views-list',
+      description: 'List Views.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { readonly: true },
+      enabled: true,
+      mcp_tool_name: 'gv_views_list',
+    },
+    {
+      name: 'gk-gravityview/view-delete',
+      description: 'Delete a View.',
+      input_schema: { type: 'object', properties: { id: { type: 'integer' } } },
+      annotations: { destructive: true, idempotent: true },
+      enabled: true,
+      mcp_tool_name: 'gv_view_delete',
+    },
+    {
+      // Destructive but NOT idempotent → executes as POST, must still be gated.
+      name: 'gk-gravityview/view-trash',
+      description: 'Trash a View.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { destructive: true },
+      enabled: true,
+      mcp_tool_name: 'gv_view_trash',
+    },
+    {
+      name: 'gk-gravityview/view-create',
+      description: 'Create a View.',
+      input_schema: { type: 'object', properties: {} },
+      annotations: { destructive: false },
+      enabled: true,
+      mcp_tool_name: 'gv_view_create',
+    },
+  ];
+}
+
+suite.test('annotations: ability annotations map onto MCP tool annotations', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.deepEqual(byName.gv_views_list.annotations, {
+    readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+  });
+  TestAssert.deepEqual(byName.gv_view_delete.annotations, {
+    readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  });
+  TestAssert.deepEqual(byName.gv_view_trash.annotations, {
+    readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true,
+  });
+  TestAssert.deepEqual(byName.gv_view_create.annotations, {
+    readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true,
+  });
+});
+
+suite.test('annotations: core-path meta.annotations map the same way', async () => {
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+  TestAssert.equal(tool.annotations.readOnlyHint, true);
+  TestAssert.equal(tool.annotations.destructiveHint, false);
+  TestAssert.equal(tool.annotations.openWorldHint, true);
+});
+
+suite.test('gating: destructive ability handlers refuse to run when nothing is permitted', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+
+  for (const toolName of ['gv_view_delete', 'gv_view_trash']) {
+    let threw = null;
+    try {
+      await handlers[toolName]({ id: 1 });
+    } catch (err) {
+      threw = err;
+    }
+    TestAssert.isTrue(!!threw, `${toolName} must throw when nothing is permitted`);
+    TestAssert.isTrue(
+      /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(threw.message),
+      `${toolName} error must name the setting that enables it, got: ${threw.message}`
+    );
+  }
+  const runs = stub.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(runs.length, 0, 'no gated call may reach the wire');
+});
+
+suite.test('gating: destructive handlers execute when allowDelete is true; method logic unchanged', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDelete: true });
+
+  await handlers.gv_view_delete({ id: 1 });
+  await handlers.gv_view_trash({});
+  const runs = stub.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(runs.length, 2);
+  TestAssert.equal(runs[0].method, 'DELETE', 'destructive+idempotent must stay DELETE');
+  TestAssert.equal(runs[1].method, 'POST', 'destructive non-idempotent must stay POST');
+});
+
+suite.test('gating: readonly and non-destructive handlers are never gated', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+
+  await handlers.gv_views_list({});
+  await handlers.gv_view_create({});
+  const runs = stub.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run'));
+  TestAssert.equal(runs.length, 2);
+  TestAssert.equal(runs[0].method, 'GET');
+  TestAssert.equal(runs[1].method, 'POST');
+});
+
+suite.test('gating: a gated destructive tool says so, and names itself', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  // Naming the tool, not just the setting: the agent has to be able to tell a
+  // person exactly what to add.
+  TestAssert.isTrue(/GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_delete.description));
+  TestAssert.isTrue(/gv_view_delete/.test(byName.gv_view_delete.description));
+  TestAssert.isTrue(/GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_trash.description));
+  TestAssert.isTrue(!/GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_views_list.description));
+});
+
+suite.test('gating: the old boolean still permits everything', async () => {
+  // A server configured before the allow-list existed keeps working.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDelete: true });
+
+  await handlers.gv_view_delete({ id: 1 });
+  await handlers.gv_view_trash({ id: 1 });
+});
+
+suite.test('next_steps: surfaced in the description, mapped to exposed tool names', async () => {
+  const catalog = annotatedFoundationCatalog();
+  // Foundation ships next_steps inside annotations ([{ability, when}, …]).
+  catalog[0].annotations = {
+    readonly: true,
+    next_steps: [
+      { ability: 'gk-gravityview/view-create', when: 'After picking a View to clone.' },
+      { ability: 'gk-gravityview/not-exposed', when: 'Never — not a registered tool.' },
+    ],
+  };
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const tool = definitions.find((d) => d.name === 'gv_views_list');
+  TestAssert.isTrue(
+    /gv_view_create/.test(tool.description),
+    `next-step ability must be named by its TOOL name, got: ${tool.description}`
+  );
+  TestAssert.isTrue(/After picking a View to clone\./.test(tool.description), 'the when-guidance must survive');
+  TestAssert.isTrue(!/not-exposed/.test(tool.description), 'steps pointing at unexposed abilities are dropped');
+});
+
+suite.test('next_steps: absent or malformed next_steps leave the description untouched', async () => {
+  const catalog = annotatedFoundationCatalog();
+  // Merge, don't replace: clobbering the whole object drops `destructive: false`,
+  // which would gate the tool and append a suffix this test reads as the bug.
+  catalog[3].annotations = { ...catalog[3].annotations, next_steps: 'not-an-array' };
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+  TestAssert.equal(byName.gv_view_create.description, 'Create a View.');
+});
+
+/**
+ * A GravityKit ability on page two of the WP-core catalog.
+ *
+ * @param {number} n Distinguishes one from the next.
+ * @returns {object} Core catalog item.
+ */
+function coreAbility(n) {
+  return {
+    name:         `gk-gravityview/paged-${n}`,
+    description:  `Paged ability ${n}`,
+    input_schema: { type: 'object', properties: {} },
+    meta:         {
+      gk_registered_by: 'gravitykit',
+      mcp_tool_name:    `gv_paged_${n}`,
+      annotations:      { readonly: true },
+    },
+  };
+}
+
+suite.test('core fallback: follows X-WP-TotalPages instead of stopping at the first page', async () => {
+  // WP core's list endpoint defaults to 50 per page. A site carrying GravityView's
+  // 49 abilities plus another product's already spills onto page two, so a
+  // single-request fallback silently serves a partial catalog.
+  const pageOne = Array.from({ length: 50 }, (unused, i) => coreAbility(i + 1));
+  const pageTwo = [ coreAbility(51), coreAbility(52) ];
+
+  const gvClient = buildCorePaginatedStubGvClient([ pageOne, pageTwo ]);
+  const { definitions, source } = await loadAbilitiesAsTools(gvClient);
+
+  TestAssert.equal(source, 'wp-core', 'catalog 404 must route to the WP-core path');
+  TestAssert.equal(definitions.length, 52, 'every page of the core catalog must be loaded');
+  TestAssert.isTrue(
+    definitions.some((d) => d.name === 'gv_paged_52'),
+    'an ability on the second page must reach the tool list'
+  );
+});
+
+suite.test('core fallback: asks for the largest page WP core allows', async () => {
+  const gvClient = buildCorePaginatedStubGvClient([ [ coreAbility(1) ] ]);
+  await loadAbilitiesAsTools(gvClient);
+
+  const coreRequest = gvClient.requests.find((r) => r.url === CORE_ABILITIES_ROUTE);
+
+  TestAssert.equal(coreRequest?.params?.per_page, 100, 'per_page must be requested, at core\'s maximum');
+  TestAssert.equal(coreRequest?.params?.page, 1, 'the first page must be asked for explicitly');
+});
+
+suite.test('gating: a permitted destructive tool does not claim it is gated', async () => {
+  // The suffix is a statement about this server's configuration. Appending it
+  // unconditionally tells a correctly configured agent that every destructive
+  // tool is switched off, which is the opposite of true.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub, { allowDelete: true });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isFalse(
+    /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE|ALLOW_DELETE/.test(byName.gv_view_delete.description),
+    'a permitted destructive tool must not advertise a gate it is past'
+  );
+});
+
+suite.test('gating: allows one product without unlocking another', async () => {
+  // A Migrate user who needs bundle-import should not thereby be able to delete
+  // Views. The gate takes a list, not a boolean.
+  const catalog = annotatedFoundationCatalog();
+  catalog.push({
+    name: 'gk-gravitymigrate/bundle-import',
+    description: 'Import a bundle.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: { destructive: true },
+    enabled: true,
+    mcp_tool_name: 'gmig_bundle_import',
+  });
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gmig'] });
+
+  await handlers.gmig_bundle_import({});
+
+  let refused = null;
+  try {
+    await handlers.gv_view_delete({ id: 1 });
+  } catch (error) {
+    refused = error.message;
+  }
+
+  TestAssert.isNotNull(refused, 'a product outside the allow-list must stay gated');
+  TestAssert.isTrue(
+    refused.includes('destructive'),
+    `the refusal must name what it refuses, got: ${refused}`
+  );
+});
+
+suite.test('gating: an exact tool name can be permitted on its own', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gv_view_delete'] });
+
+  await handlers.gv_view_delete({ id: 1 });
+
+  let refused = null;
+  try {
+    await handlers.gv_view_trash({ id: 1 });
+  } catch (error) {
+    refused = error.message;
+  }
+
+  TestAssert.isNotNull(refused, 'only the named tool may be permitted');
+});
+
+suite.test('gating: the refusal says destructive, not delete', async () => {
+  // "Delete operations are disabled" is wrong for an import, which is the
+  // reason the gate is reached most often outside Gravity Forms.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+
+  let refused = null;
+  try {
+    await handlers.gv_view_delete({ id: 1 });
+  } catch (error) {
+    refused = error.message;
+  }
+
+  TestAssert.isFalse(/Delete operations/.test(refused), `got: ${refused}`);
+});
+
+suite.test('next_steps: never advertises a tool the collision guard dropped', async () => {
+  // toolNameByAbility was built from every entry before the collision guard ran,
+  // so a step could name a tool that is not in the list the agent received.
+  const catalog = annotatedFoundationCatalog();
+  catalog.push({
+    name: 'gk-other/views-list',
+    description: 'A second product claiming the same tool name.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: { destructive: false },
+    enabled: true,
+    mcp_tool_name: 'gv_views_list',
+  });
+  catalog[1].annotations = {
+    destructive: true,
+    idempotent: true,
+    next_steps: [{ ability: 'gk-other/views-list', when: 'afterwards' }],
+  };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+  const exposed = new Set(definitions.map((d) => d.name));
+
+  const hint = byName.gv_view_delete.description;
+  const named = (hint.match(/\bg[a-z]+_[a-z_]+\b/g) || []).filter((n) => n !== 'gv_view_delete');
+
+  for (const name of named) {
+    TestAssert.isTrue(exposed.has(name), `next_steps named "${name}", which is not in the tool list`);
+  }
+});
+
+suite.test('ability results are not compacted: a null-valued key survives', async () => {
+  // WordPress validates every ability's output against its output_schema before
+  // returning it, so the payload conforms when it leaves the site. Stripping
+  // nulls here is the only thing that makes it stop conforming — and an absent
+  // key and a key set to null are different facts to an agent.
+  const { shapeAbilityResult } = await import('../src/utils/compact.js');
+
+  const result = shapeAbilityResult({
+    import_state:  'idle',
+    progress:      null,
+    import_job_id: null,
+    title:         '',
+    is_clean:      true,
+  });
+
+  TestAssert.isTrue('progress' in result, 'a null key must survive');
+  TestAssert.isTrue('import_job_id' in result, 'a null key must survive');
+  TestAssert.isTrue('title' in result, 'an explicitly empty string is a value, not noise');
+  TestAssert.equal(result.import_state, 'idle');
+});
+
+suite.test('outputSchema: published when the ability declares a usable one', async () => {
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].label = 'List Views';
+  catalog[0].output_schema = {
+    type:       'object',
+    properties: { views: { type: 'array', description: 'Every View.' } },
+    required:   ['views'],
+  };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.equal(byName.gv_views_list.outputSchema?.type, 'object');
+  TestAssert.equal(
+    byName.gv_views_list.outputSchema?.properties?.views?.description,
+    'Every View.',
+    'the property descriptions are the documentation this exists to publish'
+  );
+  TestAssert.equal(byName.gv_views_list.title, 'List Views', 'the ability label is the tool title');
+});
+
+suite.test('outputSchema: WP\'s empty-array default is not published as a schema', async () => {
+  // An ability that declares no output schema gets `[]` from WP, and MCP requires
+  // type: object. Publishing the empty array would make every call fail validation.
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].output_schema = [];
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.equal(byName.gv_views_list.outputSchema, undefined);
+});
+
+suite.test('outputSchema: a schema that is not type object is not published', async () => {
+  // MCP requires a tool schema to be type: object. An ability declaring an array
+  // return would otherwise publish a schema the client refuses to validate
+  // against, failing every call to a tool that works.
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].output_schema = { type: 'array', items: { type: 'string' } };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.equal(byName.gv_views_list.outputSchema, undefined);
+});
+
+suite.test('outputSchema: PHP-serialised empty properties are coerced to an object', async () => {
+  const catalog = annotatedFoundationCatalog();
+  catalog[0].output_schema = { type: 'object', properties: [] };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isTrue(
+    byName.gv_views_list.outputSchema?.properties && !Array.isArray(byName.gv_views_list.outputSchema.properties),
+    'an array of properties fails the client\'s validator'
+  );
+});
+
+suite.test('a tool that publishes an outputSchema returns structuredContent matching it', async () => {
+  // The spec: if a tool declares outputSchema, the result MUST carry
+  // structuredContent conforming to it. Publishing one without the other is
+  // worse than publishing neither.
+  const { abilityToolResult } = await import('../src/utils/compact.js');
+
+  const envelope = abilityToolResult({ views: [], next: null });
+
+  TestAssert.isTrue('structuredContent' in envelope, 'a declared outputSchema obliges structuredContent');
+  TestAssert.isTrue('next' in envelope.structuredContent, 'structuredContent must match the declared schema, nulls included');
+  TestAssert.equal(envelope.content[0].type, 'text', 'the text content stays for clients that ignore structured output');
+});
+
+suite.test('structuredContent is omitted for a payload that is not an object', async () => {
+  // An array or a scalar is not a valid structuredContent payload.
+  const { abilityToolResult } = await import('../src/utils/compact.js');
+
+  TestAssert.isFalse('structuredContent' in abilityToolResult([1, 2, 3]), 'an array must not be sent as structuredContent');
+  TestAssert.isFalse('structuredContent' in abilityToolResult('ok'), 'a scalar must not be sent as structuredContent');
+});
+
+suite.test('diagnostics: every skipped ability is reported in-band, with its reason', async () => {
+  // These reasons were logged to stderr only, which nobody running a client
+  // reads. GVMF-4 is somebody unable to tell which of them applied.
+  const catalog = annotatedFoundationCatalog();
+  catalog.push({
+    name: 'gk-other/views-list',
+    description: 'A second product claiming a taken tool name.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: { destructive: false },
+    enabled: true,
+    mcp_tool_name: 'gv_views_list',
+  });
+  catalog.push({
+    name: 'gk-nameless/thing-get',
+    description: 'Registered without a tool name.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: { destructive: false },
+    enabled: true,
+    mcp_tool_name: '',
+  });
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { skipped } = await loadAbilitiesAsTools(stub);
+
+  TestAssert.isTrue(Array.isArray(skipped), 'the loader must report what it skipped');
+
+  const byAbility = Object.fromEntries(skipped.map((entry) => [entry.ability, entry.reason]));
+
+  TestAssert.isTrue('gk-other/views-list' in byAbility, 'a collision must be reported');
+  TestAssert.isTrue(/collision/i.test(byAbility['gk-other/views-list']), `got: ${byAbility['gk-other/views-list']}`);
+  TestAssert.isTrue('gk-nameless/thing-get' in byAbility, 'an ability with no tool name must be reported');
+});
+
+suite.test('diagnostics: a clean catalog reports nothing skipped', async () => {
+  // The control: a reporter that always listed something would pass the test above.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { skipped } = await loadAbilitiesAsTools(stub);
+
+  TestAssert.equal(skipped.length, 0);
+});
+
+/**
+ * Stub whose ability /run responses fail the way a stale catalog fails.
+ *
+ * @param {string} code The WP error code the run returns.
+ * @returns {object} Stub gvClient.
+ */
+function buildStaleCatalogStub(code) {
+  const catalog = annotatedFoundationCatalog();
+  return {
+    baseUrl: 'https://test.invalid',
+    httpClient: {
+      request: async (config) => {
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          return { data: catalog, headers: { 'x-wp-totalpages': '1' } };
+        }
+        const err = new Error(`Request failed with status code 400`);
+        err.response = { status: 400, data: { code, message: 'stale' } };
+        throw err;
+      },
+    },
+  };
+}
+
+suite.test('a stale-catalog error asks for a refresh instead of leaving the agent guessing', async () => {
+  // A product upgraded mid-session leaves the agent holding a schema the site no
+  // longer accepts. The error says the input was invalid, which reads as the
+  // agent's mistake.
+  const stub = buildStaleCatalogStub('rest_ability_not_found');
+  let refreshed = 0;
+  const { handlers } = await loadAbilitiesAsTools(stub, { onStaleCatalog: () => { refreshed += 1; } });
+
+  let threw = null;
+  try {
+    await handlers.gv_views_list({});
+  } catch (error) {
+    threw = error;
+  }
+
+  TestAssert.isNotNull(threw, 'the call still fails');
+  TestAssert.isTrue(/refresh/i.test(threw.message), `the error must point at the remedy, got: ${threw.message}`);
+  TestAssert.equal(refreshed, 1, 'the catalog must be refreshed for the next call');
+});
+
+suite.test('an ordinary failure neither refreshes the catalog nor mentions one', async () => {
+  // The control: refreshing on every error would pass the test above and would
+  // refetch the catalog on a permissions refusal.
+  const stub = buildStaleCatalogStub('ability_invalid_permissions');
+  let refreshed = 0;
+  const { handlers } = await loadAbilitiesAsTools(stub, { onStaleCatalog: () => { refreshed += 1; } });
+
+  let threw = null;
+  try {
+    await handlers.gv_views_list({});
+  } catch (error) {
+    threw = error;
+  }
+
+  TestAssert.isNotNull(threw);
+  TestAssert.equal(refreshed, 0, 'a permissions refusal says nothing about the catalog being stale');
+  TestAssert.isFalse(/refresh/i.test(threw.message), `got: ${threw.message}`);
+});
+
+suite.test('a bad argument is the agent\'s mistake, not a stale catalog', async () => {
+  // `ability_invalid_input` is what a site returns for ordinary malformed
+  // arguments, which is overwhelmingly the common case. Treating it as staleness
+  // refetches the catalog and broadcasts tools/list_changed on every agent typo,
+  // and tells the agent to re-read a schema that was never wrong.
+  const stub = buildStaleCatalogStub('ability_invalid_input');
+  let refreshed = 0;
+  const { handlers } = await loadAbilitiesAsTools(stub, { onStaleCatalog: () => { refreshed += 1; } });
+
+  let threw = null;
+  try {
+    await handlers.gv_views_list({});
+  } catch (error) {
+    threw = error;
+  }
+
+  TestAssert.isNotNull(threw, 'the call still fails');
+  TestAssert.equal(refreshed, 0, 'a bad argument must not refetch the catalog');
+  TestAssert.isFalse(/refresh/i.test(threw.message), `the error must not blame the catalog, got: ${threw.message}`);
+});
+
+/**
+ * Stub whose catalog fails with `status` for the first `failures` attempts.
+ *
+ * @param {number} failures How many attempts fail before one succeeds.
+ * @param {number} status   The HTTP status to fail with.
+ * @returns {object} Stub gvClient, carrying an `attempts` counter.
+ */
+function buildFlakyCatalogStub(failures, status) {
+  const state = { attempts: 0 };
+  return {
+    baseUrl: 'https://test.invalid',
+    state,
+    httpClient: {
+      request: async (config) => {
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          state.attempts += 1;
+          if (state.attempts <= failures) {
+            const err = new Error(`Request failed with status code ${status}`);
+            err.response = { status };
+            throw err;
+          }
+          return { data: annotatedFoundationCatalog(), headers: { 'x-wp-totalpages': '1' } };
+        }
+        return { data: { ok: true }, headers: {} };
+      },
+    },
+  };
+}
+
+suite.test('the catalog fetch retries a gateway error rather than losing every tool', async () => {
+  // A transient 502 during startup left the whole abilities surface missing until
+  // something called gk_reload_abilities. GRAVITY_FORMS_MAX_RETRIES has been
+  // documented as the control for this all along and was implemented nowhere.
+  const stub = buildFlakyCatalogStub(2, 502);
+  const { definitions, source } = await loadAbilitiesAsTools(stub, { retryDelayMs: 0 });
+
+  TestAssert.equal(source, 'foundation-catalog', 'the retry must recover the Foundation path, not fall back');
+  TestAssert.equal(stub.state.attempts, 3, 'two failures then a success');
+  TestAssert.isTrue(definitions.length > 0);
+});
+
+suite.test('the catalog fetch does not retry a refusal', async () => {
+  // 401 and 403 are answers, not weather. Retrying them delays the error and
+  // hammers a site that has already said no.
+  const stub = buildFlakyCatalogStub(1, 403);
+
+  // The whole load fails once the core fallback has nothing either; what is being
+  // asserted is how many times the Foundation catalog was asked.
+  try {
+    await loadAbilitiesAsTools(stub, { retryDelayMs: 0 });
+  } catch { /* the load failing is not what this test is about */ }
+
+  TestAssert.equal(stub.state.attempts, 1, 'a refusal must be taken at its word');
+});
+
+suite.test('the catalog fetch gives up rather than retrying forever', async () => {
+  const stub = buildFlakyCatalogStub(99, 503);
+
+  try {
+    await loadAbilitiesAsTools(stub, { retryDelayMs: 0, maxRetries: 2 });
+  } catch { /* the load failing is the point; the count is what is asserted */ }
+
+  TestAssert.equal(stub.state.attempts, 3, 'the original attempt plus two retries');
+});
+
+suite.test('the WP-core fallback is built with the same options as the Foundation path', async () => {
+  // The two call sites drifted once: the fallback ignored the destructive gate,
+  // the diagnostics and the stale-catalog refresh, and every test exercised the
+  // Foundation path so nothing noticed.
+  const core = annotatedFoundationCatalog().map((item) => ({
+    name:         item.name,
+    description:  item.description,
+    input_schema: item.input_schema,
+    meta:         {
+      gk_registered_by: 'gravitykit',
+      mcp_tool_name:    item.mcp_tool_name,
+      annotations:      item.annotations,
+    },
+  }));
+
+  const stub = buildStubGvClient(core);
+  const { definitions, skipped } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gv_view_delete'] });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isTrue(Array.isArray(skipped), 'the fallback must report diagnostics too');
+  TestAssert.isFalse(
+    /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_delete.description),
+    'the fallback must honour the destructive allow-list'
+  );
+  TestAssert.isTrue(
+    /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_trash.description),
+    'and must still gate what is not on it'
+  );
 });
 
 // Standalone runner

@@ -24,6 +24,36 @@ runner.test('stripEmpty: terminates on a circular reference', () => {
   TestAssert.equal(out.b, undefined, 'empty string still stripped');
 });
 
+
+runner.test('stripEmpty: compacts BOTH occurrences of a shared (non-cyclic) reference', () => {
+  // The cycle guard used a permanent WeakSet, so the SECOND field sharing the
+  // same choices array came back raw, nulls intact.
+  const sharedChoices = [{ text: 'A', value: null }, { text: 'B', value: '' }];
+  const form = {
+    fields: [
+      { id: 1, choices: sharedChoices },
+      { id: 2, choices: sharedChoices },
+    ],
+  };
+  const out = stripEmpty(form);
+  TestAssert.deepEqual(out.fields[0].choices, [{ text: 'A' }, { text: 'B' }], 'first occurrence compacted');
+  TestAssert.deepEqual(out.fields[1].choices, [{ text: 'A' }, { text: 'B' }], 'second occurrence must be compacted too');
+});
+
+runner.test('stripEmpty: compacts a shared plain object appearing twice', () => {
+  const shared = { keep: 1, drop: null };
+  const out = stripEmpty({ a: shared, b: shared });
+  TestAssert.deepEqual(out.a, { keep: 1 }, 'first occurrence compacted');
+  TestAssert.deepEqual(out.b, { keep: 1 }, 'second occurrence compacted');
+});
+
+runner.test('stripEmpty: still terminates on a cycle through an array', () => {
+  const arr = [{ a: 1, b: null }];
+  arr[0].self = arr;
+  const out = stripEmpty(arr); // must not throw RangeError
+  TestAssert.equal(out[0].a, 1, 'real value kept');
+});
+
 // --- stripEmpty: basic value handling ---
 
 runner.test('stripEmpty: returns primitives unchanged', () => {

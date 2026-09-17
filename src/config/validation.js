@@ -665,9 +665,18 @@ export class ValidationFactory {
         case 'gf_get_field_filters':
         case 'gf_get_results':
           BaseValidator.validateRequired(input, ['form_id']);
-          return {
+          const utilityValidated = {
             form_id: BaseValidator.validateId(input.form_id, 'form_id')
           };
+          // GF's /results endpoint accepts the same entry search criteria as
+          // /entries (parse_entry_search_params); reuse the entries validator.
+          if (toolName === 'gf_get_results' && input.search !== undefined) {
+            const search = BaseValidator.validateSearch(input.search);
+            if (search && Object.keys(search).length > 0) {
+              utilityValidated.search = search;
+            }
+          }
+          return utilityValidated;
 
         default:
           if (input.id !== undefined) {

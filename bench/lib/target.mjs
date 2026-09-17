@@ -93,11 +93,13 @@ export function makeClient(target) {
   return {
     /** Create a throwaway form (Name / Email / Last Name / Status). Returns {id, title}.
      *  Field 4 is a Drop Down so search tasks can exercise choice-based search
-     *  inputs (select/radio/link) — a text field only supports input_text. */
-    async createForm(title) {
+     *  inputs (select/radio/link) — a text field only supports input_text.
+     *  Pass `fields` to override the default set (e.g. add a number field for
+     *  chart aggregation fixtures). */
+    async createForm(title, fields) {
       const body = {
         title,
-        fields: [
+        fields: fields || [
           { id: 1, type: 'text', label: 'First Name' },
           { id: 2, type: 'email', label: 'Email' },
           { id: 3, type: 'text', label: 'Last Name' },
@@ -150,6 +152,16 @@ export function makeClient(target) {
         input: { id: viewId, ...payload },
       });
       return { status: res.status, data: res.data };
+    },
+
+    /** Seed a GravityCharts chart feed directly (fixture for patch/delete tasks). */
+    async createChart(formId, input = {}) {
+      const res = await wp.post(`/wp-abilities/v1/abilities/gk-gravitycharts/chart-create/run`, {
+        input: { form_id: formId, ...input },
+      });
+      const feedId = Number(res.data?.feed_id);
+      if (!feedId) throw new Error(`createChart failed (${res.status}): ${JSON.stringify(res.data).slice(0, 160)}`);
+      return feedId;
     },
 
     /** Seed an entry directly (fixture for read/update/delete/search tasks). */

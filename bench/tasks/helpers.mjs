@@ -92,6 +92,28 @@ export function searchFieldFor(widgets, fieldId) {
   return null;
 }
 
+/**
+ * True if a search_bar widget arranges a position's fields side by side.
+ * Horizontal layout is stored as an `area_settings` pseudo-slot with
+ * `layout: "row"` inside a `search_fields_section` position bucket — the exact
+ * key the front-end template reads to emit `gv-search-widget-area
+ * gv-search-horizontal` (which the CSS flips to `flex-direction: row`). The
+ * top-level widget `search_layout: "horizontal"` setting is NOT this: it only
+ * class-decorates the <form> and leaves the area stacked, so it must not count.
+ */
+export function searchBarIsHorizontal(widgets) {
+  for (const widget of slotsInTree(widgets)) {
+    if (widget.id !== 'search_bar') continue;
+    const section = widget.search_fields_section || {};
+    const positions = Array.isArray(section) ? section : Object.values(section);
+    for (const pos of positions) {
+      const area = pos && typeof pos === 'object' ? pos.area_settings : null;
+      if (area && String(area.layout) === 'row') return true;
+    }
+  }
+  return false;
+}
+
 /** Does any widget area hold a search_bar referencing the given field id? */
 export function searchBarHasField(widgets, fieldId) {
   for (const area of Object.values(widgets || {})) {

@@ -47,7 +47,9 @@ suite.test('Basic Auth: Should generate correct Authorization header', () => {
 
   const expectedAuth = Buffer.from('ck_test:cs_secret').toString('base64');
   TestAssert.equal(headers.Authorization, `Basic ${expectedAuth}`);
-  TestAssert.equal(headers['Content-Type'], 'application/json');
+  // Auth headers merge AFTER the axios defaults, so anything besides
+  // Authorization would override the client's versioned User-Agent on the wire.
+  TestAssert.equal(Object.keys(headers).join(','), 'Authorization');
 });
 
 suite.test('Basic Auth: Should test connection successfully', async () => {

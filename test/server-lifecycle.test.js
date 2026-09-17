@@ -47,3 +47,38 @@ test('server exits when stdin closes (no orphan on client disconnect)', async ()
   if (!exited) child.kill('SIGKILL');
   assert.ok(exited, 'server should exit within 4s of stdin closing, but it kept running (orphan)');
 });
+
+test('MCP handshake advertises the package.json version (no hardcoded drift)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+
+  const child = spawn(process.execPath, [SERVER], { stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    const response = await new Promise((resolve, reject) => {
+      let buf = '';
+      const timer = setTimeout(() => reject(new Error(`no initialize response; saw:\n${buf}`)), 8000);
+      child.stdout.on('data', (d) => {
+        buf += d.toString();
+        for (const line of buf.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.id === 1) { clearTimeout(timer); resolve(msg); return; }
+          } catch { /* partial line */ }
+        }
+      });
+      child.stdin.write(JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '0' } },
+      }) + '\n');
+    });
+
+    assert.equal(
+      response.result?.serverInfo?.version,
+      pkg.version,
+      `handshake version must match package.json (${pkg.version})`
+    );
+  } finally {
+    child.kill('SIGKILL');
+  }
+});

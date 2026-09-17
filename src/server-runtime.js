@@ -65,3 +65,42 @@ export function resolveAbilitiesListTimeoutMs(env = process.env) {
   const raw = Number(env.GRAVITYKIT_MCP_LIST_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 2000;
 }
+
+/**
+ * Remove MCP-level control params before tool input reaches WordPress.
+ *
+ * `compact` (response formatting) and `test_mode` are consumed by the server,
+ * not the site. The legacy validators spread input through wholesale, so a
+ * leaked `compact` rode the PUT body into GF — verified live: GF persists it
+ * into the saved form's display_meta on gf_update_form (entries discard it).
+ * Returns a new object; the original params keep `compact` for wrapHandler.
+ *
+ * @param {object|null|undefined} params Tool call arguments.
+ * @returns {object} The same arguments without control params.
+ */
+export function stripControlParams(params) {
+  if (!params || typeof params !== 'object') return {};
+  const { compact, test_mode, ...clientParams } = params;
+  return clientParams;
+}
+
+/**
+ * The allow-list of destructive tools, from the raw env value.
+ *
+ * Comma-separated: `all`, a product prefix (`gv`, `gmig`, `gf`), or an exact tool
+ * name. Entries are trimmed because the value is typed by a person — in a shell,
+ * a .env file, or the desktop extension's settings field — and `"gmig, gv"` is
+ * what people write. Empty entries are dropped rather than kept, so a stray comma
+ * cannot make the list non-empty and thereby look like a configuration.
+ *
+ * @param {unknown} raw The GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE value.
+ * @returns {string[]} Entries, in the order given. Empty when nothing is permitted.
+ */
+export function parseAllowDestructive(raw) {
+  if (typeof raw !== 'string') return [];
+
+  return raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}

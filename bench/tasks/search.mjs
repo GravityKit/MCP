@@ -4,7 +4,7 @@
  * keep: a small model must locate the widget and add a search field correctly.
  */
 
-import { uniqueLabel, searchBarHasField, searchFieldFor, searchFieldInput } from './helpers.mjs';
+import { uniqueLabel, searchBarHasField, searchBarIsHorizontal, searchFieldFor, searchFieldInput } from './helpers.mjs';
 
 export default [
   {
@@ -56,6 +56,40 @@ export default [
       const input = searchFieldInput(field);
       const ok = !!field && /radio/i.test(input);
       return { pass: ok, detail: ok ? '' : field ? `Status search field input="${input}" (want radio)` : 'no Status search field was added' };
+    },
+    async teardown({ client, state }) {
+      if (state.viewId) await client.deleteView(state.viewId);
+      if (state.formId) await client.deleteForm(state.formId);
+    },
+  },
+
+  {
+    id: 'search.horizontal-layout',
+    category: 'search',
+    expectedTurns: 4,
+    maxTurns: 12,
+    async setup(client) {
+      const title = uniqueLabel('BENCH SearchView');
+      const form = await client.createForm(uniqueLabel('BENCH Form'));
+      const view = await client.createView(form.id, title, 'gravityview-layout-builder');
+      return { formId: form.id, viewId: view.id, title };
+    },
+    prompt: (s) =>
+      `On the GravityView View "${s.title}" (id ${s.viewId}), add a search bar with a keyword search ` +
+      `(search everything) and the "Last Name" field (id 3), and arrange the search fields to display ` +
+      `side by side in a single horizontal row rather than stacked vertically.`,
+    async grade({ client, state }) {
+      const cfg = await client.viewConfig(state.viewId);
+      const horizontal = searchBarIsHorizontal(cfg.widgets);
+      // "side by side" is only meaningful with >=2 fields to sit beside each
+      // other, so require both fields the prompt asks for, not just one.
+      const hasKeyword = searchBarHasField(cfg.widgets, 'search_all');
+      const hasLast = searchBarHasField(cfg.widgets, 3);
+      const ok = horizontal && hasKeyword && hasLast;
+      return {
+        pass: ok,
+        detail: ok ? '' : `side-by-side layout incomplete. horizontal:${horizontal} keyword:${hasKeyword} lastName:${hasLast}`,
+      };
     },
     async teardown({ client, state }) {
       if (state.viewId) await client.deleteView(state.viewId);

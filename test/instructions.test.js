@@ -39,6 +39,16 @@ test('instructions string has no second-person "you" address', () => {
   );
 });
 
+test('instructions string documents the horizontal search-bar mechanism', () => {
+  // The one shipped behavior of this fix lives in this prose (the gv_* tool
+  // schemas are server-owned). Guard its substance so it can't silently
+  // regress: it must name the area_settings row layout AND warn off the
+  // search_layout false positive, or a small model reverts to the no-op.
+  assert.match(instructions, /area_settings/, 'instructions must document the area_settings layout mechanism');
+  assert.match(instructions, /\brow\b/, 'instructions must specify the "row" layout value');
+  assert.match(instructions, /search_layout/, 'instructions must name search_layout as the setting to avoid');
+});
+
 test('instructions string still names the discovery surface', () => {
   // A *_list discovery tool keeps the dynamic surface findable without the
   // old imperative playbook.

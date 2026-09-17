@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs } from '../src/server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive } from '../src/server-runtime.js';
 
 test('buildToolList: omits a missing gkReloadDef instead of emitting undefined', () => {
   const list = buildToolList({ gfReady: false });
@@ -98,4 +98,57 @@ test('resolveAbilitiesListTimeoutMs: ignores non-positive / non-numeric values',
   assert.equal(resolveAbilitiesListTimeoutMs({ GRAVITYKIT_MCP_LIST_TIMEOUT_MS: '0' }), 2000);
   assert.equal(resolveAbilitiesListTimeoutMs({ GRAVITYKIT_MCP_LIST_TIMEOUT_MS: '-5' }), 2000);
   assert.equal(resolveAbilitiesListTimeoutMs({ GRAVITYKIT_MCP_LIST_TIMEOUT_MS: 'abc' }), 2000);
+});
+
+// --- stripControlParams (#7: control params must not reach WordPress) ---
+
+test('stripControlParams: removes compact and test_mode, keeps everything else', () => {
+  const cleaned = stripControlParams({ id: 9, 1: 'hello', compact: false, test_mode: true, force: true });
+  assert.deepEqual(cleaned, { id: 9, 1: 'hello', force: true });
+});
+
+test('stripControlParams: tolerates null/undefined params', () => {
+  assert.deepEqual(stripControlParams(undefined), {});
+  assert.deepEqual(stripControlParams(null), {});
+});
+
+test('stripControlParams: does not mutate the input (wrapHandler still reads compact)', () => {
+  const params = { id: 1, compact: false };
+  stripControlParams(params);
+  assert.equal(params.compact, false);
+});
+
+// --- parseAllowDestructive: env string -> allow-list ---
+// This is the seam between GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE and the gate. It was
+// written inline in src/index.js, which no test imports, so none of it was covered.
+
+test('parseAllowDestructive: unset or empty permits nothing', () => {
+  assert.deepEqual(parseAllowDestructive(undefined), []);
+  assert.deepEqual(parseAllowDestructive(''), []);
+  assert.deepEqual(parseAllowDestructive('   '), []);
+});
+
+test('parseAllowDestructive: a single value', () => {
+  assert.deepEqual(parseAllowDestructive('all'), ['all']);
+  assert.deepEqual(parseAllowDestructive('gmig'), ['gmig']);
+});
+
+test('parseAllowDestructive: several values, with the spaces people actually type', () => {
+  assert.deepEqual(parseAllowDestructive('gmig,gv'), ['gmig', 'gv']);
+  assert.deepEqual(parseAllowDestructive('gmig, gv'), ['gmig', 'gv']);
+  assert.deepEqual(parseAllowDestructive('  gmig ,  gv_view_delete  '), ['gmig', 'gv_view_delete']);
+});
+
+test('parseAllowDestructive: stray and trailing commas do not become empty entries', () => {
+  // An empty entry would be harmless in includes() but would make "is anything
+  // permitted?" true for a value that permits nothing.
+  assert.deepEqual(parseAllowDestructive('gmig,'), ['gmig']);
+  assert.deepEqual(parseAllowDestructive(',gmig'), ['gmig']);
+  assert.deepEqual(parseAllowDestructive('gmig,,gv'), ['gmig', 'gv']);
+  assert.deepEqual(parseAllowDestructive(','), []);
+});
+
+test('parseAllowDestructive: a non-string is not a configuration', () => {
+  assert.deepEqual(parseAllowDestructive(null), []);
+  assert.deepEqual(parseAllowDestructive(42), []);
 });

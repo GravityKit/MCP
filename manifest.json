@@ -1,0 +1,202 @@
+{
+  "manifest_version": "0.3",
+  "name": "gravitykit-mcp",
+  "display_name": "GravityKit for Gravity Forms",
+  "version": "2.5.0",
+  "description": "Build, edit, and query your Gravity Forms with Claude.",
+  "long_description": "Connects Claude to the Gravity Forms on your WordPress site: create and edit forms, add and rearrange fields, read and update entries, manage add-on feeds, and answer questions about your submissions in plain language. When GravityKit Foundation is active on the site, tools for GravityKit products such as GravityView are added automatically.\n\nSetup asks for three things: your site address, your WordPress username, and a WordPress application password (in WordPress, go to Users > Profile > Application Passwords, add one named \"Claude\", and copy it including the spaces). Deleting forms and entries stays off unless you turn it on during setup.",
+  "author": {
+    "name": "GravityKit",
+    "url": "https://www.gravitykit.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GravityKit/MCP.git"
+  },
+  "homepage": "https://www.gravitykit.com/meet-gravitymcp/",
+  "documentation": "https://github.com/GravityKit/MCP#readme",
+  "support": "https://github.com/GravityKit/MCP/issues",
+  "license": "GPL-2.0",
+  "keywords": [
+    "gravity forms",
+    "wordpress",
+    "gravitykit",
+    "gravityview",
+    "forms"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "src/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/src/index.js"
+      ],
+      "env": {
+        "GRAVITY_FORMS_BASE_URL": "${user_config.site_url}",
+        "GRAVITY_FORMS_CONSUMER_KEY": "${user_config.username}",
+        "GRAVITY_FORMS_CONSUMER_SECRET": "${user_config.app_password}",
+        "GRAVITYKIT_WP_URL": "${user_config.site_url}",
+        "GRAVITYKIT_WP_USERNAME": "${user_config.username}",
+        "GRAVITYKIT_WP_APP_PASSWORD": "${user_config.app_password}",
+        "GRAVITY_FORMS_ALLOW_DELETE": "${user_config.allow_delete}",
+        "GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE": "${user_config.allow_destructive}"
+      }
+    }
+  },
+  "user_config": {
+    "site_url": {
+      "type": "string",
+      "title": "Your website address",
+      "description": "https://yoursite.com",
+      "required": true
+    },
+    "username": {
+      "type": "string",
+      "title": "Your WordPress username",
+      "description": "Not your email address",
+      "required": true
+    },
+    "app_password": {
+      "type": "string",
+      "title": "Application password",
+      "description": "Users > Profile > Application Passwords, spaces and all",
+      "sensitive": true,
+      "required": true
+    },
+    "allow_delete": {
+      "type": "boolean",
+      "title": "Allow Claude to delete and overwrite your data",
+      "description": "Covers deleting forms, entries and feeds, deleting Views, and importing a migration bundle over this site's data. Deletions move items to the Trash, where you can restore them; a bundle import does not.",
+      "default": false,
+      "required": false
+    },
+    "allow_destructive": {
+      "type": "string",
+      "title": "Allow only some destructive tools (optional)",
+      "description": "Comma-separated. Use a product prefix (gmig for migrations, gv for Views), an exact tool name, or \"all\". This covers GravityKit product tools only \u2014 deleting forms, entries, feeds and fields is governed by the checkbox above, not by this field. Leave empty to use the checkbox alone.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "tools_generated": true,
+  "tools": [
+    {
+      "name": "gf_list_forms",
+      "description": "List forms on the site"
+    },
+    {
+      "name": "gf_get_form",
+      "description": "Get a form and its fields"
+    },
+    {
+      "name": "gf_create_form",
+      "description": "Create a form"
+    },
+    {
+      "name": "gf_update_form",
+      "description": "Update a form"
+    },
+    {
+      "name": "gf_delete_form",
+      "description": "Delete a form (requires deletion to be enabled)"
+    },
+    {
+      "name": "gf_validate_form",
+      "description": "Validate a form definition"
+    },
+    {
+      "name": "gf_add_field",
+      "description": "Add a field to a form"
+    },
+    {
+      "name": "gf_update_field",
+      "description": "Update a field on a form"
+    },
+    {
+      "name": "gf_delete_field",
+      "description": "Remove a field from a form (requires the delete permission to be enabled)"
+    },
+    {
+      "name": "gf_list_field_types",
+      "description": "List the available field types"
+    },
+    {
+      "name": "gf_list_entries",
+      "description": "List form entries"
+    },
+    {
+      "name": "gf_get_entry",
+      "description": "Get a single entry"
+    },
+    {
+      "name": "gf_create_entry",
+      "description": "Create an entry"
+    },
+    {
+      "name": "gf_update_entry",
+      "description": "Update an entry"
+    },
+    {
+      "name": "gf_delete_entry",
+      "description": "Delete an entry (requires deletion to be enabled)"
+    },
+    {
+      "name": "gf_submit_form_data",
+      "description": "Submit data to a form as a real submission"
+    },
+    {
+      "name": "gf_validate_submission",
+      "description": "Validate a submission without saving it"
+    },
+    {
+      "name": "gf_send_notifications",
+      "description": "Send an entry's notifications"
+    },
+    {
+      "name": "gf_list_feeds",
+      "description": "List add-on feeds"
+    },
+    {
+      "name": "gf_get_feed",
+      "description": "Get an add-on feed"
+    },
+    {
+      "name": "gf_create_feed",
+      "description": "Create an add-on feed"
+    },
+    {
+      "name": "gf_update_feed",
+      "description": "Update an add-on feed"
+    },
+    {
+      "name": "gf_patch_feed",
+      "description": "Partially update an add-on feed"
+    },
+    {
+      "name": "gf_delete_feed",
+      "description": "Delete an add-on feed (requires deletion to be enabled)"
+    },
+    {
+      "name": "gf_get_field_filters",
+      "description": "Get the filters available for a form's fields"
+    },
+    {
+      "name": "gf_get_results",
+      "description": "Get aggregate results for a form"
+    },
+    {
+      "name": "gk_reload_abilities",
+      "description": "Reload GravityKit product tools from the site"
+    }
+  ]
+}

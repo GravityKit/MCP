@@ -8,6 +8,7 @@ import assert from 'node:assert';
 import { FieldManager } from '../src/field-operations/field-manager.js';
 import { PositionEngine } from '../src/field-operations/field-positioner.js';
 import FieldAwareValidator from '../src/config/field-validation.js';
+import { DependencyTracker } from '../src/field-operations/field-dependencies.js';
 
 // Mock dependencies. Mirrors the GravityFormsClient contract FieldManager
 // actually consumes: getForm() resolves { form } and replaceForm() does a
@@ -24,7 +25,9 @@ const createMockApiClient = () => ({
       ]
     }
   }),
-  replaceForm: async (formId, form) => ({ form })
+  replaceForm: async (formId, form) => ({ form }),
+  // The real client sets this from GRAVITY_FORMS_ALLOW_DELETE; deletes read it.
+  allowDelete: true
 });
 
 const createMockRegistry = () => ({
@@ -322,35 +325,110 @@ test('FieldManager - updateField', async (t) => {
     assert.strictEqual(result.field.id, 2); // ID preserved
   });
 
-  // A blocking dependency must be detected BEFORE the form is written. The old
-  // code saved the change, then the handler returned success:false — so a
-  // "blocked" update was already persisted and the response lied.
-  await t.test('does not persist and reports failure when a dependency would break and force is false', async () => {
-    const apiClient = createMockApiClient();
-    let saved = false;
-    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
-    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
-    manager.dependencyTracker = {
-      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
-    };
+  // Update gating contract: an update needs force only when it changes
+  // properties dependents consume (type/choices/inputs) AND the field has
+  // breaking dependents per the same hasBreakingDependencies set delete uses
+  // (conditional logic + calculations + merge tags). Cosmetic changes always
+  // proceed, with the dependency info still reported in warnings.
 
-    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: false });
+  const formWithDependents = () => ({
+    id: 1,
+    title: 'Deps Form',
+    fields: [
+      { id: 1, type: 'select', label: 'Color', choices: [{ text: 'Red', value: 'red' }] },
+      {
+        id: 2, type: 'text', label: 'Details',
+        conditionalLogic: { enabled: true, rules: [{ fieldId: 1, operator: 'is', value: 'red' }] }
+      },
+      { id: 3, type: 'number', label: 'Total', enableCalculation: true, calculationFormula: '{Qty:4} * 2' },
+      { id: 4, type: 'number', label: 'Qty' }
+    ]
+  });
+
+  const managerWithDeps = (apiClient) => {
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = new DependencyTracker();
+    return manager;
+  };
+
+  await t.test('cosmetic update (label) proceeds without force despite dependents', async () => {
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(1, 1, { label: 'Colour' }, { force: false });
+
+    assert.strictEqual(result.success, true, 'a label change cannot break a {fieldId,operator,value} rule');
+    assert.strictEqual(saved, true);
+    assert.ok(result.warnings.dependencies.length > 0, 'dependency info still surfaces as a warning');
+  });
+
+  await t.test('does not persist a choices change without force when conditional logic depends on the field', async () => {
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(
+      1, 1, { choices: [{ text: 'Green', value: 'green' }] }, { force: false }
+    );
 
     assert.strictEqual(result.success, false);
     assert.strictEqual(saved, false, 'must NOT persist the change when blocked');
     assert.match(result.suggestion || '', /force/);
   });
 
-  await t.test('persists when force is true despite dependencies', async () => {
-    const apiClient = createMockApiClient();
+  await t.test('gates a type change on a field referenced in a CALCULATION (delete parity)', async () => {
+    // The old gate checked only conditionalLogic, so rewriting a field a
+    // calculation formula consumes sailed through un-warned while a label
+    // tweak was blocked.
     let saved = false;
-    apiClient.replaceForm = async (id, form) => { saved = true; return { form }; };
-    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
-    manager.dependencyTracker = {
-      scanFormDependencies: () => ({ conditionalLogic: [{ field_id: 1, field_label: 'Name' }] })
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
     };
+    const result = await managerWithDeps(apiClient).updateField(1, 4, { type: 'text' }, { force: false });
 
-    const result = await manager.updateField(1, 2, { label: 'Updated' }, { force: true });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved, false);
+  });
+
+  await t.test('gates an inputType change, which moves the value without touching type', async () => {
+    // survey/product/post_category keep `type` fixed and pick their storage shape with
+    // `inputType`: radio -> checkbox turns one stored value into dot-notation
+    // sub-inputs, so a dependent rule reads an address that no longer holds it.
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(1, 1, { inputType: 'checkbox' }, { force: false });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved, false, 'must NOT persist the change when blocked');
+    assert.match(result.suggestion || '', /force/);
+  });
+
+  await t.test('breaking-prop change on a field nobody depends on proceeds without force', async () => {
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => ({ form })
+    };
+    const result = await managerWithDeps(apiClient).updateField(1, 2, { type: 'textarea' }, { force: false });
+
+    assert.strictEqual(result.success, true);
+  });
+
+  await t.test('persists a gated change when force is true', async () => {
+    let saved = false;
+    const apiClient = {
+      getForm: async () => ({ form: formWithDependents() }),
+      replaceForm: async (id, form) => { saved = true; return { form }; }
+    };
+    const result = await managerWithDeps(apiClient).updateField(
+      1, 1, { choices: [{ text: 'Green', value: 'green' }] }, { force: true }
+    );
 
     assert.strictEqual(result.success, true);
     assert.strictEqual(saved, true);
@@ -571,4 +649,177 @@ test('FieldManager - addField hardening (adversarial input)', async (t) => {
   await t.test('rejects a non-string field_type', async () => {
     await assert.rejects(() => mk().addField(1, 123, { label: 'X' }), /field_type/);
   });
+});
+
+// Positioning must honor index 0. calculatePosition() legitimately returns 0
+// for prepend / index:0 / before-the-first-field, and a `|| fields.length`
+// fallback silently turned every one of those into an append while the
+// response reported the fallback index as if the placement succeeded.
+test('FieldManager - addField honors position index 0 (falsy-zero regression)', async (t) => {
+  const mk = () => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({
+        form: {
+          id: 1,
+          title: 'Test Form',
+          fields: [
+            { id: 1, type: 'text', label: 'A' },
+            { id: 2, type: 'text', label: 'B' },
+            { id: 3, type: 'text', label: 'C' }
+          ]
+        }
+      }),
+      replaceForm: async (formId, form) => {
+        puts.push(form);
+        return { form };
+      }
+    };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.positionEngine = new PositionEngine();
+    return { manager, puts };
+  };
+
+  await t.test('prepend inserts at the top and reports index 0', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'prepend' });
+    assert.strictEqual(result.position.index, 0);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['NEW', 'A', 'B', 'C']);
+  });
+
+  await t.test('index: 0 inserts at the top and reports index 0', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'index', reference: 0 });
+    assert.strictEqual(result.position.index, 0);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['NEW', 'A', 'B', 'C']);
+  });
+
+  await t.test('before the first field inserts at the top and reports index 0', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'before', reference: 1 });
+    assert.strictEqual(result.position.index, 0);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['NEW', 'A', 'B', 'C']);
+  });
+
+  await t.test('append still lands at the end', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'append' });
+    assert.strictEqual(result.position.index, 3);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['A', 'B', 'C', 'NEW']);
+  });
+
+  await t.test('without a position engine, falls back to append', async () => {
+    const { manager, puts } = mk();
+    manager.positionEngine = null;
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'prepend' });
+    assert.strictEqual(result.position.index, 3);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['A', 'B', 'C', 'NEW']);
+  });
+});
+
+// A caller-supplied properties.id must never corrupt the form: entries key on
+// field id, so a duplicate id breaks entry values, conditional logic, and merge
+// tags. Explicit ids follow the same contract gf_create_form applies via
+// assignFieldIds: fresh safe positive integers are preserved; duplicate,
+// non-numeric, and out-of-range ids are replaced with a generated id.
+test('FieldManager - addField properties.id cannot create duplicate field ids', async (t) => {
+  const mk = () => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({
+        form: {
+          id: 1,
+          title: 'Test Form',
+          fields: [
+            { id: 1, type: 'text', label: 'A' },
+            { id: 2, type: 'text', label: 'B' },
+            { id: 3, type: 'text', label: 'C' }
+          ]
+        }
+      }),
+      replaceForm: async (formId, form) => {
+        puts.push(form);
+        return { form };
+      }
+    };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.positionEngine = new PositionEngine();
+    return { manager, puts };
+  };
+
+  await t.test('duplicate explicit id is replaced and the form has no colliding ids', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'DUP', id: 2 });
+    const ids = puts[0].fields.map((f) => f.id);
+    assert.strictEqual(new Set(ids).size, ids.length, `field ids must be unique, got ${ids}`);
+    assert.strictEqual(result.field.id, 4);
+    assert.ok(
+      result.warnings.some((m) => /id/.test(m) && /2/.test(m)),
+      'expected a warning that the requested id was not used'
+    );
+  });
+
+  await t.test('a fresh explicit id is preserved', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'X', id: 100 });
+    assert.strictEqual(result.field.id, 100);
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.id), [1, 2, 3, 100]);
+  });
+
+  await t.test('non-numeric explicit id falls back to a generated id', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'X', id: 'abc' });
+    assert.strictEqual(result.field.id, 4);
+  });
+
+  await t.test('out-of-range explicit ids (0, negative, unsafe) fall back to a generated id', async () => {
+    for (const bad of [0, -5, 1e308]) {
+      const { manager } = mk();
+      const result = await manager.addField(1, 'text', { label: 'X', id: bad });
+      assert.strictEqual(result.field.id, 4, `id ${bad} must not be used verbatim`);
+    }
+  });
+
+  await t.test('properties.type cannot override the declared field type', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'X', type: 'html' });
+    assert.strictEqual(result.field.type, 'text');
+  });
+
+  await t.test('compound sub-inputs are keyed to the FINAL id when a duplicate id was replaced', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'address', { label: 'Addr', id: 2 });
+    assert.strictEqual(result.field.id, 4);
+    assert.ok(result.field.inputs.length > 0, 'compound field must have sub-inputs');
+    for (const input of result.field.inputs) {
+      assert.match(String(input.id), /^4\./, `sub-input ${input.id} must be based on the final id`);
+    }
+  });
+});
+
+// --- delete gate (contributed by @mechkw, PR #13) ---
+
+test('deleteField refuses when deletes are disabled', async () => {
+  // deleteForm, deleteEntry and deleteFeed all gate on this; deleteField did not,
+  // so a server set to refuse deletions still let a field go — and a deleted field
+  // does not land in the Trash the way a form or entry does.
+  const api = createMockApiClient();
+  api.allowDelete = false;
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  await assert.rejects(
+    () => manager.deleteField(1, 2),
+    /GRAVITY_FORMS_ALLOW_DELETE/,
+    'the refusal must name the switch that enables it'
+  );
+});
+
+test('deleteField still works when deletes are permitted', async () => {
+  // The control: refusing unconditionally would pass the test above.
+  const api = createMockApiClient();
+  api.allowDelete = true;
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.deleteField(1, 2);
+  assert.ok(result, 'a permitted delete still returns a result');
 });

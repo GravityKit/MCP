@@ -10,7 +10,7 @@
  *   views          View settings / status / duplicate / delete
  *   view-fields    field add / settings / reorder / remove
  *   view-widgets   widget add / remove
- *   search         search-bar field add / configure
+ *   search         search-bar field add / configure / horizontal (side-by-side) layout
  *   grid           Layout Builder grid-row add / populate
  */
 
@@ -24,6 +24,7 @@ import viewFields from './view-fields.mjs';
 import viewWidgets from './view-widgets.mjs';
 import search from './search.mjs';
 import grid from './grid.mjs';
+import charts from './charts.mjs';
 
 export const TASKS = [
   ...discovery,
@@ -36,4 +37,5 @@ export const TASKS = [
   ...viewWidgets,
   ...search,
   ...grid,
+  ...charts,
 ];

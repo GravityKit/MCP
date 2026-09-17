@@ -6,7 +6,7 @@ This is the single canonical doc for the project (agents and humans). `CLAUDE.md
 
 ## Project Identity
 
-- **Package:** `@gravitykit/mcp` v2.4.1
+- **Package:** `@gravitykit/mcp` v2.5.0
 - **Type:** Node.js MCP server (ESM)
 - **Purpose:** Full Gravity Forms REST API v2 coverage (26 Gravity Forms tools), plus dynamic GravityKit product tools (GravityView so far) via the WordPress Abilities API
 - **Repo:** https://github.com/GravityKit/MCP
@@ -229,7 +229,7 @@ await this.httpClient.put(`/resource/${id}`, merged);
 
 ### Delete Safety
 
-All GF delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.allowDelete` first, controlled by `GRAVITY_FORMS_ALLOW_DELETE=true`. Without it, deletes throw immediately.
+All GF delete operations (`deleteForm`, `deleteEntry`, `deleteFeed`) check `this.allowDelete` first, controlled by `GRAVITY_FORMS_ALLOW_DELETE=true`. Without it, deletes throw immediately. The same gate applies to ability-derived tools whose catalog annotations mark them `destructive` (e.g. `gv_view_delete`): the abilities loader refuses to execute them unless `GRAVITY_FORMS_ALLOW_DELETE=true`, and their MCP tool definitions carry `destructiveHint` so clients can confirm before running.
 
 ### Logging
 
@@ -327,7 +327,9 @@ GRAVITYKIT_WP_USERNAME=wp_username
 GRAVITYKIT_WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
 ```
 
-`WordPressClient` resolves the base URL from `GRAVITYKIT_WP_URL` or `GRAVITY_FORMS_BASE_URL`, and credentials from `GRAVITYKIT_WP_*` or the `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` fallback. On most single-site setups the GF credentials already double as the WP app password, so no extra config is needed.
+`WordPressClient` resolves the base URL from `GRAVITYKIT_WP_URL` → `WORDPRESS_LOCAL_DEV_TEST_URL` → `GRAVITY_FORMS_BASE_URL`, and credentials from `GRAVITYKIT_WP_*` → `WORDPRESS_LOCAL_DEV_TEST_ADMIN_*` → `WP_USERNAME`/`WP_APP_PASSWORD` → the `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` fallback (`src/wp-client.js` `resolveBaseUrl()` + constructor). On most single-site setups the GF credentials already double as the WP app password, so no extra config is needed.
+
+- **Gotcha — pointing the abilities plane at a LOCAL site: pin `GRAVITYKIT_WP_URL`/`_USERNAME`/`_APP_PASSWORD`, not just `GRAVITY_FORMS_*`.** The middle of each resolution chain is `WORDPRESS_LOCAL_DEV_TEST_*`, which `~/.monokit/.env` sets to `https://dev.test` (dotenv-loaded and inherited by the MCP process). It **outranks** `GRAVITY_FORMS_BASE_URL`, so a config that pins only the GF vars silently sends the abilities plane to `dev.test` (→ 502 → **0 `gv_*` tools**) while `gf_*` still works against the intended site — a plane-specific misroute that looks like "abilities just won't load." Verified 2026-07-12 wiring to a Siteminter site. [gotcha]
 
 ### Optional Environment
 
@@ -336,7 +338,7 @@ GRAVITYKIT_WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
 # GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false  # Basic to a REMOTE plain-HTTP host
 GRAVITY_FORMS_ALLOW_DELETE=false      # Must be 'true' to enable delete operations
 GRAVITY_FORMS_TIMEOUT=30000           # Request timeout in ms
-GRAVITY_FORMS_MAX_RETRIES=3           # Max retry attempts
+GRAVITY_FORMS_MAX_RETRIES=3           # Catalog fetch retries on 429/502/503/504 and network errors
 GRAVITY_FORMS_DEBUG=false             # Enable debug logging (stderr)
 GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false     # Allow self-signed certs (local dev only)
 ```
@@ -405,6 +407,13 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 13. **`gv_*` tools load asynchronously and self-heal.** The abilities catalog is fetched in the background after startup, so `gv_*` tools may be absent for a moment (the server emits a `tools/listChanged` once they arrive). If a catalog fetch fails, it retries after a cooldown or immediately on `gk_reload_abilities`. The `src/gravityview/` Inspector client is a test/demo harness only — runtime `gv_*` come from the abilities loader.
 
+## Bench (`bench/`) — target + running gotchas
+
+- **Don't let the bench hit a REMOTE site.** `config.mjs` `resolveTarget()` reads `GRAVITY_FORMS_TEST_BASE_URL` BEFORE `GRAVITY_FORMS_BASE_URL`, and the machine's shell env (`~/.monokit/.env`) sets `GRAVITY_FORMS_TEST_*` to a remote `*.try.gravitykit.com` site. So setting only `GRAVITY_FORMS_BASE_URL` silently runs the bench against that REMOTE site — and write tasks (create/patch) would create data there. Either use `--mint` (self-contained siteminter target; ignores the env) or pin ALL of `GRAVITY_FORMS_TEST_BASE_URL`/`_CONSUMER_KEY`/`_CONSUMER_SECRET` + `GRAVITYKIT_WP_URL`/`_USERNAME`/`_APP_PASSWORD` to your local site. [2026-07]
+- **A minted site needs GF REST v2 enabled for `gf_*` + the grader's GF calls** (`gravityformsaddon_gravityformswebapi_settings.enabled=1`). `--mint`'s `provisionSite` sets it; a hand-minted siteminter site does NOT (forms endpoint 404s until you flip it). [2026-07]
+- **Bench any product, not just GravityView:** `BENCH_PLUGINS=<GF>,<Foundation>,<product>` (absolute paths) overrides the minted plugin list. GravityCharts abilities: `BENCH_PLUGINS=…/gravityforms,…/Foundation,…/gravitycharts BENCH_SITE=gcbench node bench/run.mjs --mint --keep --task charts`. PHP is symlinked, so ability refinements go live on the kept site with no re-mint. [2026-07]
+- **The grader's `client.ability(name,input)` returns `{status, data}`** — read the ability payload at `.data` (e.g. `res.data.charts`), and its data-point objects can be `{value,label,x}`, not bare numbers. [2026-07]
+
 ## Packaging
 
 What ships to npm is governed solely by the **`files` allowlist** in `package.json` — there is intentionally **no `.npmignore`** (with a `files` field present npm ignores it, so keeping one is misleading). Allowlist, not denylist: a new file ships only if it matches `files`.
@@ -419,7 +428,10 @@ What ships to npm is governed solely by the **`files` allowlist** in `package.js
 **Every version tag MUST include a CHANGELOG.md update.** Follow this checklist:
 
 1. **Update `CHANGELOG.md`** — add a new `## [X.Y.Z] - YYYY-MM-DD` section with all changes since the last release. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Fixed, Removed).
-2. **Bump `version` in `package.json`**
+2. **Bump `version` in `package.json`, `manifest.json` AND `mcp.json`** — all three are
+   enforced, in three different places: a unit test compares `mcp.json` to `package.json`
+   (Bug #23), `scripts/build-mcpb.mjs` throws when `manifest.json` disagrees, and npm
+   publishes whatever `package.json` says. Missing one fails at a different stage each time.
 3. **Update version in `AGENTS.md`** (Project Identity → Package line)
 4. **Add link** at bottom of `CHANGELOG.md`: `[X.Y.Z]: https://github.com/GravityKit/MCP/releases/tag/vX.Y.Z`
 5. **Commit**: `git commit -m "chore(release): bump version to X.Y.Z"`

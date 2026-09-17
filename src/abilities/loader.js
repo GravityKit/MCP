@@ -44,6 +44,75 @@ export const FOUNDATION_CATALOG_ROUTE = '/wp-json/gravitykit/v1/abilities';
 /** WP core's all-plugins abilities route (WP 6.9+ / abilities-api). */
 export const CORE_ABILITIES_ROUTE = '/wp-json/wp-abilities/v1/abilities';
 
+/**
+ * WP error codes that mean the catalog this agent holds no longer matches the
+ * site — a product upgraded, or an ability was renamed or removed mid-session.
+ * A permissions refusal or a bad argument is NOT in here: `ability_invalid_input`
+ * is what a site returns for ordinary malformed arguments, so refetching on it
+ * refetches the catalog and re-lists every tool on the agent's own typos.
+ */
+const STALE_CATALOG_CODES = new Set(['rest_ability_not_found']);
+
+/**
+ * HTTP statuses worth trying again: the server is busy or a gateway is unhappy,
+ * not an answer about this request. 401 and 403 are answers; retrying them
+ * delays the error and hammers a site that has already said no.
+ */
+/**
+ * Parameter names this server consumes itself and never forwards to WordPress
+ * ({@see stripControlParams}). An ability declaring one would advertise input a
+ * caller can never send, so they are dropped from every published schema.
+ */
+const SERVER_OWNED_PARAMS = new Set(['compact', 'test_mode']);
+
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+
+/**
+ * Whether a failed request is worth repeating.
+ *
+ * A request that never reached a server — DNS, a refused connection, a timeout —
+ * carries no response at all, and is the other retryable case.
+ *
+ * @param {Error} error The axios error.
+ * @returns {boolean}
+ */
+function isRetryable(error) {
+  const status = error?.response?.status;
+
+  return status === undefined || RETRYABLE_STATUSES.has(status);
+}
+
+/**
+ * Run a GET that is safe to repeat, retrying a transient failure.
+ *
+ * Applied to catalog fetches only. An ability call is never retried here: a POST
+ * or DELETE is not idempotent by contract, and a readonly GET that fails has
+ * already told the agent something it can act on.
+ *
+ * @param {Function} attempt      Returns the promise to retry.
+ * @param {number}   maxRetries   Extra attempts after the first.
+ * @param {number}   retryDelayMs Delay between attempts.
+ * @returns {Promise<*>}
+ */
+async function withRetry(attempt, maxRetries, retryDelayMs) {
+  let lastError;
+
+  for (let tries = 0; tries <= maxRetries; tries += 1) {
+    try {
+      return await attempt();
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryable(error) || tries === maxRetries) break;
+
+      logger.warn(`Catalog fetch failed (${error.message}) — retrying (${tries + 1}/${maxRetries})`);
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
+  throw lastError;
+}
+
 /** Foundation's ability-name contract: gk-{product}/{action}. */
 const GK_NAME_PATTERN = /^gk-[a-z0-9-]+\//;
 
@@ -130,6 +199,32 @@ export function normalizeInputSchema(raw) {
     out.properties = {};
   }
 
+  return dropServerOwnedParams(out);
+}
+
+/**
+ * Remove server-owned parameter names from a normalised schema, and from its
+ * `required` list — a required param that is always stripped could never be
+ * satisfied, so leaving it there makes every call fail validation.
+ *
+ * @param {object} schema A normalised input schema.
+ * @returns {object} The same schema without server-owned names.
+ */
+function dropServerOwnedParams(schema) {
+  const declared = Object.keys(schema.properties || {}).filter((name) => SERVER_OWNED_PARAMS.has(name));
+
+  if (!declared.length) return schema;
+
+  logger.warn(`⚠️  Ability schema declares reserved parameter(s) ${declared.join(', ')} — dropped, as this server consumes them and never forwards them to the site`);
+
+  const properties = { ...schema.properties };
+  for (const name of declared) delete properties[name];
+
+  const out = { ...schema, properties };
+  if (Array.isArray(out.required)) {
+    out.required = out.required.filter((name) => !SERVER_OWNED_PARAMS.has(name));
+  }
+
   return out;
 }
 
@@ -175,15 +270,30 @@ function arrayToProperties(arr) {
  *   built-in (static) tool set — e.g. the released gf_* contract.
  *   Catalog abilities resolving to a reserved name are skipped with a
  *   warning so the dynamic pipeline can never shadow a shipped tool.
+ * @param {boolean} [options.allowDelete]  Mirrors the static gf_delete_*
+ *   gate (GRAVITY_FORMS_ALLOW_DELETE): when false, handlers for abilities
+ *   annotated `destructive` throw instead of executing.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
+export async function loadAbilitiesAsTools(wpClient, {
+  reservedNames,
+  allowDelete = false,
+  allowDestructive,
+  onStaleCatalog,
+  maxRetries = 2,
+  retryDelayMs = 500,
+} = {}) {
+  const retry = { maxRetries, retryDelayMs };
+  // Why an ability did not become a tool is the question a product author asks,
+  // and it was answerable only by reading the server's stderr.
+  const skipped = [];
+
   try {
-    const items = await fetchFoundationCatalogItems(wpClient);
-    const entries = catalogItemsToEntries(items);
+    const items = await fetchFoundationCatalogItems(wpClient, retry);
+    const entries = catalogItemsToEntries(items, skipped);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog', reservedNames);
+      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete, allowDestructive, skipped, onStaleCatalog });
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -191,8 +301,12 @@ export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
     logger.warn(`Foundation catalog unavailable (${err.message}) — falling back to WP core catalog at ${CORE_ABILITIES_ROUTE}`);
   }
 
-  const entries = await fetchCoreEntries(wpClient);
-  return buildTools(wpClient, entries, 'wp-core', reservedNames);
+  const entries = await fetchCoreEntries(wpClient, skipped, retry);
+
+  // Every option the Foundation path is built with. This call site drifted from
+  // that one once already, which made the fallback quietly ignore the destructive
+  // gate, the diagnostics and the stale-catalog refresh.
+  return buildTools(wpClient, entries, 'wp-core', { reservedNames, allowDelete, allowDestructive, skipped, onStaleCatalog });
 }
 
 /**
@@ -205,7 +319,7 @@ export async function loadAbilitiesAsTools(wpClient, { reservedNames } = {}) {
  * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<object[]>} Catalog items (Manager::to_rest_item() shape).
  */
-async function fetchFoundationCatalogItems(wpClient) {
+async function fetchFoundationCatalogItems(wpClient, retry = {}) {
   const PER_PAGE = 100;
   const MAX_PAGES = 20;
   const items = [];
@@ -216,12 +330,16 @@ async function fetchFoundationCatalogItems(wpClient) {
   do {
     // Explicit baseURL per request keeps this correct even when a
     // subclass mounts a namespaced httpClient (same auth + TLS).
-    const response = await wpClient.httpClient.request({
-      method:  'GET',
-      baseURL: wpClient.baseUrl,
-      url:     FOUNDATION_CATALOG_ROUTE,
-      params:  { per_page: PER_PAGE, page },
-    });
+    const response = await withRetry(
+      () => wpClient.httpClient.request({
+        method:  'GET',
+        baseURL: wpClient.baseUrl,
+        url:     FOUNDATION_CATALOG_ROUTE,
+        params:  { per_page: PER_PAGE, page },
+      }),
+      retry.maxRetries ?? 0,
+      retry.retryDelayMs ?? 0
+    );
 
     if (!Array.isArray(response.data)) {
       throw new Error('Unexpected Foundation catalog shape — expected array.');
@@ -247,14 +365,19 @@ async function fetchFoundationCatalogItems(wpClient) {
  * @param {object[]} items Foundation catalog items.
  * @returns {Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>}
  */
-function catalogItemsToEntries(items) {
+function catalogItemsToEntries(items, skipped = []) {
   const entries = [];
 
   for (const item of items) {
     if (typeof item?.name !== 'string' || !GK_NAME_PATTERN.test(item.name)) continue;
-    if (item.enabled === false) continue;
+    if (item.enabled === false) {
+      skipped.push({ ability: item.name, reason: 'Disabled in the GravityKit settings for this site.' });
+      continue;
+    }
     if (typeof item.mcp_tool_name !== 'string' || item.mcp_tool_name === '') {
+      const reason = 'No mcp_tool_name in the catalog — the product declares no MCP prefix, so the server cannot name a tool for it.';
       logger.warn(`Ability ${item.name} has no mcp_tool_name — skipped (the server owns tool naming)`);
+      skipped.push({ ability: item.name, reason });
       continue;
     }
 
@@ -262,8 +385,10 @@ function catalogItemsToEntries(items) {
       abilityName:    item.name,
       toolName:       item.mcp_tool_name,
       description:    item.description || item.label || item.name,
-      rawInputSchema: item.input_schema,
-      annotations:    item.annotations && typeof item.annotations === 'object' ? item.annotations : {},
+      rawInputSchema:  item.input_schema,
+      rawOutputSchema: item.output_schema,
+      label:           typeof item.label === 'string' ? item.label : undefined,
+      annotations:     item.annotations && typeof item.annotations === 'object' ? item.annotations : {},
     });
   }
 
@@ -285,27 +410,54 @@ function catalogItemsToEntries(items) {
  * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>>}
  */
-async function fetchCoreEntries(wpClient) {
-  const { data } = await wpClient.httpClient.request({
-    method:  'GET',
-    baseURL: wpClient.baseUrl,
-    url:     CORE_ABILITIES_ROUTE,
-  });
+async function fetchCoreEntries(wpClient, skipped = [], retry = {}) {
+  // Core's list endpoint defaults to 50 items per page and caps per_page at
+  // 100, and it paginates across EVERY plugin's abilities rather than ours —
+  // so a single unpaginated request returns the first 50 of the whole site and
+  // silently drops the rest. Same loop and same runaway guard as the Foundation
+  // path above.
+  const PER_PAGE = 100;
+  const MAX_PAGES = 20;
+  const abilities = [];
 
-  if (!Array.isArray(data)) {
-    throw new Error('Unexpected Abilities API catalog shape — expected array.');
-  }
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const response = await withRetry(
+      () => wpClient.httpClient.request({
+        method:  'GET',
+        baseURL: wpClient.baseUrl,
+        url:     CORE_ABILITIES_ROUTE,
+        params:  { per_page: PER_PAGE, page },
+      }),
+      retry.maxRetries ?? 0,
+      retry.retryDelayMs ?? 0
+    );
+
+    if (!Array.isArray(response.data)) {
+      throw new Error('Unexpected Abilities API catalog shape — expected array.');
+    }
+
+    abilities.push(...response.data);
+
+    const headerTotal = Number(response.headers?.['x-wp-totalpages']);
+    totalPages = Number.isFinite(headerTotal) && headerTotal > 0 ? Math.min(headerTotal, MAX_PAGES) : 1;
+    page += 1;
+  } while (page <= totalPages);
 
   const entries = [];
 
-  for (const ability of data) {
+  for (const ability of abilities) {
     if (typeof ability?.name !== 'string') continue;
 
     const meta = ability.meta && typeof ability.meta === 'object' ? ability.meta : {};
     if (meta.gk_registered_by !== 'gravitykit') continue;
 
     if (typeof meta.mcp_tool_name !== 'string' || meta.mcp_tool_name === '') {
+      const reason = 'No meta.mcp_tool_name — the product declares no MCP prefix, so the server cannot name a tool for it.';
       logger.warn(`Ability ${ability.name} has no meta.mcp_tool_name — skipped (the server owns tool naming)`);
+      skipped.push({ ability: ability.name, reason });
       continue;
     }
 
@@ -313,8 +465,10 @@ async function fetchCoreEntries(wpClient) {
       abilityName:    ability.name,
       toolName:       meta.mcp_tool_name,
       description:    ability.description || ability.label || ability.name,
-      rawInputSchema: ability.input_schema,
-      annotations:    meta.annotations && typeof meta.annotations === 'object' ? meta.annotations : {},
+      rawInputSchema:  ability.input_schema,
+      rawOutputSchema: ability.output_schema,
+      label:           typeof ability.label === 'string' ? ability.label : undefined,
+      annotations:     meta.annotations && typeof meta.annotations === 'object' ? meta.annotations : {},
     });
   }
 
@@ -323,6 +477,30 @@ async function fetchCoreEntries(wpClient) {
   }
 
   return entries;
+}
+
+/**
+ * An ability's `output_schema`, or undefined when it has none worth publishing.
+ *
+ * WordPress defaults an undeclared output schema to `[]`, and MCP requires a
+ * tool schema to be `type: 'object'`, so an empty array must not be published —
+ * a client validating against it would reject every call. PHP's array-vs-object
+ * serialisation also turns an empty `properties` map into `[]`, the same shape
+ * `normalizeInputSchema()` coerces.
+ *
+ * @param {unknown} raw The catalog's `output_schema`.
+ * @returns {object|undefined}
+ */
+export function normalizeOutputSchema(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  if (raw.type !== 'object') return undefined;
+
+  // Truthy is not enough: MCP requires an object here, and publishing a string or a
+  // number makes a client reject the whole tool definition rather than one field.
+  const isMap = raw.properties && typeof raw.properties === 'object' && !Array.isArray(raw.properties);
+  const properties = isMap ? raw.properties : {};
+
+  return { ...raw, properties };
 }
 
 /**
@@ -336,10 +514,44 @@ async function fetchCoreEntries(wpClient) {
  * @param {object} wpClient WordPressClient instance.
  * @param {Array}  entries  Normalized tool entries.
  * @param {string} source   Which catalog produced the entries.
- * @param {Set<string>} [reservedNames] Names owned by the built-in tool set.
+ * @param {object} [options]
+ * @param {Set<string>} [options.reservedNames] Names owned by the built-in tool set.
+ * @param {boolean} [options.allowDelete] Execute destructive abilities (GRAVITY_FORMS_ALLOW_DELETE).
  * @returns {{ definitions: object[], handlers: Record<string, Function>, count: number, source: string }}
  */
-function buildTools(wpClient, entries, source, reservedNames) {
+/**
+ * Whether a destructive tool is permitted on this server.
+ *
+ * The allow-list holds `all`, a product prefix (`gv`, `gmig`, `gf`), or an exact
+ * tool name. A prefix matches the segment before the first underscore, so `gmig`
+ * permits a bundle import without also permitting a View delete — which the old
+ * single boolean could not express.
+ *
+ * @param {string}   toolName        The MCP tool name.
+ * @param {string[]} allowDestructive Entries as above.
+ * @returns {boolean}
+ */
+function destructiveIsPermitted(toolName, allowDestructive) {
+  if (!Array.isArray(allowDestructive) || allowDestructive.length === 0) return false;
+  if (allowDestructive.includes('all')) return true;
+  if (allowDestructive.includes(toolName)) return true;
+
+  // indexOf returns -1 when there is no underscore, and slice(0, -1) would then
+  // hand back the name minus its last character -- a prefix nobody wrote, which an
+  // allow-list could match by accident. No underscore means no prefix.
+  const underscore = toolName.indexOf('_');
+  if (underscore <= 0) return false;
+
+  return allowDestructive.includes(toolName.slice(0, underscore));
+}
+
+function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false, allowDestructive, skipped = [], onStaleCatalog } = {}) {
+  // GRAVITY_FORMS_ALLOW_DELETE is the old spelling and means "all", so a server
+  // configured before the list existed keeps working.
+  const permitted = Array.isArray(allowDestructive) && allowDestructive.length > 0
+    ? allowDestructive
+    : (allowDelete ? ['all'] : []);
+
   const definitions = [];
   const handlers = {};
   const claimedBy = new Map();
@@ -350,37 +562,126 @@ function buildTools(wpClient, entries, source, reservedNames) {
     }
   }
 
+  // Ability FQN → tool name, built from the entries that SURVIVE the collision
+  // guard below. Built from every entry, a step naming a skipped ability resolves
+  // to the tool name that ability wanted — which now belongs to a different
+  // ability, or to a built-in, so the agent is sent somewhere else entirely.
+  const surviving = [];
+  const toolNameByAbility = new Map();
+
   for (const entry of entries) {
-    const existing = claimedBy.get(entry.toolName);
-    if (existing) {
-      logger.warn(`Tool-name collision: "${entry.toolName}" from ${entry.abilityName} clashes with ${existing} — skipping ${entry.abilityName}`);
+    const takenBy = claimedBy.get(entry.toolName);
+    if (takenBy) {
+      const reason = `Tool-name collision: "${entry.toolName}" is already claimed by ${takenBy}.`;
+      logger.warn(`${reason} Skipping ${entry.abilityName}`);
+      skipped.push({ ability: entry.abilityName, reason });
       continue;
     }
     claimedBy.set(entry.toolName, entry.abilityName);
+    surviving.push(entry);
 
-    // MCP tool definition. `normalizeInputSchema()` guarantees the
-    // shape MCP's Zod validator expects:
-    //   `{ type: 'object', properties: <Record<string,JSONSchema>>, … }`.
-    // Without it, abilities whose PHP serialisation produced an array
-    // (top-level or under `properties`) fail `tools/list` validation —
-    // see the helper's docblock for the two shapes we coerce.
+    if (!toolNameByAbility.has(entry.abilityName)) {
+      toolNameByAbility.set(entry.abilityName, entry.toolName);
+    }
+  }
+
+  for (const entry of surviving) {
+    const annotations  = entry.annotations || {};
+    // What we PUBLISH follows the spec, which defaults an omitted destructiveHint to
+    // true: an ability that declares neither `destructive` nor `readonly` is unknown,
+    // and reporting unknown as safe would vouch for a tool on the strength of the
+    // product having forgotten to say. WordPress core defaults annotations to null,
+    // so this is reachable rather than theoretical.
+    const declaresDestructive = typeof annotations.destructive === 'boolean';
+    const isDestructive = declaresDestructive ? annotations.destructive : !annotations.readonly;
+    // The gate follows the hint. An ability we report as destructive must also be
+    // treated as one: gating only explicit declarations meant an unannotated ability
+    // was announced as unsafe and then executed anyway for an operator who had
+    // permitted nothing. Naming it in the allow-list still runs it.
+    const isPermitted   = ! isDestructive || destructiveIsPermitted(entry.toolName, permitted);
+
+    let description = entry.description;
+    if (isDestructive && !isPermitted) {
+      description += ` (destructive; disabled on this server — add "${entry.toolName}" to GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE to enable)`;
+    }
+    const nextStepsHint = formatNextSteps(annotations.next_steps, toolNameByAbility);
+    if (nextStepsHint) {
+      description += ` Next: ${nextStepsHint}`;
+    }
+
+    // `normalizeInputSchema()` guarantees the shape MCP's Zod validator
+    // expects — PHP-serialised array schemas otherwise fail `tools/list`.
+    // The MCP annotations mirror the ability's: without them clients get
+    // no destructive signal (no confirmation before gv_view_delete).
+    const outputSchema = normalizeOutputSchema(entry.rawOutputSchema);
+
     definitions.push({
       name: entry.toolName,
-      description: entry.description,
+      ...(entry.label ? { title: entry.label } : {}),
+      description,
       inputSchema: normalizeInputSchema(entry.rawInputSchema),
+      // Only when the ability declares a usable one: the spec obliges a tool
+      // that publishes an outputSchema to return matching structuredContent.
+      ...(outputSchema ? { outputSchema } : {}),
+      annotations: {
+        readOnlyHint:   !!annotations.readonly,
+        destructiveHint: isDestructive,
+        idempotentHint: !!annotations.idempotent,
+        openWorldHint:  true,
+      },
     });
 
     // Closure captures the ability name + method so the dispatcher
-    // doesn't need to re-resolve them at call time. Destructive
-    // gating lives server-side: each ability's permission_callback
-    // (e.g. delete_post for view-delete) plus Foundation's
-    // per-ability enable/disable toggles.
+    // doesn't need to re-resolve them at call time. Server-side the
+    // ability's permission_callback and Foundation's enable/disable
+    // toggles still apply; the allowDelete gate below mirrors the
+    // static gf_delete_* client-side protection on top of that.
     const abilityName = entry.abilityName;
-    const method      = methodForAbility(entry.annotations);
-    handlers[entry.toolName] = async (params) => executeAbility(wpClient, abilityName, method, params || {});
+    const method      = methodForAbility(annotations);
+    handlers[entry.toolName] = async (params) => {
+      if (!isPermitted) {
+        throw new Error(`${entry.toolName} is a destructive operation and is disabled on this server. Add "${entry.toolName}" (or its product prefix, or "all") to GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE to enable it.`);
+      }
+      try {
+        return await executeAbility(wpClient, abilityName, method, params || {});
+      } catch (error) {
+        // A product upgraded mid-session leaves the agent holding a tool the site
+        // no longer has. Refetch for the next call and say so, rather than
+        // letting it retry a name that is gone.
+        if (STALE_CATALOG_CODES.has(error?.response?.data?.code)) {
+          if (typeof onStaleCatalog === 'function') onStaleCatalog();
+          error.message = `${error.message} — the tool catalog may be out of date for this site; it has been refreshed, so re-read this tool's schema before retrying.`;
+        }
+        throw error;
+      }
+    };
   }
 
-  return { definitions, handlers, count: definitions.length, source };
+  return { definitions, handlers, count: definitions.length, source, skipped };
+}
+
+/**
+ * Render an ability's `next_steps` guidance ([{ability, when}, …], authored
+ * server-side) as a terse description suffix, translating ability FQNs to
+ * the MCP tool names the agent can call. Steps pointing at abilities that
+ * are not exposed as tools are dropped. Returns '' when nothing usable.
+ *
+ * @param {unknown} nextSteps
+ * @param {Map<string, string>} toolNameByAbility
+ * @returns {string}
+ */
+function formatNextSteps(nextSteps, toolNameByAbility) {
+  if (!Array.isArray(nextSteps)) return '';
+
+  const parts = [];
+  for (const step of nextSteps) {
+    if (!step || typeof step !== 'object' || typeof step.ability !== 'string') continue;
+    const toolName = toolNameByAbility.get(step.ability);
+    if (!toolName) continue;
+    const when = typeof step.when === 'string' && step.when !== '' ? ` (${step.when})` : '';
+    parts.push(`${toolName}${when}`);
+  }
+  return parts.join('; ');
 }
 
 /**

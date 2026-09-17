@@ -79,24 +79,50 @@ jobs:
         # automatically before the package is published.
         run: npm publish --access public
 
+      - name: Skip when this release already exists
+        id: relguard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Deliberately independent of the npm guard. If npm publish succeeds and a later
+        # step fails, a rerun sees published=true; hanging the release on that would skip
+        # the build and the release forever, with no path back but a manual upload.
+        run: |
+          VERSION="${{ steps.guard.outputs.version }}"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the Claude Desktop extension
+        if: steps.relguard.outputs.exists == 'false'
+        # Attached to the release below. The copy is deliberate: the versioned name
+        # is what people download and keep, while the fixed name is what
+        # /releases/latest/download/gravitykit-mcp.mcpb resolves to, so the README
+        # link survives every release without being edited.
+        run: |
+          npm run build:mcpb
+          VERSION="${{ steps.guard.outputs.version }}"
+          cp "build/gravitykit-mcp-$VERSION.mcpb" build/gravitykit-mcp.mcpb
+
       - name: Create GitHub Release
         id: release
-        if: steps.guard.outputs.published == 'false'
+        if: steps.relguard.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.guard.outputs.version }}"
-          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release v$VERSION already exists — skipping."
-            exit 0
-          fi
           gh release create "v$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
             --title "v$VERSION" \
             --verify-tag \
             --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md) for details.
 
-          Install: \`npm install @gravitykit/mcp@$VERSION\` · [View on npm](https://www.npmjs.com/package/@gravitykit/mcp/v/$VERSION)"
+          **Claude Desktop:** download \`gravitykit-mcp.mcpb\` below and open it — no config file to edit.
+
+          Install for other clients: \`npm install @gravitykit/mcp@$VERSION\` · [View on npm](https://www.npmjs.com/package/@gravitykit/mcp/v/$VERSION)" \
+            "build/gravitykit-mcp-$VERSION.mcpb" \
+            "build/gravitykit-mcp.mcpb"
           # Signals the Slack step that a release was actually created this run
           # (not an idempotent skip), so announcements never double-fire.
           echo "created=true" >> "$GITHUB_OUTPUT"
@@ -115,7 +141,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           if [ -z "${SLACK_RELEASE_NOTIFICATION_WEBHOOK:-}" ]; then
-            echo "SLACK_RELEASE_NOTIFICATION_WEBHOOK not set — skipping Slack announcement."
+            # A warning, not a silent echo: the secret was absent through v2.4.1
+            # and every release skipped the announcement without surfacing it.
+            echo "::warning::SLACK_RELEASE_NOTIFICATION_WEBHOOK is not set — v$VERSION was NOT announced in #release-announcements. Add the secret to GravityKit/MCP to restore it."
             exit 0
           fi
           LINK="https://github.com/$REPO/releases/tag/v$VERSION"

@@ -67,10 +67,16 @@ const PLUGINS_DIR = SM_DIR ? resolve(SM_DIR, '..', '..') : '';
 export const SITEMINTER = {
   dir: SM_DIR,
   siteName: env.BENCH_SITE || 'gvbench',
-  plugins: [
-    env.BENCH_GF_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityforms')),
-    env.BENCH_GV_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'GravityView')),
-  ].filter(Boolean),
+  // BENCH_PLUGINS (comma-separated absolute paths) overrides the whole list so
+  // the gate can target other GravityKit products (e.g. GravityCharts +
+  // standalone Foundation) without editing this file. Default: GF + GravityView.
+  plugins: (env.BENCH_PLUGINS
+    ? env.BENCH_PLUGINS.split(',').map((p) => p.trim())
+    : [
+        env.BENCH_GF_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'gravityforms')),
+        env.BENCH_GV_PATH || (PLUGINS_DIR && resolve(PLUGINS_DIR, 'GravityView')),
+      ]
+  ).filter(Boolean),
   /**
    * Real Gravity Forms add-ons whose field types the storage suite validates
    * (chainedselect, signature, survey_rank). NOT minted for the release gate —

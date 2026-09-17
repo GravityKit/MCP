@@ -1,0 +1,80 @@
+{
+  "comment": "Production dependencies with known advisories that this server does not execute. Anything NOT listed here fails the Security workflow, and so does a NEW advisory id against a listed package -- the `advisories` array is what somebody actually reviewed, so a fresh one has to be looked at rather than inheriting the exemption. Review the reasons whenever the SDK is upgraded: an entry stops being true the moment src/ imports an HTTP transport.",
+  "reviewed": "2026-09-17",
+  "allowed": {
+    "hono": {
+      "reason": "Reached only through @modelcontextprotocol/sdk's HTTP transport. src/index.js imports server/stdio.js and never server/streamableHttp.js, so this code is installed but never loaded.",
+      "advisories": [
+        "GHSA-26pp-8wgv-hjvm",
+        "GHSA-2gcr-mfcq-wcc3",
+        "GHSA-3hrh-pfw6-9m5x",
+        "GHSA-458j-xx4x-4375",
+        "GHSA-54fx-42gc-7vw4",
+        "GHSA-69xw-7hcm-h432",
+        "GHSA-79qm-7rj5-m7r9",
+        "GHSA-88fw-hqm2-52qc",
+        "GHSA-8j4g-w8fx-2239",
+        "GHSA-9vqf-7f2p-gf9v",
+        "GHSA-crvj-82cr-hjcx",
+        "GHSA-f23p-vx2j-j53r",
+        "GHSA-f577-qrjj-4474",
+        "GHSA-g6gw-c38x-mqfc",
+        "GHSA-gqvv-2mrq-wpjv",
+        "GHSA-hm8q-7f3q-5f36",
+        "GHSA-hvrm-45r6-mjfj",
+        "GHSA-j6c9-x7qj-28xf",
+        "GHSA-p77w-8qqv-26rm",
+        "GHSA-qp7p-654g-cw7p",
+        "GHSA-r5rp-j6wh-rvv4",
+        "GHSA-rv63-4mwf-qqc2",
+        "GHSA-w62v-xxxg-mg59",
+        "GHSA-wgpf-jwqj-8h8p",
+        "GHSA-wmmm-f939-6g9c",
+        "GHSA-wwfh-h76j-fc44",
+        "GHSA-xf4j-xp2r-rqqx",
+        "GHSA-xgm2-5f3f-mvvc",
+        "GHSA-xpcf-pg52-r92g",
+        "GHSA-xrhx-7g5j-rcj5"
+      ]
+    },
+    "@hono/node-server": {
+      "reason": "Same path as hono: the SDK's HTTP transport, which this server does not use.",
+      "advisories": [
+        "GHSA-92pp-h63x-v22m",
+        "GHSA-frvp-7c67-39w9"
+      ]
+    },
+    "express-rate-limit": {
+      "reason": "SDK HTTP transport dependency. No HTTP listener runs in a stdio server.",
+      "advisories": []
+    },
+    "ip-address": {
+      "reason": "Reached through express-rate-limit, itself part of the SDK's unused HTTP transport.",
+      "advisories": [
+        "GHSA-mwp4-54f8-5fhr",
+        "GHSA-v2v4-37r5-5v8g"
+      ]
+    },
+    "path-to-regexp": {
+      "reason": "Reached through express, part of the SDK's unused HTTP transport.",
+      "advisories": [
+        "GHSA-27v5-c462-wpq7",
+        "GHSA-j3q9-mxjg-w52f"
+      ]
+    },
+    "body-parser": {
+      "reason": "Reached through express, part of the SDK's unused HTTP transport.",
+      "advisories": [
+        "GHSA-v422-hmwv-36x6"
+      ]
+    },
+    "qs": {
+      "reason": "Reached through express, part of the SDK's unused HTTP transport.",
+      "advisories": [
+        "GHSA-4mjr-xmp4-gh2g",
+        "GHSA-q8mj-m7cp-5q26",
+        "GHSA-x5fp-wj9c-mxmx"
+      ]
+    }
+  }
+}

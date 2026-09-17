@@ -111,6 +111,7 @@ function parseStream(stdout) {
   let tokens = { input: 0, output: 0 };
   let finalText = '';
   let hardError = null;
+  let sessionId = null; // for --resume (multi-turn conversations)
   let mcpTools = 0; // MCP tools listed at init — a snapshot before the async connect finishes, so often 0 even when tools arrive (reporting hint only, never a pass/fail signal)
 
   for (const line of stdout.split('\n')) {
@@ -118,6 +119,8 @@ function parseStream(stdout) {
     if (!trimmed) continue;
     let evt;
     try { evt = JSON.parse(trimmed); } catch { continue; }
+
+    if (evt.session_id) sessionId = evt.session_id;
 
     if (evt.type === 'system' && evt.subtype === 'init') {
       mcpTools = (evt.tools || []).filter((t) => /^mcp__/.test(t)).length;
@@ -156,7 +159,7 @@ function parseStream(stdout) {
     }
   }
 
-  return { toolCalls, turns, tokens, finalText, hardError, mcpTools };
+  return { toolCalls, turns, tokens, finalText, hardError, mcpTools, sessionId };
 }
 
 /**
@@ -169,7 +172,7 @@ function parseStream(stdout) {
  *   written here — the authoritative record for debugging a failed run.
  * @returns {Promise<{toolCalls:Array, turns:number, tokens:{input:number,output:number}, finalText:string, hardError:string|null, durationMs:number, logFile:string|null}>}
  */
-export function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null, bin = CLAUDE_BIN) {
+export function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null, bin = CLAUDE_BIN, extraArgs = []) {
   const args = [
     '-p', prompt,
     '--model', CONFIG.model,
@@ -180,6 +183,8 @@ export function runOnce(prompt, mcpConfigPath, logFile = null, maxTurns = null, 
     // Per-task ceiling when given, else the global backstop. A task hitting
     // this is killed mid-run → grades as incomplete, so keep it generous.
     '--max-turns', String(maxTurns || CONFIG.maxTurns),
+    // e.g. ['--resume', sessionId] for multi-turn conversations.
+    ...extraArgs,
     // Sandbox the agent to ONLY the MCP under test. No bypassPermissions: in
     // headless mode any tool NOT in --allowedTools is denied (no prompt to
     // answer), so the allow-list is the real fence — robust against new
@@ -276,4 +281,59 @@ export async function runAgent(prompt, mcpConfigPath, logFile = null, maxTurns =
     if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 1500));
   }
   return last;
+}
+
+/**
+ * Run a multi-turn CONVERSATION: each prompt after the first resumes the same
+ * session (`--resume <session_id>`), so the agent keeps its context — the
+ * "create, then refine, then adjust" flow a real user drives.
+ *
+ * Telemetry is merged across turns (toolCalls concatenated, turns/tokens
+ * summed); `finalText` is the LAST turn's answer and `turnTexts` keeps each
+ * turn's answer for graders that check intermediate replies. Per-turn raw
+ * transcripts land next to `logFile` with a `.turnN` suffix. If a turn fails
+ * to yield a session id or hard-errors, the conversation stops there and the
+ * merged telemetry (with `hardError` set) is returned — the grader sees the
+ * partial end state.
+ */
+export async function runConversation(prompts, mcpConfigPath, logFile = null, maxTurns = null) {
+  const merged = { toolCalls: [], turns: 0, tokens: { input: 0, output: 0 }, finalText: '', turnTexts: [], hardError: null, durationMs: 0, attempts: 1, logFile };
+  let sessionId = null;
+
+  for (let i = 0; i < prompts.length; i++) {
+    const turnLog = logFile ? logFile.replace(/\.jsonl$/, `.turn${i + 1}.jsonl`) : null;
+    const extraArgs = sessionId ? ['--resume', sessionId] : [];
+    let t = await runOnce(prompts[i], mcpConfigPath, turnLog, maxTurns, CLAUDE_BIN, extraArgs);
+
+    // Align with runAgent(): retry ONCE on a genuine process-level crash
+    // (no result at all) — but only before any --resume state exists, so a
+    // retried turn can never replay against a session the crash half-built.
+    const processCrashed = !t.finalText && /^exit_/.test(t.hardError || '');
+    if (processCrashed && !sessionId) {
+      await new Promise((r) => setTimeout(r, 1500));
+      t = await runOnce(prompts[i], mcpConfigPath, turnLog, maxTurns, CLAUDE_BIN, extraArgs);
+      merged.attempts += 1;
+    }
+
+    merged.toolCalls.push(...(t.toolCalls || []));
+    merged.turns += t.turns || 0;
+    merged.tokens.input += t.tokens?.input || 0;
+    merged.tokens.output += t.tokens?.output || 0;
+    merged.finalText = t.finalText || merged.finalText;
+    merged.turnTexts.push(t.finalText || '');
+    merged.durationMs += t.durationMs || 0;
+
+    if (t.hardError) {
+      merged.hardError = `turn${i + 1}: ${t.hardError}`;
+      break;
+    }
+
+    sessionId = t.sessionId || sessionId;
+    if (!sessionId && i < prompts.length - 1) {
+      merged.hardError = `turn${i + 1}: no session_id captured — cannot resume`;
+      break;
+    }
+  }
+
+  return merged;
 }

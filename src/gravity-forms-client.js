@@ -307,6 +307,13 @@ export class GravityFormsClient {
         // Transform the error with proper message based on status code
         return this.handleApiError(error);
       }
+      // Standardized apiError from the response interceptor (handleApiError):
+      // it has no `.response`, but carries the WordPress status/code/body that
+      // wrapHandler surfaces to the agent. Rethrow untouched — wrapping it in
+      // a bare Error stripped exactly the detail an agent needs to self-correct.
+      if (error.status !== undefined || error.code !== undefined || error.details !== undefined) {
+        throw error;
+      }
       // Otherwise, wrap validation errors with tool name
       throw new Error(`${toolName} failed: ${error.message}`);
     }
@@ -892,7 +899,30 @@ export class GravityFormsClient {
    */
   async createFeed(params) {
     return this.validateAndCall('gf_create_feed', params, async (validated) => {
-      const response = await this.httpClient.post('/feeds', validated);
+      // GF's POST /feeds consumes only form_id/meta/addon_slug
+      // (GFAPI::add_feed) — is_active in the body is ignored and the feed is
+      // always created active. Honoring is_active:false takes a follow-up
+      // PATCH, which GF routes through GFAPI::update_feed_property.
+      const { is_active, ...createData } = validated;
+      const response = await this.httpClient.post('/feeds', createData);
+
+      if (is_active === false) {
+        const feedId = response.data?.id ?? response.data;
+
+        // The feed already exists by now. Letting a failed PATCH throw would return an
+        // error carrying no id, so a caller that retries creates a second feed. Report
+        // the feed plus the fact that it is still active instead.
+        try {
+          const patched = await this.httpClient.patch(`/feeds/${feedId}`, { is_active: false });
+          return { feed: patched.data };
+        } catch (error) {
+          return {
+            feed: response.data,
+            is_active: true,
+            warning: `The feed was created (id ${feedId}) but could not be deactivated: ${error.message}. It is ACTIVE. Deactivate it with gf_update_feed rather than creating another.`,
+          };
+        }
+      }
 
       return {
         feed: response.data
@@ -981,8 +1011,14 @@ export class GravityFormsClient {
    */
   async getResults(params) {
     return this.validateAndCall('gf_get_results', params, async (validated) => {
-      const { form_id, ...searchParams } = validated;
-      const response = await this.httpClient.get(`/forms/${form_id}/results`, { params: searchParams });
+      const { form_id, search } = validated;
+      // GF reads /results search criteria as a JSON string, same as /entries — and
+      // reads the mode from inside field_filters, so the criteria go through the same
+      // normalization. Serializing `search` as given leaves mode at the top level,
+      // where GF never looks, and every "any" search silently behaves as "all".
+      const normalized = search ? buildEntriesQuery({ search }).search : undefined;
+      const requestParams = normalized ? { search: normalized } : {};
+      const response = await this.httpClient.get(`/forms/${form_id}/results`, { params: requestParams });
 
       return {
         results: response.data

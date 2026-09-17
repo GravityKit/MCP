@@ -21,7 +21,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { CONFIG, resolveTarget } from './config.mjs';
 import { writeMcpConfig, makeClient } from './lib/target.mjs';
 import { provisionSite, cleanupMintedSite } from './lib/siteminter.mjs';
-import { runAgent } from './lib/agent.mjs';
+import { runAgent, runConversation } from './lib/agent.mjs';
 import { scoreRun, aggregateTask, decideGate } from './lib/score.mjs';
 import { report } from './lib/report.mjs';
 import { TASKS } from './tasks/index.mjs';
@@ -49,8 +49,16 @@ async function runTask(task, client, mcpConfigPath, traceDir) {
     let telemetry = { toolCalls: [], turns: 0, tokens: { input: 0, output: 0 }, hardError: 'not-run' };
     try {
       if (task.setup) state = await task.setup(client);
-      const prompt = typeof task.prompt === 'function' ? task.prompt(state) : task.prompt;
-      telemetry = await runAgent(prompt, mcpConfigPath, join(traceDir, `${task.id}.run${i + 1}.jsonl`), task.maxTurns);
+      const logFile = join(traceDir, `${task.id}.run${i + 1}.jsonl`);
+      if (task.turns) {
+        // Multi-turn conversation: each entry is a prompt (or fn(state)) sent
+        // as a follow-up user message in the SAME session (--resume).
+        const prompts = task.turns.map((t) => (typeof t === 'function' ? t(state) : t));
+        telemetry = await runConversation(prompts, mcpConfigPath, logFile, task.maxTurns);
+      } else {
+        const prompt = typeof task.prompt === 'function' ? task.prompt(state) : task.prompt;
+        telemetry = await runAgent(prompt, mcpConfigPath, logFile, task.maxTurns);
+      }
       grade = await task.grade({ client, state, telemetry });
     } catch (e) {
       grade = { pass: false, detail: `harness error: ${e?.message || e}` };

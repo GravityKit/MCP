@@ -284,7 +284,7 @@ export const fieldOperationTools = [
   },
   {
     name: 'gf_update_field',
-    description: 'Update a field in a form',
+    description: 'Update a field in a form. Cosmetic changes (label, description, cssClass) never need force; changing type/choices/inputs on a field that conditional logic, calculations, or merge tags depend on requires force=true.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -317,7 +317,7 @@ export const fieldOperationTools = [
   },
   {
     name: 'gf_delete_field',
-    description: 'Delete a field (checks dependencies)',
+    description: 'Delete a field (checks dependencies; requires GRAVITY_FORMS_ALLOW_DELETE=true)',
     annotations: { destructiveHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
