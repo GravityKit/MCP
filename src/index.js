@@ -338,7 +338,7 @@ const GF_TOOL_DEFINITIONS = [
   // Forms Management (6 tools)
   {
     name: 'gf_list_forms',
-    description: 'List all forms with optional search and pagination.',
+    description: 'List this site\'s active forms, by title. Trashed and inactive forms are left out unless their ids are named in `include`, which fetches those forms whatever their state. Gravity Forms returns every matching form at once: this endpoint has no search and no paging, so narrow the result with `include` or filter what comes back.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -346,9 +346,9 @@ const GF_TOOL_DEFINITIONS = [
         include: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Form IDs to include'
+          description: 'Form ids to fetch instead of listing. These are returned even when inactive or trashed.'
         },
-        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+        compact: { type: 'boolean', description: 'Strip empty and null values from the response. Set false for the raw payload.', default: true }
       }
     }
   },
