@@ -533,8 +533,13 @@ function destructiveIsPermitted(toolName, allowDestructive) {
   if (allowDestructive.includes('all')) return true;
   if (allowDestructive.includes(toolName)) return true;
 
-  const prefix = toolName.slice(0, toolName.indexOf('_'));
-  return prefix !== '' && allowDestructive.includes(prefix);
+  // indexOf returns -1 when there is no underscore, and slice(0, -1) would then
+  // hand back the name minus its last character -- a prefix nobody wrote, which an
+  // allow-list could match by accident. No underscore means no prefix.
+  const underscore = toolName.indexOf('_');
+  if (underscore <= 0) return false;
+
+  return allowDestructive.includes(toolName.slice(0, underscore));
 }
 
 function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false, allowDestructive, skipped = [], onStaleCatalog } = {}) {

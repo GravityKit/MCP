@@ -24,7 +24,7 @@ import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse, abilityToolResult } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
-import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams } from './server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive } from './server-runtime.js';
 import { VERSION } from './version.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -199,10 +199,7 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
       // Comma-separated: "all", a product prefix (gv, gmig, gf), or an exact
       // tool name. Lets a Migrate user permit a bundle import without also
       // permitting every View delete, which the single boolean could not.
-      allowDestructive: (process.env.GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE || '')
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter(Boolean),
+      allowDestructive: parseAllowDestructive(process.env.GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE),
       // Fired when a call fails the way a stale catalog fails. Refetch in the
       // background so the next call holds the site's current schema; the call
       // that noticed still fails, with the reason said out loud.

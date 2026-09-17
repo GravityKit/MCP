@@ -541,6 +541,77 @@ suite.test('loadAbilitiesAsTools: tool 57 repro — properties:[] becomes proper
   TestAssert.deepEqual(tool.inputSchema.properties, {});
 });
 
+suite.test('allowDestructive "all" permits every destructive tool', async () => {
+  // The value the desktop extension's checkbox produces, and the one most people
+  // set by hand. It had no test at all.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub, { allowDestructive: ['all'] });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  for (const name of ['gv_view_delete', 'gv_view_trash']) {
+    TestAssert.isFalse(
+      /disabled on this server/.test(byName[name].description),
+      `${name} must not be marked disabled when everything is permitted`
+    );
+  }
+});
+
+suite.test('a product prefix permits that product only, not its neighbors', async () => {
+  // The whole point of the list over the old boolean. Permitting gv must not
+  // permit a Migrate tool that happens to be destructive.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gv'] });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isFalse(/disabled on this server/.test(byName.gv_view_delete.description), 'gv is permitted');
+
+  const other = await loadAbilitiesAsTools(stub, { allowDestructive: ['gmig'] });
+  const otherByName = Object.fromEntries(other.definitions.map((d) => [d.name, d]));
+  TestAssert.isTrue(
+    /disabled on this server/.test(otherByName.gv_view_delete.description),
+    'permitting gmig must not permit a gv tool'
+  );
+});
+
+suite.test('a tool name with no underscore has no prefix, not a truncated one', async () => {
+  // toolName.slice(0, indexOf('_')) is slice(0, -1) when there is no underscore,
+  // which returns the name minus its LAST CHARACTER rather than ''. An allow-list
+  // holding that near-miss string would permit the tool.
+  const catalog = annotatedFoundationCatalog();
+  const target = catalog.find((a) => a.mcp_tool_name === 'gv_view_delete');
+  target.mcp_tool_name = 'destroyeverything';
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  for (const permitted of [[''], ['destroyeverythin']]) {
+    const { definitions } = await loadAbilitiesAsTools(stub, { allowDestructive: permitted });
+    const tool = definitions.find((d) => d.name === 'destroyeverything');
+
+    TestAssert.isTrue(!!tool, 'the tool is still published');
+    TestAssert.isTrue(
+      /disabled on this server/.test(tool.description),
+      `${JSON.stringify(permitted)} must not permit a tool it does not name`
+    );
+  }
+});
+
+suite.test('an ability that states nothing is not silently gated', async () => {
+  // The hint says destructive (spec default), but BLOCKING keys on an explicit
+  // declaration -- otherwise a product that forgot its annotations looks broken
+  // rather than unsafe. This guards the clause added alongside that change.
+  const catalog = syntheticCatalog();
+  const target = catalog.find((a) => a.name.endsWith('layouts-list'));
+  target.meta = { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: null };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isTrue(tool.annotations.destructiveHint, 'unstated is reported as destructive');
+  TestAssert.isFalse(
+    /disabled on this server/.test(tool.description),
+    'but it is not blocked, because nothing declared it destructive'
+  );
+});
+
 suite.test('an ability that declares nothing is published as destructive, not as safe', async () => {
   // WordPress core defaults ability annotations to null and Foundation passes them
   // through, so "declares nothing" is reachable. The MCP spec defaults an omitted
