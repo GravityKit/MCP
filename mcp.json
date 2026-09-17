@@ -1,6 +1,6 @@
 {
   "name": "gravitykit-mcp",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "MCP server for Gravity Forms",
   "author": "GravityKit",
   "license": "MIT",
@@ -143,12 +143,20 @@
   ],
   "authentication": {
     "basic_auth": {
-      "required": ["consumer_key", "consumer_secret", "base_url"],
+      "required": [
+        "consumer_key",
+        "consumer_secret",
+        "base_url"
+      ],
       "description": "Basic authentication (recommended for Gravity Forms v2)",
       "security_note": "Requires HTTPS connection"
     },
     "oauth_1_0a": {
-      "required": ["consumer_key", "consumer_secret", "base_url"],
+      "required": [
+        "consumer_key",
+        "consumer_secret",
+        "base_url"
+      ],
       "description": "OAuth 1.0a authentication (advanced option)"
     }
   },

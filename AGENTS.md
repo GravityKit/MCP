@@ -6,7 +6,7 @@ This is the single canonical doc for the project (agents and humans). `CLAUDE.md
 
 ## Project Identity
 
-- **Package:** `@gravitykit/mcp` v2.4.1
+- **Package:** `@gravitykit/mcp` v2.5.0
 - **Type:** Node.js MCP server (ESM)
 - **Purpose:** Full Gravity Forms REST API v2 coverage (26 Gravity Forms tools), plus dynamic GravityKit product tools (GravityView so far) via the WordPress Abilities API
 - **Repo:** https://github.com/GravityKit/MCP
@@ -428,7 +428,10 @@ What ships to npm is governed solely by the **`files` allowlist** in `package.js
 **Every version tag MUST include a CHANGELOG.md update.** Follow this checklist:
 
 1. **Update `CHANGELOG.md`** — add a new `## [X.Y.Z] - YYYY-MM-DD` section with all changes since the last release. Follow [Keep a Changelog](https://keepachangelog.com/) format (Added, Changed, Fixed, Removed).
-2. **Bump `version` in `package.json`**
+2. **Bump `version` in `package.json`, `manifest.json` AND `mcp.json`** — all three are
+   enforced, in three different places: a unit test compares `mcp.json` to `package.json`
+   (Bug #23), `scripts/build-mcpb.mjs` throws when `manifest.json` disagrees, and npm
+   publishes whatever `package.json` says. Missing one fails at a different stage each time.
 3. **Update version in `AGENTS.md`** (Project Identity → Package line)
 4. **Add link** at bottom of `CHANGELOG.md`: `[X.Y.Z]: https://github.com/GravityKit/MCP/releases/tag/vX.Y.Z`
 5. **Commit**: `git commit -m "chore(release): bump version to X.Y.Z"`

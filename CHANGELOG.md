@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-09-17
+
 This release makes GravityKit product tools first-class: they now publish output schemas and return structured results, destructive ones can be permitted per product instead of all or nothing, and a site with more than 50 abilities exposes all of them. GravityKit MCP also installs into Claude Desktop as a one-click extension. Gravity Forms tools gain accurate errors, correct feed and field handling, and descriptions that match what they actually do.
 
 ### 🚀 Added
@@ -288,6 +290,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.5.0]: https://github.com/GravityKit/MCP/releases/tag/v2.5.0
 [2.4.1]: https://github.com/GravityKit/MCP/releases/tag/v2.4.1
 [2.4.0]: https://github.com/GravityKit/MCP/releases/tag/v2.4.0
 [2.3.0]: https://github.com/GravityKit/MCP/releases/tag/v2.3.0
