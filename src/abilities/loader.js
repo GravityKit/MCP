@@ -58,6 +58,13 @@ const STALE_CATALOG_CODES = new Set(['rest_ability_not_found']);
  * not an answer about this request. 401 and 403 are answers; retrying them
  * delays the error and hammers a site that has already said no.
  */
+/**
+ * Parameter names this server consumes itself and never forwards to WordPress
+ * ({@see stripControlParams}). An ability declaring one would advertise input a
+ * caller can never send, so they are dropped from every published schema.
+ */
+const SERVER_OWNED_PARAMS = new Set(['compact', 'test_mode']);
+
 const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
 /**
@@ -190,6 +197,32 @@ export function normalizeInputSchema(raw) {
     out.properties = {};
   } else if (typeof out.properties !== 'object') {
     out.properties = {};
+  }
+
+  return dropServerOwnedParams(out);
+}
+
+/**
+ * Remove server-owned parameter names from a normalised schema, and from its
+ * `required` list — a required param that is always stripped could never be
+ * satisfied, so leaving it there makes every call fail validation.
+ *
+ * @param {object} schema A normalised input schema.
+ * @returns {object} The same schema without server-owned names.
+ */
+function dropServerOwnedParams(schema) {
+  const declared = Object.keys(schema.properties || {}).filter((name) => SERVER_OWNED_PARAMS.has(name));
+
+  if (!declared.length) return schema;
+
+  logger.warn(`⚠️  Ability schema declares reserved parameter(s) ${declared.join(', ')} — dropped, as this server consumes them and never forwards them to the site`);
+
+  const properties = { ...schema.properties };
+  for (const name of declared) delete properties[name];
+
+  const out = { ...schema, properties };
+  if (Array.isArray(out.required)) {
+    out.required = out.required.filter((name) => !SERVER_OWNED_PARAMS.has(name));
   }
 
   return out;

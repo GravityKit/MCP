@@ -55,17 +55,45 @@ suite.test('normalizeInputSchema: passes a valid schema through unchanged', () =
   TestAssert.deepEqual(out.required, ['id']);
 });
 
+suite.test('normalizeInputSchema: never advertises a param the server consumes', () => {
+  // `compact` and `test_mode` are stripped from every call before it reaches
+  // WordPress (stripControlParams). An ability that declares either would be
+  // advertising a parameter the caller can never actually send, so the published
+  // schema must not carry it.
+  const out = normalizeInputSchema({
+    type: 'object',
+    properties: { id: { type: 'integer' }, compact: { type: 'boolean' }, test_mode: { type: 'boolean' } },
+    required: ['id', 'compact'],
+  });
+
+  TestAssert.deepEqual(Object.keys(out.properties), ['id'], 'server-owned names must not be published');
+  TestAssert.deepEqual(out.required, ['id'], 'a stripped param must not stay required — nothing could satisfy it');
+});
+
+suite.test('normalizeInputSchema: leaves an ability that declares neither alone', () => {
+  // The control: dropping unconditionally would pass the test above while
+  // deleting ordinary parameters.
+  const out = normalizeInputSchema({
+    type: 'object',
+    properties: { id: { type: 'integer' }, compact_view: { type: 'boolean' } },
+    required: ['id'],
+  });
+
+  TestAssert.deepEqual(Object.keys(out.properties), ['id', 'compact_view'], 'only the exact names are reserved');
+  TestAssert.deepEqual(out.required, ['id']);
+});
+
 suite.test('normalizeInputSchema: wraps a top-level array (tools 29-36 bug)', () => {
   // The bug Claude Code surfaced: abilities 29-36 emitted `input_schema`
   // as a raw array, blowing MCP's `expected object, received array` Zod check.
   const arrayShaped = [
     { name: 'view_id', type: 'integer', required: true, description: 'The View ID.' },
-    { name: 'compact', type: 'boolean', description: 'Strip empty fields.' },
+    { name: 'verbose', type: 'boolean', description: 'Include every field.' },
   ];
   const out = normalizeInputSchema(arrayShaped);
   assertValidMcpInputSchema(out);
   TestAssert.isTrue('view_id' in out.properties, 'view_id property derived from entry.name');
-  TestAssert.isTrue('compact' in out.properties, 'compact property derived from entry.name');
+  TestAssert.isTrue('verbose' in out.properties, 'verbose property derived from entry.name');
   TestAssert.deepEqual(out.required, ['view_id'], 'required: true lifts to outer required array');
   // Ensure the descriptor's `name` was stripped from the value (now it's the key).
   TestAssert.equal(out.properties.view_id.name, undefined);
@@ -248,7 +276,7 @@ function syntheticCatalog() {
     {
       name: 'gk-gravityview/layouts-list',
       description: 'List installed layouts',
-      input_schema: { type: 'object', properties: { compact: { type: 'boolean' } } },
+      input_schema: { type: 'object', properties: { verbose: { type: 'boolean' } } },
       meta: { gk_registered_by: 'gravitykit', mcp_tool_name: 'gv_layouts_list', annotations: { readonly: true } },
     },
     // Bug shape #1 — input_schema is itself an array (tools 29-36).
@@ -513,11 +541,31 @@ suite.test('loadAbilitiesAsTools: tool 57 repro — properties:[] becomes proper
   TestAssert.deepEqual(tool.inputSchema.properties, {});
 });
 
+suite.test('loadAbilitiesAsTools: a reserved param never reaches the published tool', async () => {
+  // The end-to-end path a client's tools/list takes. stripControlParams removes
+  // `compact`/`test_mode` from every call before it leaves this server, so a tool
+  // advertising one would promise input that can never arrive.
+  const catalog = syntheticCatalog();
+  const entry = catalog.find((a) => a.name.endsWith('layouts-list'));
+  entry.input_schema = {
+    type: 'object',
+    properties: { verbose: { type: 'boolean' }, compact: { type: 'boolean' }, test_mode: { type: 'boolean' } },
+    required: ['compact'],
+  };
+
+  const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(catalog));
+  const tool = definitions.find((d) => d.name === 'gv_layouts_list');
+
+  TestAssert.isTrue(!!tool, 'the tool is still published — a reserved name must not drop the whole ability');
+  TestAssert.deepEqual(Object.keys(tool.inputSchema.properties), ['verbose']);
+  TestAssert.deepEqual(tool.inputSchema.required, []);
+});
+
 suite.test('loadAbilitiesAsTools: healthy schema passes through untouched', async () => {
   const { definitions } = await loadAbilitiesAsTools(buildStubGvClient(syntheticCatalog()));
   const tool = definitions.find((d) => d.name === 'gv_layouts_list');
   TestAssert.isTrue(!!tool);
-  TestAssert.deepEqual(tool.inputSchema.properties, { compact: { type: 'boolean' } });
+  TestAssert.deepEqual(tool.inputSchema.properties, { verbose: { type: 'boolean' } });
 });
 
 // ---------------------------------------------------------------------------
