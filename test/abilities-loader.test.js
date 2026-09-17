@@ -173,6 +173,39 @@ function buildStubGvClient(catalog) {
 }
 
 /**
+ * Stub gvClient whose Foundation catalog 404s and whose WP-core catalog is
+ * PAGINATED: `corePages` is an array of item-arrays, served by `page`, with
+ * X-WP-TotalPages set. Core's list endpoint paginates at 50 per page by
+ * default, so a site with more abilities than that is the normal case rather
+ * than an edge one.
+ */
+function buildCorePaginatedStubGvClient(corePages) {
+  const requests = [];
+  return {
+    baseUrl: 'https://test.invalid',
+    requests,
+    httpClient: {
+      request: async (config) => {
+        requests.push(config);
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          const err = new Error('Request failed with status code 404');
+          err.response = { status: 404 };
+          throw err;
+        }
+        if (config.url === CORE_ABILITIES_ROUTE) {
+          const page = config.params?.page || 1;
+          return {
+            data:    corePages[page - 1] || [],
+            headers: { 'x-wp-totalpages': String(corePages.length) },
+          };
+        }
+        return { data: { ok: true }, headers: {} };
+      },
+    },
+  };
+}
+
+/**
  * Stub gvClient whose Foundation catalog responds with the given pages
  * (array of item-arrays; X-WP-TotalPages = pages.length). Core-catalog
  * requests serve `coreCatalog`. Records every request config in
@@ -838,6 +871,53 @@ suite.test('next_steps: absent or malformed next_steps leave the description unt
   const { definitions } = await loadAbilitiesAsTools(stub);
   const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
   TestAssert.equal(byName.gv_view_create.description, 'Create a View.');
+});
+
+/**
+ * A GravityKit ability on page two of the WP-core catalog.
+ *
+ * @param {number} n Distinguishes one from the next.
+ * @returns {object} Core catalog item.
+ */
+function coreAbility(n) {
+  return {
+    name:         `gk-gravityview/paged-${n}`,
+    description:  `Paged ability ${n}`,
+    input_schema: { type: 'object', properties: {} },
+    meta:         {
+      gk_registered_by: 'gravitykit',
+      mcp_tool_name:    `gv_paged_${n}`,
+      annotations:      { readonly: true },
+    },
+  };
+}
+
+suite.test('core fallback: follows X-WP-TotalPages instead of stopping at the first page', async () => {
+  // WP core's list endpoint defaults to 50 per page. A site carrying GravityView's
+  // 49 abilities plus another product's already spills onto page two, so a
+  // single-request fallback silently serves a partial catalog.
+  const pageOne = Array.from({ length: 50 }, (unused, i) => coreAbility(i + 1));
+  const pageTwo = [ coreAbility(51), coreAbility(52) ];
+
+  const gvClient = buildCorePaginatedStubGvClient([ pageOne, pageTwo ]);
+  const { definitions, source } = await loadAbilitiesAsTools(gvClient);
+
+  TestAssert.equal(source, 'wp-core', 'catalog 404 must route to the WP-core path');
+  TestAssert.equal(definitions.length, 52, 'every page of the core catalog must be loaded');
+  TestAssert.isTrue(
+    definitions.some((d) => d.name === 'gv_paged_52'),
+    'an ability on the second page must reach the tool list'
+  );
+});
+
+suite.test('core fallback: asks for the largest page WP core allows', async () => {
+  const gvClient = buildCorePaginatedStubGvClient([ [ coreAbility(1) ] ]);
+  await loadAbilitiesAsTools(gvClient);
+
+  const coreRequest = gvClient.requests.find((r) => r.url === CORE_ABILITIES_ROUTE);
+
+  TestAssert.equal(coreRequest?.params?.per_page, 100, 'per_page must be requested, at core\'s maximum');
+  TestAssert.equal(coreRequest?.params?.page, 1, 'the first page must be asked for explicitly');
 });
 
 // Standalone runner

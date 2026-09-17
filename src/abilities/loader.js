@@ -289,19 +289,40 @@ function catalogItemsToEntries(items) {
  * @returns {Promise<Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>>}
  */
 async function fetchCoreEntries(wpClient) {
-  const { data } = await wpClient.httpClient.request({
-    method:  'GET',
-    baseURL: wpClient.baseUrl,
-    url:     CORE_ABILITIES_ROUTE,
-  });
+  // Core's list endpoint defaults to 50 items per page and caps per_page at
+  // 100, and it paginates across EVERY plugin's abilities rather than ours —
+  // so a single unpaginated request returns the first 50 of the whole site and
+  // silently drops the rest. Same loop and same runaway guard as the Foundation
+  // path above.
+  const PER_PAGE = 100;
+  const MAX_PAGES = 20;
+  const abilities = [];
 
-  if (!Array.isArray(data)) {
-    throw new Error('Unexpected Abilities API catalog shape — expected array.');
-  }
+  let page = 1;
+  let totalPages = 1;
+
+  do {
+    const response = await wpClient.httpClient.request({
+      method:  'GET',
+      baseURL: wpClient.baseUrl,
+      url:     CORE_ABILITIES_ROUTE,
+      params:  { per_page: PER_PAGE, page },
+    });
+
+    if (!Array.isArray(response.data)) {
+      throw new Error('Unexpected Abilities API catalog shape — expected array.');
+    }
+
+    abilities.push(...response.data);
+
+    const headerTotal = Number(response.headers?.['x-wp-totalpages']);
+    totalPages = Number.isFinite(headerTotal) && headerTotal > 0 ? Math.min(headerTotal, MAX_PAGES) : 1;
+    page += 1;
+  } while (page <= totalPages);
 
   const entries = [];
 
-  for (const ability of data) {
+  for (const ability of abilities) {
     if (typeof ability?.name !== 'string') continue;
 
     const meta = ability.meta && typeof ability.meta === 'object' ? ability.meta : {};
