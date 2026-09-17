@@ -8,7 +8,6 @@
     "ip-address": "Reached through express-rate-limit, itself part of the SDK's unused HTTP transport.",
     "path-to-regexp": "Reached through express, part of the SDK's unused HTTP transport.",
     "body-parser": "Reached through express, part of the SDK's unused HTTP transport.",
-    "qs": "Reached through express, part of the SDK's unused HTTP transport.",
-    "fast-uri": "Reached through ajv, which the SDK loads for schema validation. The advisories are URI host-confusion and SSRF in code paths this server does not reach: it validates tool input schemas, it does not resolve URIs from them."
+    "qs": "Reached through express, part of the SDK's unused HTTP transport."
   }
 }

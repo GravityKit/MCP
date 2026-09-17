@@ -111,5 +111,8 @@
   "devDependencies": {
     "ajv": "^8.20.0",
     "publint": "^0.3.21"
+  },
+  "overrides": {
+    "fast-uri": "4.1.3"
   }
 }
