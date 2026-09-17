@@ -1042,6 +1042,27 @@ suite.test('next_steps: never advertises a tool the collision guard dropped', as
   }
 });
 
+suite.test('ability results are not compacted: a null-valued key survives', async () => {
+  // WordPress validates every ability's output against its output_schema before
+  // returning it, so the payload conforms when it leaves the site. Stripping
+  // nulls here is the only thing that makes it stop conforming — and an absent
+  // key and a key set to null are different facts to an agent.
+  const { shapeAbilityResult } = await import('../src/utils/compact.js');
+
+  const result = shapeAbilityResult({
+    import_state:  'idle',
+    progress:      null,
+    import_job_id: null,
+    title:         '',
+    is_clean:      true,
+  });
+
+  TestAssert.isTrue('progress' in result, 'a null key must survive');
+  TestAssert.isTrue('import_job_id' in result, 'a null key must survive');
+  TestAssert.isTrue('title' in result, 'an explicitly empty string is a value, not noise');
+  TestAssert.equal(result.import_state, 'idle');
+});
+
 // Standalone runner
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {

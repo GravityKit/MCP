@@ -21,7 +21,7 @@ import fieldRegistry from './field-definitions/field-registry.js';
 import FieldAwareValidator from './config/field-validation.js';
 import logger from './utils/logger.js';
 import { sanitize } from './utils/sanitize.js';
-import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
+import { stripEmpty, stripEntryMetaFromResponse, shapeAbilityResult } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
 import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams } from './server-runtime.js';
@@ -231,8 +231,9 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
 }
 
 /**
- * Recursively strip null, empty string, and false values from objects/arrays.
- * Reduces token usage by removing noise like empty field values and absent meta keys.
+ * Recursively strip null and empty string values from objects/arrays. `false` is
+ * preserved: `is_active: false` is a value, not noise.
+ * Reduces token usage by removing empty field values and absent meta keys.
  */
 /**
  * Create standard error response
@@ -295,7 +296,7 @@ function wrapViewHandler(handler, params = {}) {
     }
     try {
       const result = await handler();
-      const output = params.compact !== false ? stripEmpty(result) : result;
+      const output = shapeAbilityResult(result, params);
       return {
         content: [{ type: 'text', text: JSON.stringify(output) }],
       };
@@ -306,7 +307,7 @@ function wrapViewHandler(handler, params = {}) {
       const status = error?.response?.status;
       const message = restBody?.message || error.message;
       const details = restBody
-        ? { status, code: restBody.code, data: restBody.data }
+        ? { status, code: restBody.code, data: sanitize(restBody.data) }
         : undefined;
       logger.error(`gv_* tool error: ${message}${status ? ` (HTTP ${status})` : ''}`);
       return createErrorResponse(message, details);
