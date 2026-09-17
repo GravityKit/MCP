@@ -42,7 +42,11 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
    - On the same **Forms → Settings → REST API** screen, click **Add Key**
    - Choose the user and permission level, then save the Consumer Key (`ck_…`) and Secret (`cs_…`)
 
-3. **Add to your MCP client.** For Claude Desktop, edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+3. **Add to your MCP client.**
+
+   **Claude Desktop — one click.** Download **[gravitykit-mcp.mcpb](https://github.com/GravityKit/MCP/releases/latest/download/gravitykit-mcp.mcpb)** and open it. Claude Desktop installs the extension and asks for your site address, username and application password — there is no config file to edit, and no Node install to keep current. That link always points at the newest release.
+
+   **Every other client — edit the config.** For Claude Desktop this is the manual equivalent of the above; edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
    ```json
    {
      "mcpServers": {

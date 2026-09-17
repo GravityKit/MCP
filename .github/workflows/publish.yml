@@ -79,6 +79,17 @@ jobs:
         # automatically before the package is published.
         run: npm publish --access public
 
+      - name: Build the Claude Desktop extension
+        if: steps.guard.outputs.published == 'false'
+        # Attached to the release below. The copy is deliberate: the versioned name
+        # is what people download and keep, while the fixed name is what
+        # /releases/latest/download/gravitykit-mcp.mcpb resolves to, so the README
+        # link survives every release without being edited.
+        run: |
+          npm run build:mcpb
+          VERSION="${{ steps.guard.outputs.version }}"
+          cp "build/gravitykit-mcp-$VERSION.mcpb" build/gravitykit-mcp.mcpb
+
       - name: Create GitHub Release
         id: release
         if: steps.guard.outputs.published == 'false'
@@ -96,7 +107,11 @@ jobs:
             --verify-tag \
             --notes "See [CHANGELOG.md](https://github.com/$GITHUB_REPOSITORY/blob/main/CHANGELOG.md) for details.
 
-          Install: \`npm install @gravitykit/mcp@$VERSION\` · [View on npm](https://www.npmjs.com/package/@gravitykit/mcp/v/$VERSION)"
+          **Claude Desktop:** download \`gravitykit-mcp.mcpb\` below and open it — no config file to edit.
+
+          Install for other clients: \`npm install @gravitykit/mcp@$VERSION\` · [View on npm](https://www.npmjs.com/package/@gravitykit/mcp/v/$VERSION)" \
+            "build/gravitykit-mcp-$VERSION.mcpb" \
+            "build/gravitykit-mcp.mcpb"
           # Signals the Slack step that a release was actually created this run
           # (not an idempotent skip), so announcements never double-fire.
           echo "created=true" >> "$GITHUB_OUTPUT"
