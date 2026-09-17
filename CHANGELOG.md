@@ -22,6 +22,9 @@ This release makes GravityKit product tools first-class: they now publish output
 - **Site credentials are resolved as a pair.** A username from one source and a password from another could be combined into a login that was never configured, failing with an authentication error that named neither. Each source is now taken whole or not at all, and the server records which one it used.
 - **The server's own instructions describe both planes.** They documented only Gravity Forms tools, leaving an assistant to discover the product tools by accident, and the guidance they did carry had narrowed to one GravityView feature.
 
+### 🔒 Security
+- **Updated axios, the library the server uses to talk to your site, to 1.18.0.** The version we shipped had a run of published advisories, including ones that could leak proxy credentials or let a crafted URL slip past NO_PROXY. 1.18.0 has none open. Contributed by @anupamme (#14).
+
 ### 🐛 Fixed
 - **`gf_delete_field` now respects the delete switch.** Deleting a form, entry, or feed required `GRAVITY_FORMS_ALLOW_DELETE=true`, but deleting a field did not, so a server set to refuse deletions still let an assistant remove a field, and a removed field does not go to the Trash. Field deletion is now refused the same way, and the tool's description says so. Contributed by @mechkw (#13).
 - **A product tool that states no safety annotations is no longer reported as safe.** The MCP specification treats an unstated `destructiveHint` as destructive, but an ability that declared neither `destructive` nor `readonly` was published to clients as harmless. Unstated now means destructive, so a product that forgets to annotate an ability errs toward warning the assistant rather than reassuring it. Spotted by @mechkw (#13).
