@@ -62,6 +62,9 @@ let wpClient = null;
 // tools/list, and every gv_* call retries the load (self-healing).
 let abilityToolDefinitions = null;
 let abilityToolHandlers = null;
+// Why abilities did not become tools, and which catalog answered. Reported by
+// gk_reload_abilities: these were stderr-only, which nobody running a client reads.
+let abilityDiagnostics = { source: null, skipped: [] };
 // In-flight catalog fetch. Single-flight: concurrent callers share the
 // same promise. On rejection it's cleared so a later call retries —
 // covers transient cert / network / WP-not-yet-booted failures without
@@ -201,9 +204,10 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
         .map((entry) => entry.trim())
         .filter(Boolean),
     })
-      .then(({ definitions, handlers, count, source }) => {
+      .then(({ definitions, handlers, count, source, skipped }) => {
         abilityToolDefinitions = definitions;
         abilityToolHandlers = handlers;
+        abilityDiagnostics = { source, skipped: skipped || [] };
         const sourceLabel = source === 'foundation-catalog' ? 'gravitykit/v1 catalog' : '/wp-abilities/v1';
         logger.info(`✅ Loaded ${count} GravityKit abilities from ${sourceLabel}`);
         // Tell connected MCP clients to refetch the tool list so the
@@ -939,6 +943,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               loaded: !!abilityToolDefinitions,
               ability_tool_count: after,
               previous_count: before,
+              catalog_source: abilityDiagnostics.source,
+              site_url: wpClient.baseUrl,
+              credential_source: wpClient.credentialSource,
+              // Every ability the catalog carried that did not become a tool,
+              // and why. Answers "it is registered but I cannot see it" without
+              // reading the server's stderr.
+              skipped: abilityDiagnostics.skipped,
               note: abilityToolDefinitions
                 ? 'Catalog refreshed. Clients receive `notifications/tools/list_changed` automatically.'
                 : 'Catalog still unreachable — check WP logs / cert / credentials. Will retry on next gv_* tool call.',

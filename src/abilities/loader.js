@@ -181,12 +181,16 @@ function arrayToProperties(arr) {
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
 export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelete = false, allowDestructive } = {}) {
+  // Why an ability did not become a tool is the question a product author asks,
+  // and it was answerable only by reading the server's stderr.
+  const skipped = [];
+
   try {
     const items = await fetchFoundationCatalogItems(wpClient);
-    const entries = catalogItemsToEntries(items);
+    const entries = catalogItemsToEntries(items, skipped);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete, allowDestructive });
+      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete, allowDestructive, skipped });
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -250,14 +254,19 @@ async function fetchFoundationCatalogItems(wpClient) {
  * @param {object[]} items Foundation catalog items.
  * @returns {Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>}
  */
-function catalogItemsToEntries(items) {
+function catalogItemsToEntries(items, skipped = []) {
   const entries = [];
 
   for (const item of items) {
     if (typeof item?.name !== 'string' || !GK_NAME_PATTERN.test(item.name)) continue;
-    if (item.enabled === false) continue;
+    if (item.enabled === false) {
+      skipped.push({ ability: item.name, reason: 'Disabled in the GravityKit settings for this site.' });
+      continue;
+    }
     if (typeof item.mcp_tool_name !== 'string' || item.mcp_tool_name === '') {
+      const reason = 'No mcp_tool_name in the catalog — the product declares no MCP prefix, so the server cannot name a tool for it.';
       logger.warn(`Ability ${item.name} has no mcp_tool_name — skipped (the server owns tool naming)`);
+      skipped.push({ ability: item.name, reason });
       continue;
     }
 
@@ -290,7 +299,7 @@ function catalogItemsToEntries(items) {
  * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>>}
  */
-async function fetchCoreEntries(wpClient) {
+async function fetchCoreEntries(wpClient, skipped = []) {
   // Core's list endpoint defaults to 50 items per page and caps per_page at
   // 100, and it paginates across EVERY plugin's abilities rather than ours —
   // so a single unpaginated request returns the first 50 of the whole site and
@@ -331,7 +340,9 @@ async function fetchCoreEntries(wpClient) {
     if (meta.gk_registered_by !== 'gravitykit') continue;
 
     if (typeof meta.mcp_tool_name !== 'string' || meta.mcp_tool_name === '') {
+      const reason = 'No meta.mcp_tool_name — the product declares no MCP prefix, so the server cannot name a tool for it.';
       logger.warn(`Ability ${ability.name} has no meta.mcp_tool_name — skipped (the server owns tool naming)`);
+      skipped.push({ ability: ability.name, reason });
       continue;
     }
 
@@ -411,7 +422,7 @@ function destructiveIsPermitted(toolName, allowDestructive) {
   return prefix !== '' && allowDestructive.includes(prefix);
 }
 
-function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false, allowDestructive } = {}) {
+function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false, allowDestructive, skipped = [] } = {}) {
   // GRAVITY_FORMS_ALLOW_DELETE is the old spelling and means "all", so a server
   // configured before the list existed keeps working.
   const permitted = Array.isArray(allowDestructive) && allowDestructive.length > 0
@@ -438,7 +449,9 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
   for (const entry of entries) {
     const takenBy = claimedBy.get(entry.toolName);
     if (takenBy) {
-      logger.warn(`Tool-name collision: "${entry.toolName}" from ${entry.abilityName} clashes with ${takenBy} — skipping ${entry.abilityName}`);
+      const reason = `Tool-name collision: "${entry.toolName}" is already claimed by ${takenBy}.`;
+      logger.warn(`${reason} Skipping ${entry.abilityName}`);
+      skipped.push({ ability: entry.abilityName, reason });
       continue;
     }
     claimedBy.set(entry.toolName, entry.abilityName);
@@ -500,7 +513,7 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
     };
   }
 
-  return { definitions, handlers, count: definitions.length, source };
+  return { definitions, handlers, count: definitions.length, source, skipped };
 }
 
 /**

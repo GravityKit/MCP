@@ -1147,6 +1147,47 @@ suite.test('structuredContent is omitted for a payload that is not an object', a
   TestAssert.isFalse('structuredContent' in abilityToolResult('ok'), 'a scalar must not be sent as structuredContent');
 });
 
+suite.test('diagnostics: every skipped ability is reported in-band, with its reason', async () => {
+  // These reasons were logged to stderr only, which nobody running a client
+  // reads. GVMF-4 is somebody unable to tell which of them applied.
+  const catalog = annotatedFoundationCatalog();
+  catalog.push({
+    name: 'gk-other/views-list',
+    description: 'A second product claiming a taken tool name.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: {},
+    enabled: true,
+    mcp_tool_name: 'gv_views_list',
+  });
+  catalog.push({
+    name: 'gk-nameless/thing-get',
+    description: 'Registered without a tool name.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: {},
+    enabled: true,
+    mcp_tool_name: '',
+  });
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { skipped } = await loadAbilitiesAsTools(stub);
+
+  TestAssert.isTrue(Array.isArray(skipped), 'the loader must report what it skipped');
+
+  const byAbility = Object.fromEntries(skipped.map((entry) => [entry.ability, entry.reason]));
+
+  TestAssert.isTrue('gk-other/views-list' in byAbility, 'a collision must be reported');
+  TestAssert.isTrue(/collision/i.test(byAbility['gk-other/views-list']), `got: ${byAbility['gk-other/views-list']}`);
+  TestAssert.isTrue('gk-nameless/thing-get' in byAbility, 'an ability with no tool name must be reported');
+});
+
+suite.test('diagnostics: a clean catalog reports nothing skipped', async () => {
+  // The control: a reporter that always listed something would pass the test above.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { skipped } = await loadAbilitiesAsTools(stub);
+
+  TestAssert.equal(skipped.length, 0);
+});
+
 // Standalone runner
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {
