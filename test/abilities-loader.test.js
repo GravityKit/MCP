@@ -1188,6 +1188,68 @@ suite.test('diagnostics: a clean catalog reports nothing skipped', async () => {
   TestAssert.equal(skipped.length, 0);
 });
 
+/**
+ * Stub whose ability /run responses fail the way a stale catalog fails.
+ *
+ * @param {string} code The WP error code the run returns.
+ * @returns {object} Stub gvClient.
+ */
+function buildStaleCatalogStub(code) {
+  const catalog = annotatedFoundationCatalog();
+  return {
+    baseUrl: 'https://test.invalid',
+    httpClient: {
+      request: async (config) => {
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          return { data: catalog, headers: { 'x-wp-totalpages': '1' } };
+        }
+        const err = new Error(`Request failed with status code 400`);
+        err.response = { status: 400, data: { code, message: 'stale' } };
+        throw err;
+      },
+    },
+  };
+}
+
+suite.test('a stale-catalog error asks for a refresh instead of leaving the agent guessing', async () => {
+  // A product upgraded mid-session leaves the agent holding a schema the site no
+  // longer accepts. The error says the input was invalid, which reads as the
+  // agent's mistake.
+  const stub = buildStaleCatalogStub('rest_ability_not_found');
+  let refreshed = 0;
+  const { handlers } = await loadAbilitiesAsTools(stub, { onStaleCatalog: () => { refreshed += 1; } });
+
+  let threw = null;
+  try {
+    await handlers.gv_views_list({});
+  } catch (error) {
+    threw = error;
+  }
+
+  TestAssert.isNotNull(threw, 'the call still fails');
+  TestAssert.isTrue(/refresh/i.test(threw.message), `the error must point at the remedy, got: ${threw.message}`);
+  TestAssert.equal(refreshed, 1, 'the catalog must be refreshed for the next call');
+});
+
+suite.test('an ordinary failure neither refreshes the catalog nor mentions one', async () => {
+  // The control: refreshing on every error would pass the test above and would
+  // refetch the catalog on a permissions refusal.
+  const stub = buildStaleCatalogStub('ability_invalid_permissions');
+  let refreshed = 0;
+  const { handlers } = await loadAbilitiesAsTools(stub, { onStaleCatalog: () => { refreshed += 1; } });
+
+  let threw = null;
+  try {
+    await handlers.gv_views_list({});
+  } catch (error) {
+    threw = error;
+  }
+
+  TestAssert.isNotNull(threw);
+  TestAssert.equal(refreshed, 0, 'a permissions refusal says nothing about the catalog being stale');
+  TestAssert.isFalse(/refresh/i.test(threw.message), `got: ${threw.message}`);
+});
+
 // Standalone runner
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {

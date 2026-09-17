@@ -44,6 +44,14 @@ export const FOUNDATION_CATALOG_ROUTE = '/wp-json/gravitykit/v1/abilities';
 /** WP core's all-plugins abilities route (WP 6.9+ / abilities-api). */
 export const CORE_ABILITIES_ROUTE = '/wp-json/wp-abilities/v1/abilities';
 
+/**
+ * WP error codes that mean the catalog this agent holds no longer matches the
+ * site — a product upgraded, or an ability was renamed or removed mid-session.
+ * A permissions refusal or a genuine bad argument is NOT in here: refetching the
+ * catalog on every failure would refetch it on the agent's own mistakes.
+ */
+const STALE_CATALOG_CODES = new Set(['rest_ability_not_found', 'ability_invalid_input']);
+
 /** Foundation's ability-name contract: gk-{product}/{action}. */
 const GK_NAME_PATTERN = /^gk-[a-z0-9-]+\//;
 
@@ -180,7 +188,7 @@ function arrayToProperties(arr) {
  *   annotated `destructive` throw instead of executing.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelete = false, allowDestructive } = {}) {
+export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelete = false, allowDestructive, onStaleCatalog } = {}) {
   // Why an ability did not become a tool is the question a product author asks,
   // and it was answerable only by reading the server's stderr.
   const skipped = [];
@@ -190,7 +198,7 @@ export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelet
     const entries = catalogItemsToEntries(items, skipped);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete, allowDestructive, skipped });
+      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete, allowDestructive, skipped, onStaleCatalog });
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -422,7 +430,7 @@ function destructiveIsPermitted(toolName, allowDestructive) {
   return prefix !== '' && allowDestructive.includes(prefix);
 }
 
-function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false, allowDestructive, skipped = [] } = {}) {
+function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false, allowDestructive, skipped = [], onStaleCatalog } = {}) {
   // GRAVITY_FORMS_ALLOW_DELETE is the old spelling and means "all", so a server
   // configured before the list existed keeps working.
   const permitted = Array.isArray(allowDestructive) && allowDestructive.length > 0
@@ -509,7 +517,19 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
       if (!isPermitted) {
         throw new Error(`${entry.toolName} is a destructive operation and is disabled on this server. Add "${entry.toolName}" (or its product prefix, or "all") to GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE to enable it.`);
       }
-      return executeAbility(wpClient, abilityName, method, params || {});
+      try {
+        return await executeAbility(wpClient, abilityName, method, params || {});
+      } catch (error) {
+        // A product upgraded mid-session leaves the agent holding a schema the
+        // site no longer accepts, and the site answers "invalid input" — which
+        // reads as the agent's mistake rather than a stale catalog. Refetch for
+        // the next call and say so, rather than letting it retry the same shape.
+        if (STALE_CATALOG_CODES.has(error?.response?.data?.code)) {
+          if (typeof onStaleCatalog === 'function') onStaleCatalog();
+          error.message = `${error.message} — the tool catalog may be out of date for this site; it has been refreshed, so re-read this tool's schema before retrying.`;
+        }
+        throw error;
+      }
     };
   }
 

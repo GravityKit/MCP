@@ -203,6 +203,12 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
         .split(',')
         .map((entry) => entry.trim())
         .filter(Boolean),
+      // Fired when a call fails the way a stale catalog fails. Refetch in the
+      // background so the next call holds the site's current schema; the call
+      // that noticed still fails, with the reason said out loud.
+      onStaleCatalog: () => {
+        ensureAbilitiesLoaded({ force: true }).catch(() => {});
+      },
     })
       .then(({ definitions, handlers, count, source, skipped }) => {
         abilityToolDefinitions = definitions;
