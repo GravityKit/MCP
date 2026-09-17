@@ -193,6 +193,13 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
       // Same env gate the static gf_delete_* tools honor — destructive
       // ability tools (gv_view_delete, …) must not be easier to run.
       allowDelete: process.env.GRAVITY_FORMS_ALLOW_DELETE === 'true',
+      // Comma-separated: "all", a product prefix (gv, gmig, gf), or an exact
+      // tool name. Lets a Migrate user permit a bundle import without also
+      // permitting every View delete, which the single boolean could not.
+      allowDestructive: (process.env.GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE || '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
     })
       .then(({ definitions, handlers, count, source }) => {
         abilityToolDefinitions = definitions;

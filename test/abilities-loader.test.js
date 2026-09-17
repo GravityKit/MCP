@@ -789,7 +789,7 @@ suite.test('annotations: core-path meta.annotations map the same way', async () 
   TestAssert.equal(tool.annotations.openWorldHint, true);
 });
 
-suite.test('gating: destructive ability handlers refuse to run without allowDelete', async () => {
+suite.test('gating: destructive ability handlers refuse to run when nothing is permitted', async () => {
   const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
   const { handlers } = await loadAbilitiesAsTools(stub);
 
@@ -800,10 +800,10 @@ suite.test('gating: destructive ability handlers refuse to run without allowDele
     } catch (err) {
       threw = err;
     }
-    TestAssert.isTrue(!!threw, `${toolName} must throw when deletes are disabled`);
+    TestAssert.isTrue(!!threw, `${toolName} must throw when nothing is permitted`);
     TestAssert.isTrue(
-      /GRAVITY_FORMS_ALLOW_DELETE/.test(threw.message),
-      `${toolName} error must name the env var, got: ${threw.message}`
+      /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(threw.message),
+      `${toolName} error must name the setting that enables it, got: ${threw.message}`
     );
   }
   const runs = stub.requests.filter((r) => typeof r.url === 'string' && r.url.includes('/run'));
@@ -834,13 +834,26 @@ suite.test('gating: readonly and non-destructive handlers are never gated', asyn
   TestAssert.equal(runs[1].method, 'POST');
 });
 
-suite.test('gating: destructive tool descriptions state the ALLOW_DELETE requirement', async () => {
+suite.test('gating: a gated destructive tool says so, and names itself', async () => {
   const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
   const { definitions } = await loadAbilitiesAsTools(stub);
   const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
-  TestAssert.isTrue(/GRAVITY_FORMS_ALLOW_DELETE/.test(byName.gv_view_delete.description));
-  TestAssert.isTrue(/GRAVITY_FORMS_ALLOW_DELETE/.test(byName.gv_view_trash.description));
-  TestAssert.isTrue(!/GRAVITY_FORMS_ALLOW_DELETE/.test(byName.gv_views_list.description));
+
+  // Naming the tool, not just the setting: the agent has to be able to tell a
+  // person exactly what to add.
+  TestAssert.isTrue(/GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_delete.description));
+  TestAssert.isTrue(/gv_view_delete/.test(byName.gv_view_delete.description));
+  TestAssert.isTrue(/GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_trash.description));
+  TestAssert.isTrue(!/GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_views_list.description));
+});
+
+suite.test('gating: the old boolean still permits everything', async () => {
+  // A server configured before the allow-list existed keeps working.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDelete: true });
+
+  await handlers.gv_view_delete({ id: 1 });
+  await handlers.gv_view_trash({ id: 1 });
 });
 
 suite.test('next_steps: surfaced in the description, mapped to exposed tool names', async () => {
@@ -918,6 +931,115 @@ suite.test('core fallback: asks for the largest page WP core allows', async () =
 
   TestAssert.equal(coreRequest?.params?.per_page, 100, 'per_page must be requested, at core\'s maximum');
   TestAssert.equal(coreRequest?.params?.page, 1, 'the first page must be asked for explicitly');
+});
+
+suite.test('gating: a permitted destructive tool does not claim it is gated', async () => {
+  // The suffix is a statement about this server's configuration. Appending it
+  // unconditionally tells a correctly configured agent that every destructive
+  // tool is switched off, which is the opposite of true.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { definitions } = await loadAbilitiesAsTools(stub, { allowDelete: true });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isFalse(
+    /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE|ALLOW_DELETE/.test(byName.gv_view_delete.description),
+    'a permitted destructive tool must not advertise a gate it is past'
+  );
+});
+
+suite.test('gating: allows one product without unlocking another', async () => {
+  // A Migrate user who needs bundle-import should not thereby be able to delete
+  // Views. The gate takes a list, not a boolean.
+  const catalog = annotatedFoundationCatalog();
+  catalog.push({
+    name: 'gk-gravitymigrate/bundle-import',
+    description: 'Import a bundle.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: { destructive: true },
+    enabled: true,
+    mcp_tool_name: 'gmig_bundle_import',
+  });
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gmig'] });
+
+  await handlers.gmig_bundle_import({});
+
+  let refused = null;
+  try {
+    await handlers.gv_view_delete({ id: 1 });
+  } catch (error) {
+    refused = error.message;
+  }
+
+  TestAssert.isNotNull(refused, 'a product outside the allow-list must stay gated');
+  TestAssert.isTrue(
+    refused.includes('destructive'),
+    `the refusal must name what it refuses, got: ${refused}`
+  );
+});
+
+suite.test('gating: an exact tool name can be permitted on its own', async () => {
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gv_view_delete'] });
+
+  await handlers.gv_view_delete({ id: 1 });
+
+  let refused = null;
+  try {
+    await handlers.gv_view_trash({ id: 1 });
+  } catch (error) {
+    refused = error.message;
+  }
+
+  TestAssert.isNotNull(refused, 'only the named tool may be permitted');
+});
+
+suite.test('gating: the refusal says destructive, not delete', async () => {
+  // "Delete operations are disabled" is wrong for an import, which is the
+  // reason the gate is reached most often outside Gravity Forms.
+  const stub = buildCatalogStubGvClient([annotatedFoundationCatalog()]);
+  const { handlers } = await loadAbilitiesAsTools(stub);
+
+  let refused = null;
+  try {
+    await handlers.gv_view_delete({ id: 1 });
+  } catch (error) {
+    refused = error.message;
+  }
+
+  TestAssert.isFalse(/Delete operations/.test(refused), `got: ${refused}`);
+});
+
+suite.test('next_steps: never advertises a tool the collision guard dropped', async () => {
+  // toolNameByAbility was built from every entry before the collision guard ran,
+  // so a step could name a tool that is not in the list the agent received.
+  const catalog = annotatedFoundationCatalog();
+  catalog.push({
+    name: 'gk-other/views-list',
+    description: 'A second product claiming the same tool name.',
+    input_schema: { type: 'object', properties: {} },
+    annotations: {},
+    enabled: true,
+    mcp_tool_name: 'gv_views_list',
+  });
+  catalog[1].annotations = {
+    destructive: true,
+    idempotent: true,
+    next_steps: [{ ability: 'gk-other/views-list', when: 'afterwards' }],
+  };
+
+  const stub = buildCatalogStubGvClient([catalog]);
+  const { definitions } = await loadAbilitiesAsTools(stub);
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+  const exposed = new Set(definitions.map((d) => d.name));
+
+  const hint = byName.gv_view_delete.description;
+  const named = (hint.match(/\bg[a-z]+_[a-z_]+\b/g) || []).filter((n) => n !== 'gv_view_delete');
+
+  for (const name of named) {
+    TestAssert.isTrue(exposed.has(name), `next_steps named "${name}", which is not in the tool list`);
+  }
 });
 
 // Standalone runner

@@ -39,7 +39,8 @@
         "GRAVITYKIT_WP_URL": "${user_config.site_url}",
         "GRAVITYKIT_WP_USERNAME": "${user_config.username}",
         "GRAVITYKIT_WP_APP_PASSWORD": "${user_config.app_password}",
-        "GRAVITY_FORMS_ALLOW_DELETE": "${user_config.allow_delete}"
+        "GRAVITY_FORMS_ALLOW_DELETE": "${user_config.allow_delete}",
+        "GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE": "${user_config.allow_destructive}"
       }
     }
   },
@@ -65,10 +66,17 @@
     },
     "allow_delete": {
       "type": "boolean",
-      "title": "Allow Claude to delete forms, entries, and feeds",
-      "description": "Deletions move items to the Trash, where you can restore them.",
+      "title": "Allow Claude to delete and overwrite your data",
+      "description": "Covers deleting forms, entries and feeds, deleting Views, and importing a migration bundle over this site's data. Deletions move items to the Trash, where you can restore them; a bundle import does not.",
       "default": false,
       "required": false
+    },
+    "allow_destructive": {
+      "type": "string",
+      "title": "Allow only some destructive tools (optional)",
+      "description": "Comma-separated. Use a product prefix (gmig for migrations, gv for Views, gf for Gravity Forms), an exact tool name, or \"all\". Leave empty to use the checkbox above, which permits everything.",
+      "required": false,
+      "default": ""
     }
   },
   "compatibility": {

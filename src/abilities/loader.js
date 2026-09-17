@@ -180,13 +180,13 @@ function arrayToProperties(arr) {
  *   annotated `destructive` throw instead of executing.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelete = false } = {}) {
+export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelete = false, allowDestructive } = {}) {
   try {
     const items = await fetchFoundationCatalogItems(wpClient);
     const entries = catalogItemsToEntries(items);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete });
+      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete, allowDestructive });
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -365,7 +365,34 @@ async function fetchCoreEntries(wpClient) {
  * @param {boolean} [options.allowDelete] Execute destructive abilities (GRAVITY_FORMS_ALLOW_DELETE).
  * @returns {{ definitions: object[], handlers: Record<string, Function>, count: number, source: string }}
  */
-function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false } = {}) {
+/**
+ * Whether a destructive tool is permitted on this server.
+ *
+ * The allow-list holds `all`, a product prefix (`gv`, `gmig`, `gf`), or an exact
+ * tool name. A prefix matches the segment before the first underscore, so `gmig`
+ * permits a bundle import without also permitting a View delete — which the old
+ * single boolean could not express.
+ *
+ * @param {string}   toolName        The MCP tool name.
+ * @param {string[]} allowDestructive Entries as above.
+ * @returns {boolean}
+ */
+function destructiveIsPermitted(toolName, allowDestructive) {
+  if (!Array.isArray(allowDestructive) || allowDestructive.length === 0) return false;
+  if (allowDestructive.includes('all')) return true;
+  if (allowDestructive.includes(toolName)) return true;
+
+  const prefix = toolName.slice(0, toolName.indexOf('_'));
+  return prefix !== '' && allowDestructive.includes(prefix);
+}
+
+function buildTools(wpClient, entries, source, { reservedNames, allowDelete = false, allowDestructive } = {}) {
+  // GRAVITY_FORMS_ALLOW_DELETE is the old spelling and means "all", so a server
+  // configured before the list existed keeps working.
+  const permitted = Array.isArray(allowDestructive) && allowDestructive.length > 0
+    ? allowDestructive
+    : (allowDelete ? ['all'] : []);
+
   const definitions = [];
   const handlers = {};
   const claimedBy = new Map();
@@ -376,30 +403,35 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
     }
   }
 
-  // Ability FQN → tool name across the whole catalog, so next_steps guidance
-  // (authored as ability names) can be surfaced under the names the agent
-  // can actually call.
+  // Ability FQN → tool name, built from the entries that SURVIVE the collision
+  // guard below. Built from every entry, a step naming a skipped ability resolves
+  // to the tool name that ability wanted — which now belongs to a different
+  // ability, or to a built-in, so the agent is sent somewhere else entirely.
+  const surviving = [];
   const toolNameByAbility = new Map();
+
   for (const entry of entries) {
+    const takenBy = claimedBy.get(entry.toolName);
+    if (takenBy) {
+      logger.warn(`Tool-name collision: "${entry.toolName}" from ${entry.abilityName} clashes with ${takenBy} — skipping ${entry.abilityName}`);
+      continue;
+    }
+    claimedBy.set(entry.toolName, entry.abilityName);
+    surviving.push(entry);
+
     if (!toolNameByAbility.has(entry.abilityName)) {
       toolNameByAbility.set(entry.abilityName, entry.toolName);
     }
   }
 
-  for (const entry of entries) {
-    const existing = claimedBy.get(entry.toolName);
-    if (existing) {
-      logger.warn(`Tool-name collision: "${entry.toolName}" from ${entry.abilityName} clashes with ${existing} — skipping ${entry.abilityName}`);
-      continue;
-    }
-    claimedBy.set(entry.toolName, entry.abilityName);
-
+  for (const entry of surviving) {
     const annotations  = entry.annotations || {};
     const isDestructive = !!annotations.destructive;
+    const isPermitted   = !isDestructive || destructiveIsPermitted(entry.toolName, permitted);
 
     let description = entry.description;
-    if (isDestructive) {
-      description += ' (requires GRAVITY_FORMS_ALLOW_DELETE=true)';
+    if (isDestructive && !isPermitted) {
+      description += ` (destructive; disabled on this server — add "${entry.toolName}" to GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE to enable)`;
     }
     const nextStepsHint = formatNextSteps(annotations.next_steps, toolNameByAbility);
     if (nextStepsHint) {
@@ -430,8 +462,8 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
     const abilityName = entry.abilityName;
     const method      = methodForAbility(annotations);
     handlers[entry.toolName] = async (params) => {
-      if (isDestructive && !allowDelete) {
-        throw new Error(`${entry.toolName} is a destructive operation. Delete operations are disabled. Set GRAVITY_FORMS_ALLOW_DELETE=true to enable.`);
+      if (!isPermitted) {
+        throw new Error(`${entry.toolName} is a destructive operation and is disabled on this server. Add "${entry.toolName}" (or its product prefix, or "all") to GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE to enable it.`);
       }
       return executeAbility(wpClient, abilityName, method, params || {});
     };
