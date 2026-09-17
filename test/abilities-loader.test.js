@@ -1250,6 +1250,27 @@ suite.test('an ordinary failure neither refreshes the catalog nor mentions one',
   TestAssert.isFalse(/refresh/i.test(threw.message), `got: ${threw.message}`);
 });
 
+suite.test('a bad argument is the agent\'s mistake, not a stale catalog', async () => {
+  // `ability_invalid_input` is what a site returns for ordinary malformed
+  // arguments, which is overwhelmingly the common case. Treating it as staleness
+  // refetches the catalog and broadcasts tools/list_changed on every agent typo,
+  // and tells the agent to re-read a schema that was never wrong.
+  const stub = buildStaleCatalogStub('ability_invalid_input');
+  let refreshed = 0;
+  const { handlers } = await loadAbilitiesAsTools(stub, { onStaleCatalog: () => { refreshed += 1; } });
+
+  let threw = null;
+  try {
+    await handlers.gv_views_list({});
+  } catch (error) {
+    threw = error;
+  }
+
+  TestAssert.isNotNull(threw, 'the call still fails');
+  TestAssert.equal(refreshed, 0, 'a bad argument must not refetch the catalog');
+  TestAssert.isFalse(/refresh/i.test(threw.message), `the error must not blame the catalog, got: ${threw.message}`);
+});
+
 /**
  * Stub whose catalog fails with `status` for the first `failures` attempts.
  *

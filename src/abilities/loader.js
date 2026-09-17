@@ -47,10 +47,11 @@ export const CORE_ABILITIES_ROUTE = '/wp-json/wp-abilities/v1/abilities';
 /**
  * WP error codes that mean the catalog this agent holds no longer matches the
  * site — a product upgraded, or an ability was renamed or removed mid-session.
- * A permissions refusal or a genuine bad argument is NOT in here: refetching the
- * catalog on every failure would refetch it on the agent's own mistakes.
+ * A permissions refusal or a bad argument is NOT in here: `ability_invalid_input`
+ * is what a site returns for ordinary malformed arguments, so refetching on it
+ * refetches the catalog and re-lists every tool on the agent's own typos.
  */
-const STALE_CATALOG_CODES = new Set(['rest_ability_not_found', 'ability_invalid_input']);
+const STALE_CATALOG_CODES = new Set(['rest_ability_not_found']);
 
 /**
  * HTTP statuses worth trying again: the server is busy or a gateway is unhappy,
@@ -593,10 +594,9 @@ function buildTools(wpClient, entries, source, { reservedNames, allowDelete = fa
       try {
         return await executeAbility(wpClient, abilityName, method, params || {});
       } catch (error) {
-        // A product upgraded mid-session leaves the agent holding a schema the
-        // site no longer accepts, and the site answers "invalid input" — which
-        // reads as the agent's mistake rather than a stale catalog. Refetch for
-        // the next call and say so, rather than letting it retry the same shape.
+        // A product upgraded mid-session leaves the agent holding a tool the site
+        // no longer has. Refetch for the next call and say so, rather than
+        // letting it retry a name that is gone.
         if (STALE_CATALOG_CODES.has(error?.response?.data?.code)) {
           if (typeof onStaleCatalog === 'function') onStaleCatalog();
           error.message = `${error.message} — the tool catalog may be out of date for this site; it has been refreshed, so re-read this tool's schema before retrying.`;
