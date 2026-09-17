@@ -338,7 +338,7 @@ GRAVITYKIT_WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
 # GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false  # Basic to a REMOTE plain-HTTP host
 GRAVITY_FORMS_ALLOW_DELETE=false      # Must be 'true' to enable delete operations
 GRAVITY_FORMS_TIMEOUT=30000           # Request timeout in ms
-GRAVITY_FORMS_MAX_RETRIES=3           # Max retry attempts
+GRAVITY_FORMS_MAX_RETRIES=3           # Catalog fetch retries on 429/502/503/504 and network errors
 GRAVITY_FORMS_DEBUG=false             # Enable debug logging (stderr)
 GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false     # Allow self-signed certs (local dev only)
 ```

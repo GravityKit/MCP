@@ -209,6 +209,10 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
       onStaleCatalog: () => {
         ensureAbilitiesLoaded({ force: true }).catch(() => {});
       },
+      // Documented as GRAVITY_FORMS_MAX_RETRIES long before anything read it.
+      maxRetries: parseInt(process.env.GRAVITY_FORMS_MAX_RETRIES, 10) >= 0
+        ? parseInt(process.env.GRAVITY_FORMS_MAX_RETRIES, 10)
+        : 2,
     })
       .then(({ definitions, handlers, count, source, skipped }) => {
         abilityToolDefinitions = definitions;

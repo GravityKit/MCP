@@ -169,7 +169,7 @@ Set these as environment variables — in your MCP client's `env` block (the `np
 - `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false` - Allow Basic auth to a REMOTE plain-HTTP host (credentials visible to the network)
 - `GRAVITY_FORMS_ALLOW_DELETE=false`   - Enable delete operations
 - `GRAVITY_FORMS_TIMEOUT=30000`        - Request timeout (ms)
-- `GRAVITY_FORMS_MAX_RETRIES=3`        - Max retry attempts for failed requests
+- `GRAVITY_FORMS_MAX_RETRIES=3`        - Retries for the abilities catalog fetch (429/502/503/504 and network errors). Ability calls are never retried: a write is not idempotent by contract.
 - `GRAVITY_FORMS_DEBUG=false`          - Enable debug logging
 - `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false`  - Allow self-signed SSL certificates (local dev only)
 

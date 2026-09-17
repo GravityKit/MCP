@@ -52,6 +52,59 @@ export const CORE_ABILITIES_ROUTE = '/wp-json/wp-abilities/v1/abilities';
  */
 const STALE_CATALOG_CODES = new Set(['rest_ability_not_found', 'ability_invalid_input']);
 
+/**
+ * HTTP statuses worth trying again: the server is busy or a gateway is unhappy,
+ * not an answer about this request. 401 and 403 are answers; retrying them
+ * delays the error and hammers a site that has already said no.
+ */
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+
+/**
+ * Whether a failed request is worth repeating.
+ *
+ * A request that never reached a server — DNS, a refused connection, a timeout —
+ * carries no response at all, and is the other retryable case.
+ *
+ * @param {Error} error The axios error.
+ * @returns {boolean}
+ */
+function isRetryable(error) {
+  const status = error?.response?.status;
+
+  return status === undefined || RETRYABLE_STATUSES.has(status);
+}
+
+/**
+ * Run a GET that is safe to repeat, retrying a transient failure.
+ *
+ * Applied to catalog fetches only. An ability call is never retried here: a POST
+ * or DELETE is not idempotent by contract, and a readonly GET that fails has
+ * already told the agent something it can act on.
+ *
+ * @param {Function} attempt      Returns the promise to retry.
+ * @param {number}   maxRetries   Extra attempts after the first.
+ * @param {number}   retryDelayMs Delay between attempts.
+ * @returns {Promise<*>}
+ */
+async function withRetry(attempt, maxRetries, retryDelayMs) {
+  let lastError;
+
+  for (let tries = 0; tries <= maxRetries; tries += 1) {
+    try {
+      return await attempt();
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryable(error) || tries === maxRetries) break;
+
+      logger.warn(`Catalog fetch failed (${error.message}) — retrying (${tries + 1}/${maxRetries})`);
+      if (retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
+  throw lastError;
+}
+
 /** Foundation's ability-name contract: gk-{product}/{action}. */
 const GK_NAME_PATTERN = /^gk-[a-z0-9-]+\//;
 
@@ -188,13 +241,21 @@ function arrayToProperties(arr) {
  *   annotated `destructive` throw instead of executing.
  * @returns {Promise<{ definitions: object[], handlers: Record<string, Function>, count: number, source: 'foundation-catalog'|'wp-core' }>}
  */
-export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelete = false, allowDestructive, onStaleCatalog } = {}) {
+export async function loadAbilitiesAsTools(wpClient, {
+  reservedNames,
+  allowDelete = false,
+  allowDestructive,
+  onStaleCatalog,
+  maxRetries = 2,
+  retryDelayMs = 500,
+} = {}) {
+  const retry = { maxRetries, retryDelayMs };
   // Why an ability did not become a tool is the question a product author asks,
   // and it was answerable only by reading the server's stderr.
   const skipped = [];
 
   try {
-    const items = await fetchFoundationCatalogItems(wpClient);
+    const items = await fetchFoundationCatalogItems(wpClient, retry);
     const entries = catalogItemsToEntries(items, skipped);
 
     if (entries.length > 0) {
@@ -206,8 +267,12 @@ export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelet
     logger.warn(`Foundation catalog unavailable (${err.message}) — falling back to WP core catalog at ${CORE_ABILITIES_ROUTE}`);
   }
 
-  const entries = await fetchCoreEntries(wpClient);
-  return buildTools(wpClient, entries, 'wp-core', { reservedNames, allowDelete });
+  const entries = await fetchCoreEntries(wpClient, skipped, retry);
+
+  // Every option the Foundation path is built with. This call site drifted from
+  // that one once already, which made the fallback quietly ignore the destructive
+  // gate, the diagnostics and the stale-catalog refresh.
+  return buildTools(wpClient, entries, 'wp-core', { reservedNames, allowDelete, allowDestructive, skipped, onStaleCatalog });
 }
 
 /**
@@ -220,7 +285,7 @@ export async function loadAbilitiesAsTools(wpClient, { reservedNames, allowDelet
  * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<object[]>} Catalog items (Manager::to_rest_item() shape).
  */
-async function fetchFoundationCatalogItems(wpClient) {
+async function fetchFoundationCatalogItems(wpClient, retry = {}) {
   const PER_PAGE = 100;
   const MAX_PAGES = 20;
   const items = [];
@@ -231,12 +296,16 @@ async function fetchFoundationCatalogItems(wpClient) {
   do {
     // Explicit baseURL per request keeps this correct even when a
     // subclass mounts a namespaced httpClient (same auth + TLS).
-    const response = await wpClient.httpClient.request({
-      method:  'GET',
-      baseURL: wpClient.baseUrl,
-      url:     FOUNDATION_CATALOG_ROUTE,
-      params:  { per_page: PER_PAGE, page },
-    });
+    const response = await withRetry(
+      () => wpClient.httpClient.request({
+        method:  'GET',
+        baseURL: wpClient.baseUrl,
+        url:     FOUNDATION_CATALOG_ROUTE,
+        params:  { per_page: PER_PAGE, page },
+      }),
+      retry.maxRetries ?? 0,
+      retry.retryDelayMs ?? 0
+    );
 
     if (!Array.isArray(response.data)) {
       throw new Error('Unexpected Foundation catalog shape — expected array.');
@@ -307,7 +376,7 @@ function catalogItemsToEntries(items, skipped = []) {
  * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>>}
  */
-async function fetchCoreEntries(wpClient, skipped = []) {
+async function fetchCoreEntries(wpClient, skipped = [], retry = {}) {
   // Core's list endpoint defaults to 50 items per page and caps per_page at
   // 100, and it paginates across EVERY plugin's abilities rather than ours —
   // so a single unpaginated request returns the first 50 of the whole site and
@@ -321,12 +390,16 @@ async function fetchCoreEntries(wpClient, skipped = []) {
   let totalPages = 1;
 
   do {
-    const response = await wpClient.httpClient.request({
-      method:  'GET',
-      baseURL: wpClient.baseUrl,
-      url:     CORE_ABILITIES_ROUTE,
-      params:  { per_page: PER_PAGE, page },
-    });
+    const response = await withRetry(
+      () => wpClient.httpClient.request({
+        method:  'GET',
+        baseURL: wpClient.baseUrl,
+        url:     CORE_ABILITIES_ROUTE,
+        params:  { per_page: PER_PAGE, page },
+      }),
+      retry.maxRetries ?? 0,
+      retry.retryDelayMs ?? 0
+    );
 
     if (!Array.isArray(response.data)) {
       throw new Error('Unexpected Abilities API catalog shape — expected array.');

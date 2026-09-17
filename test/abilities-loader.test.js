@@ -1250,6 +1250,101 @@ suite.test('an ordinary failure neither refreshes the catalog nor mentions one',
   TestAssert.isFalse(/refresh/i.test(threw.message), `got: ${threw.message}`);
 });
 
+/**
+ * Stub whose catalog fails with `status` for the first `failures` attempts.
+ *
+ * @param {number} failures How many attempts fail before one succeeds.
+ * @param {number} status   The HTTP status to fail with.
+ * @returns {object} Stub gvClient, carrying an `attempts` counter.
+ */
+function buildFlakyCatalogStub(failures, status) {
+  const state = { attempts: 0 };
+  return {
+    baseUrl: 'https://test.invalid',
+    state,
+    httpClient: {
+      request: async (config) => {
+        if (config.url === FOUNDATION_CATALOG_ROUTE) {
+          state.attempts += 1;
+          if (state.attempts <= failures) {
+            const err = new Error(`Request failed with status code ${status}`);
+            err.response = { status };
+            throw err;
+          }
+          return { data: annotatedFoundationCatalog(), headers: { 'x-wp-totalpages': '1' } };
+        }
+        return { data: { ok: true }, headers: {} };
+      },
+    },
+  };
+}
+
+suite.test('the catalog fetch retries a gateway error rather than losing every tool', async () => {
+  // A transient 502 during startup left the whole abilities surface missing until
+  // something called gk_reload_abilities. GRAVITY_FORMS_MAX_RETRIES has been
+  // documented as the control for this all along and was implemented nowhere.
+  const stub = buildFlakyCatalogStub(2, 502);
+  const { definitions, source } = await loadAbilitiesAsTools(stub, { retryDelayMs: 0 });
+
+  TestAssert.equal(source, 'foundation-catalog', 'the retry must recover the Foundation path, not fall back');
+  TestAssert.equal(stub.state.attempts, 3, 'two failures then a success');
+  TestAssert.isTrue(definitions.length > 0);
+});
+
+suite.test('the catalog fetch does not retry a refusal', async () => {
+  // 401 and 403 are answers, not weather. Retrying them delays the error and
+  // hammers a site that has already said no.
+  const stub = buildFlakyCatalogStub(1, 403);
+
+  // The whole load fails once the core fallback has nothing either; what is being
+  // asserted is how many times the Foundation catalog was asked.
+  try {
+    await loadAbilitiesAsTools(stub, { retryDelayMs: 0 });
+  } catch { /* the load failing is not what this test is about */ }
+
+  TestAssert.equal(stub.state.attempts, 1, 'a refusal must be taken at its word');
+});
+
+suite.test('the catalog fetch gives up rather than retrying forever', async () => {
+  const stub = buildFlakyCatalogStub(99, 503);
+
+  try {
+    await loadAbilitiesAsTools(stub, { retryDelayMs: 0, maxRetries: 2 });
+  } catch { /* the load failing is the point; the count is what is asserted */ }
+
+  TestAssert.equal(stub.state.attempts, 3, 'the original attempt plus two retries');
+});
+
+suite.test('the WP-core fallback is built with the same options as the Foundation path', async () => {
+  // The two call sites drifted once: the fallback ignored the destructive gate,
+  // the diagnostics and the stale-catalog refresh, and every test exercised the
+  // Foundation path so nothing noticed.
+  const core = annotatedFoundationCatalog().map((item) => ({
+    name:         item.name,
+    description:  item.description,
+    input_schema: item.input_schema,
+    meta:         {
+      gk_registered_by: 'gravitykit',
+      mcp_tool_name:    item.mcp_tool_name,
+      annotations:      item.annotations,
+    },
+  }));
+
+  const stub = buildStubGvClient(core);
+  const { definitions, skipped } = await loadAbilitiesAsTools(stub, { allowDestructive: ['gv_view_delete'] });
+  const byName = Object.fromEntries(definitions.map((d) => [d.name, d]));
+
+  TestAssert.isTrue(Array.isArray(skipped), 'the fallback must report diagnostics too');
+  TestAssert.isFalse(
+    /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_delete.description),
+    'the fallback must honour the destructive allow-list'
+  );
+  TestAssert.isTrue(
+    /GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE/.test(byName.gv_view_trash.description),
+    'and must still gate what is not on it'
+  );
+});
+
 // Standalone runner
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {
