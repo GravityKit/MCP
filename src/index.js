@@ -553,7 +553,8 @@ const GF_TOOL_DEFINITIONS = [
           enum: ['active', 'spam', 'trash'],
           description: 'Entry status'
         },
-        date_created: { type: 'string', description: 'ISO date' }
+        date_created: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' },
+        date_updated: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' }
       },
       additionalProperties: true,
       required: ['form_id']
@@ -572,7 +573,9 @@ const GF_TOOL_DEFINITIONS = [
           type: 'string',
           enum: ['active', 'spam', 'trash'],
           description: 'Entry status'
-        }
+        },
+        date_created: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' },
+        date_updated: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' }
       },
       additionalProperties: true,
       anyOf: [{ required: ['id'] }, { required: ['entry_id'] }]

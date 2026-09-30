@@ -285,6 +285,66 @@ export class BaseValidator {
     return date;
   }
 
+  /**
+   * An entry timestamp, as the "Y-m-d H:i:s" UTC string Gravity Forms stores.
+   *
+   * GFAPI::add_entry/update_entry write date_created and date_updated verbatim
+   * into a DATETIME column and document the value as UTC "Y-m-d H:i:s", which is
+   * also what every entry read returns, so that shape must be accepted or an
+   * entry cannot be written back as read. ISO 8601 is converted here instead of
+   * forwarded: MySQL would take the "Z" or offset as noise or a session-zone
+   * shift, storing a different moment without saying so. A timestamp with no
+   * zone is refused: GF has no way to know whose clock it is.
+   */
+  static normalizeEntryDate(value, fieldName) {
+    const expected = `${fieldName} must be UTC as "YYYY-MM-DD HH:MM:SS" (the format Gravity Forms returns), or an ISO 8601 timestamp with a Z or offset such as 2026-01-01T02:30:00+02:00`;
+    if (typeof value !== 'string') {
+      throw new Error(`${fieldName} must be a string`);
+    }
+
+    const parts = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:([ T])(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/);
+    if (!parts) {
+      throw new Error(expected);
+    }
+
+    const [, year, month, day, separator, hour = '00', minute = '00', second = '00', zone] = parts;
+    const isGfShape = separator === ' ' && zone === undefined;
+    const isIsoShape = separator === 'T' && zone !== undefined;
+    const isDateOnly = separator === undefined;
+    if (!isGfShape && !isIsoShape && !isDateOnly) {
+      throw new Error(expected);
+    }
+
+    let offsetMinutes = 0;
+    if (zone !== undefined && zone !== 'Z') {
+      const [offsetHours, offsetMins] = zone.slice(1).split(':').map(Number);
+      const offsetInRange = offsetHours <= 23 && offsetMins <= 59;
+      if (!offsetInRange) {
+        throw new Error(expected);
+      }
+      offsetMinutes = (zone[0] === '-' ? -1 : 1) * (offsetHours * 60 + offsetMins);
+    }
+
+    // Date rolls 2026-02-30 forward to March; comparing the parts back catches it.
+    const moment = new Date(0);
+    moment.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+    moment.setUTCHours(Number(hour), Number(minute), Number(second), 0);
+    const rolledOver =
+      moment.getUTCFullYear() !== Number(year) ||
+      moment.getUTCMonth() !== Number(month) - 1 ||
+      moment.getUTCDate() !== Number(day) ||
+      moment.getUTCHours() !== Number(hour) ||
+      moment.getUTCMinutes() !== Number(minute);
+    if (rolledOver) {
+      throw new Error(expected);
+    }
+
+    const utc = new Date(moment.getTime() - offsetMinutes * 60000);
+    const pad = (number, width = 2) => String(number).padStart(width, '0');
+    return `${pad(utc.getUTCFullYear(), 4)}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ` +
+      `${pad(utc.getUTCHours())}:${pad(utc.getUTCMinutes())}:${pad(utc.getUTCSeconds())}`;
+  }
+
   static validateBoolean(value, fieldName = 'boolean') {
     if (value !== undefined && typeof value !== 'boolean') {
       throw new Error(`${fieldName} must be a boolean`);
@@ -704,9 +764,13 @@ export class EntriesValidator extends BaseValidator {
       validated.status = this.validateStatus(entryData.status, getEnumValues('entryStatus'));
     }
 
-    if (entryData.date_created) {
-      validated.date_created = this.validateDate(entryData.date_created, 'date_created');
-    }
+    // Both take the same shape; a date_updated sent raw reached MySQL unchecked.
+    ['date_created', 'date_updated'].forEach(key => {
+      const isSet = BaseValidator.isGiven(entryData[key]) && entryData[key] !== '';
+      if (isSet) {
+        validated[key] = BaseValidator.normalizeEntryDate(entryData[key], key);
+      }
+    });
 
     this.assertStorableShape(validated, isUpdate);
 
