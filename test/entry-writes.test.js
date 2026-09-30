@@ -191,6 +191,65 @@ test('create that cannot read the entry back still returns the id and says so', 
   assert.match(result.warning, /gf_get_entry/);
 });
 
+// --- update ---
+
+const EXISTING = { id: 101696, form_id: 161, '1': 'Ada', status: 'active' };
+
+test('update refuses the nested entry shape, and writes nothing', async () => {
+  const { client, requests } = makeClient({
+    'GET /entries/101696': EXISTING,
+    'GET /forms/161': FORM,
+    'PUT /entries/101696': EXISTING
+  });
+
+  await assert.rejects(
+    () => client.updateEntry({ id: 101696, entry: { '1': 'Should not land' } }),
+    (error) => {
+      assert.match(error.message, /"entry"/);
+      assert.match(error.message, /id: 101696/);
+      return true;
+    }
+  );
+  assert.equal(writes(requests).length, 0, 'no PUT may be sent');
+});
+
+test('update refuses a key that is no field on the entry\'s form, and writes nothing', async () => {
+  const { client, requests } = makeClient({
+    'GET /entries/101696': EXISTING,
+    'GET /forms/161': FORM,
+    'PUT /entries/101696': EXISTING
+  });
+
+  await assert.rejects(() => client.updateEntry({ id: 101696, '9999': 'ghost' }), /9999.*form 161/);
+  assert.equal(writes(requests).length, 0);
+});
+
+test('update accepts real fields and sub-inputs, and saves them', async () => {
+  const { client, requests } = makeClient({
+    'GET /entries/101696': EXISTING,
+    'GET /forms/161': FORM,
+    'PUT /entries/101696': (b) => b
+  });
+
+  await client.updateEntry({ id: 101696, '1': 'Grace', '6_3': 'Oslo' });
+
+  const put = requests.find((r) => r.method === 'PUT');
+  assert.equal(put.body['1'], 'Grace');
+  assert.equal(put.body['6.3'], 'Oslo');
+  assert.equal(put.body['6_3'], undefined);
+});
+
+test('an update that touches no field never fetches the form', async () => {
+  const { client, requests } = makeClient({
+    'GET /entries/101696': EXISTING,
+    'PUT /entries/101696': (b) => b
+  });
+
+  await client.updateEntry({ id: 101696, status: 'spam' });
+
+  assert.deepEqual(requests.map((r) => `${r.method} ${r.path}`), ['GET /entries/101696', 'PUT /entries/101696']);
+});
+
 // --- the unit the client leans on ---
 
 test('assertKeysResolve passes a field whose form lists no inputs for a dotted key', () => {

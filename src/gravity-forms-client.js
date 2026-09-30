@@ -758,7 +758,7 @@ export class GravityFormsClient {
 
         // Check keys against the entry's own form, then expand checkbox arrays
         // before merging so stale sub-inputs are cleared
-        const expandedUpdates = await this._normalizeArrayValues(updates, existingEntry.form_id);
+        const expandedUpdates = await this._prepareEntryValues(updates, existingEntry.form_id);
 
         const updatedEntryData = {
           ...existingEntry,

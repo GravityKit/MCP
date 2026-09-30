@@ -561,7 +561,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_entry',
-    description: 'Update an entry. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
+    description: 'Update an entry. Put field values at the top level beside id, never nested under "entry". A key naming no field on the form is refused. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
