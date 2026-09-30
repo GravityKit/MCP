@@ -60,3 +60,37 @@ test('gf_get_results: a malformed search is rejected, not silently dropped', asy
     /search must be an object/
   );
 });
+
+// --- search.mode must reach GF where GF reads it ---
+
+test('gf_get_results: search.mode is moved into field_filters, as /entries does', async () => {
+  // GF reads the mode from $field_filters['mode'], never from a top-level
+  // search.mode, so serializing the validated object directly drops it silently
+  // and every "any" search behaves as "all".
+  const client = makeClient();
+  const gets = [];
+  client.httpClient.get = async (path, config) => { gets.push(config?.params); return { data: {} }; };
+
+  await client.getResults({
+    form_id: 1,
+    search: { mode: 'any', field_filters: [{ key: '1', value: 'x' }] },
+  });
+
+  const sent = JSON.parse(gets[0].search);
+  assert.equal(sent.mode, undefined, 'mode must not stay at the top level');
+  assert.equal(sent.field_filters.mode, 'any', 'mode belongs inside field_filters');
+  assert.equal(sent.field_filters['0'].key, '1', 'the filters themselves survive');
+});
+
+test('gf_get_results: a search with no mode is unchanged', async () => {
+  // The control: moving unconditionally would rewrite field_filters into an
+  // object for every caller, including those who never set a mode.
+  const client = makeClient();
+  const gets = [];
+  client.httpClient.get = async (path, config) => { gets.push(config?.params); return { data: {} }; };
+
+  await client.getResults({ form_id: 1, search: { field_filters: [{ key: '1', value: 'x' }] } });
+
+  const sent = JSON.parse(gets[0].search);
+  assert.ok(Array.isArray(sent.field_filters), 'stays an array when no mode is given');
+});

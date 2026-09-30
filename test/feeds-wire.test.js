@@ -184,3 +184,17 @@ test('gf_create_feed: no follow-up PATCH when is_active is omitted or true', asy
 
   assert.equal(patches.length, 0, 'active feeds need no follow-up PATCH');
 });
+
+test('gf_create_feed: a failed deactivation still returns the feed id', async () => {
+  // The feed exists by the time the PATCH runs. Throwing loses the id, so a caller
+  // that retries creates a second feed.
+  const client = makeClient();
+  client.httpClient.post = async () => ({ data: { id: 77 } });
+  client.httpClient.patch = async () => { throw new Error('boom'); };
+
+  const out = await client.createFeed({ form_id: 1, addon_slug: 'x', meta: {}, is_active: false });
+
+  assert.equal(out.feed.id, 77, 'the id survives so nobody creates a duplicate');
+  assert.equal(out.is_active, true, 'and it is reported as still active');
+  assert.match(out.warning, /could not be deactivated/);
+});

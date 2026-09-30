@@ -49,8 +49,12 @@ try {
   fs.mkdirSync(outputDir, { recursive: true });
   const output = path.join(outputDir, `gravitykit-mcp-${manifest.version}.mcpb`);
 
-  run('npx', ['-y', '@anthropic-ai/mcpb', 'validate', path.join(bundleDir, 'manifest.json')], projectRoot);
-  run('npx', ['-y', '@anthropic-ai/mcpb', 'pack', bundleDir, output], projectRoot);
+  // The local devDependency, pinned exactly, rather than `npx -y` fetching whatever
+  // the registry currently serves. This tool packs the artifact people install, so a
+  // future incompatible -- or compromised -- release must not reach a release runner
+  // unreviewed. `--no-install` refuses to download rather than silently falling back.
+  run('npx', ['--no-install', 'mcpb', 'validate', path.join(bundleDir, 'manifest.json')], projectRoot);
+  run('npx', ['--no-install', 'mcpb', 'pack', bundleDir, output], projectRoot);
 
   console.log(`\nBuilt ${output}`);
 } finally {

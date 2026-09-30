@@ -10,10 +10,15 @@ import { assignFieldIds } from '../field-definitions/field-registry.js';
  * Field properties that dependents actually consume. Conditional-logic rules
  * compare against the field's VALUES ({fieldId, operator, value}), and
  * calculations / merge tags resolve by field id and read its value — so only
- * changes to the value shape (type, choices, inputs) can break a dependent.
- * Cosmetic properties (label, description, cssClass, …) never gate an update.
+ * changes to the value shape can break a dependent. Cosmetic properties (label,
+ * description, cssClass, …) never gate an update.
+ *
+ * `inputType` belongs here even though `type` is listed: survey, product and
+ * post_category fields keep `type` fixed and pick their storage shape with
+ * `inputType`, so radio -> checkbox turns one stored value into dot-notation
+ * sub-inputs and a dependent rule reads an address that no longer holds it.
  */
-const BREAKING_UPDATE_PROPS = ['type', 'choices', 'inputs'];
+const BREAKING_UPDATE_PROPS = ['type', 'inputType', 'choices', 'inputs'];
 
 export class FieldManager {
   constructor(apiClient, fieldRegistry, validator) {
@@ -190,6 +195,12 @@ export class FieldManager {
    * Delete field with comprehensive dependency analysis
    */
   async deleteField(formId, fieldId, options = {}) {
+    // Unlike a form or entry, a deleted field does not go to the Trash: the config
+    // is gone and its entry data is orphaned. Gate it as the other deletes are.
+    if (!this.api.allowDelete) {
+      throw new Error('Delete operations are disabled. Set GRAVITY_FORMS_ALLOW_DELETE=true to enable.');
+    }
+
     const { cascade = false, force = false } = options;
     
     // Fetch form

@@ -908,8 +908,20 @@ export class GravityFormsClient {
 
       if (is_active === false) {
         const feedId = response.data?.id ?? response.data;
-        const patched = await this.httpClient.patch(`/feeds/${feedId}`, { is_active: false });
-        return { feed: patched.data };
+
+        // The feed already exists by now. Letting a failed PATCH throw would return an
+        // error carrying no id, so a caller that retries creates a second feed. Report
+        // the feed plus the fact that it is still active instead.
+        try {
+          const patched = await this.httpClient.patch(`/feeds/${feedId}`, { is_active: false });
+          return { feed: patched.data };
+        } catch (error) {
+          return {
+            feed: response.data,
+            is_active: true,
+            warning: `The feed was created (id ${feedId}) but could not be deactivated: ${error.message}. It is ACTIVE. Deactivate it with gf_update_feed rather than creating another.`,
+          };
+        }
       }
 
       return {
@@ -1000,8 +1012,12 @@ export class GravityFormsClient {
   async getResults(params) {
     return this.validateAndCall('gf_get_results', params, async (validated) => {
       const { form_id, search } = validated;
-      // GF reads /results search criteria as a JSON string, same as /entries.
-      const requestParams = search ? { search: JSON.stringify(search) } : {};
+      // GF reads /results search criteria as a JSON string, same as /entries — and
+      // reads the mode from inside field_filters, so the criteria go through the same
+      // normalization. Serializing `search` as given leaves mode at the top level,
+      // where GF never looks, and every "any" search silently behaves as "all".
+      const normalized = search ? buildEntriesQuery({ search }).search : undefined;
+      const requestParams = normalized ? { search: normalized } : {};
       const response = await this.httpClient.get(`/forms/${form_id}/results`, { params: requestParams });
 
       return {

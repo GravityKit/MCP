@@ -51,18 +51,35 @@ export class WordPressClient {
     // install) → generic WP_USERNAME → GF MCP consumer key fallback.
     // The descriptive local-dev names exist so this single admin
     // credential isn't duplicated across every per-product env block.
-    const username = this.config.GRAVITYKIT_WP_USERNAME
-      || this.config.WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER
-      || this.config.WP_USERNAME
-      || this.config.GRAVITY_FORMS_CONSUMER_KEY;
-    const password = this.config.GRAVITYKIT_WP_APP_PASSWORD
-      || this.config.WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD
-      || this.config.WP_APP_PASSWORD
-      || this.config.GRAVITY_FORMS_CONSUMER_SECRET;
-    if (!username || !password) {
-      throw new Error('WordPress client requires credentials. Set GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD, or WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER + _ADMIN_PASSWORD, or reuse GRAVITY_FORMS_CONSUMER_KEY/SECRET.');
+    // Each source is taken WHOLE. Resolving the two halves independently pairs a
+    // username from one source with a secret from another whenever a source is
+    // half-configured, and the 401 that follows reads as a wrong password rather
+    // than as the environment being incomplete.
+    const sources = [
+      ['GRAVITYKIT_WP_USERNAME', 'GRAVITYKIT_WP_APP_PASSWORD'],
+      ['WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER', 'WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD'],
+      ['WP_USERNAME', 'WP_APP_PASSWORD'],
+      ['GRAVITY_FORMS_CONSUMER_KEY', 'GRAVITY_FORMS_CONSUMER_SECRET'],
+    ];
+
+    const complete = sources.find(([user, pass]) => this.config[user] && this.config[pass]);
+
+    if (!complete) {
+      // Name the half-configured source rather than listing every option: a
+      // username set with no password is the case this is most often reached in.
+      const partial = sources.find(([user, pass]) => this.config[user] || this.config[pass]);
+      const detail = partial
+        ? ` ${partial[0]} and ${partial[1]} must both be set; only one of them is.`
+        : '';
+
+      throw new Error(`WordPress client requires credentials. Set GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD, or WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER + _ADMIN_PASSWORD, or reuse GRAVITY_FORMS_CONSUMER_KEY/SECRET.${detail}`);
     }
-    this.basicAuth = 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64');
+
+    // Recorded so `gk_reload_abilities` can say which site and which credentials
+    // this plane resolved: the two planes rank their base URLs differently and
+    // can end up pointed at different installs.
+    this.credentialSource = `${complete[0]} + ${complete[1]}`;
+    this.basicAuth = 'Basic ' + Buffer.from(`${this.config[complete[0]]}:${this.config[complete[1]]}`).toString('base64');
 
     // Compare each flag on its own: `A || B` short-circuits on a truthy string
     // like 'false', so one flag could otherwise mask the other.

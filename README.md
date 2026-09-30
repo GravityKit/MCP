@@ -42,7 +42,11 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
    - On the same **Forms → Settings → REST API** screen, click **Add Key**
    - Choose the user and permission level, then save the Consumer Key (`ck_…`) and Secret (`cs_…`)
 
-3. **Add to your MCP client.** For Claude Desktop, edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+3. **Add to your MCP client.**
+
+   **Claude Desktop — one click.** Download **[gravitykit-mcp.mcpb](https://github.com/GravityKit/MCP/releases/latest/download/gravitykit-mcp.mcpb)** and open it. Claude Desktop installs the extension and asks for your site address, username and application password — there is no config file to edit, and no Node install to keep current. That link always points at the newest release.
+
+   **Every other client — edit the config.** For Claude Desktop this is the manual equivalent of the above; edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
    ```json
    {
      "mcpServers": {
@@ -62,6 +66,7 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
    - Prefer a Gravity Forms key pair? Use `"GRAVITY_FORMS_CONSUMER_KEY": "ck_…"` and `"GRAVITY_FORMS_CONSUMER_SECRET": "cs_…"`.
    - Local dev with self-signed certs: add `"GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS": "true"` to the `env` block.
    - Pin a version with `@gravitykit/mcp@x.y.z` if you don't want `npx` tracking latest.
+   - Set `GRAVITYKIT_WP_URL`, `GRAVITYKIT_WP_USERNAME` and `GRAVITYKIT_WP_APP_PASSWORD` in the same `env` block if you use the GravityKit product tools. The two planes resolve credentials separately, so without them the `gv_*`/`gmig_*` tools can pick up values inherited from your shell and talk to a different site than the `gf_*` tools do.
 
 ## Available Tools
 
@@ -169,7 +174,7 @@ Set these as environment variables — in your MCP client's `env` block (the `np
 - `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=false` - Allow Basic auth to a REMOTE plain-HTTP host (credentials visible to the network)
 - `GRAVITY_FORMS_ALLOW_DELETE=false`   - Enable delete operations
 - `GRAVITY_FORMS_TIMEOUT=30000`        - Request timeout (ms)
-- `GRAVITY_FORMS_MAX_RETRIES=3`        - Max retry attempts for failed requests
+- `GRAVITY_FORMS_MAX_RETRIES=3`        - Retries for the abilities catalog fetch (429/502/503/504 and network errors). Ability calls are never retried: a write is not idempotent by contract.
 - `GRAVITY_FORMS_DEBUG=false`          - Enable debug logging
 - `GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS=false`  - Allow self-signed SSL certificates (local dev only)
 

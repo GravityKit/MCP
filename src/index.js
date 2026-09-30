@@ -21,10 +21,10 @@ import fieldRegistry from './field-definitions/field-registry.js';
 import FieldAwareValidator from './config/field-validation.js';
 import logger from './utils/logger.js';
 import { sanitize } from './utils/sanitize.js';
-import { stripEmpty, stripEntryMetaFromResponse } from './utils/compact.js';
+import { stripEmpty, stripEntryMetaFromResponse, abilityToolResult } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
-import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams } from './server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive } from './server-runtime.js';
 import { VERSION } from './version.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -46,7 +46,7 @@ const server = new Server(
     capabilities: {
       tools: { listChanged: true }
     },
-    instructions: 'GravityKit MCP server. Tools come from two independent planes.\n\ngf_* are always-on Gravity Forms tools (forms, entries, feeds, notifications, fields), present on any site with working Gravity Forms REST credentials.\n\ngv_* (and other GravityKit product prefixes) are generated from the connected site\'s GravityKit Foundation abilities catalog. They are present only when Foundation and the product (GravityView for gv_*) are active, so the available set varies per site.\n\nEach tool is self-describing: its description and inputSchema document its parameters and behavior. The GravityView surface is discoverable through the gv_*_list tools (gv_views_list, gv_layouts_list, gv_widgets_list, gv_available_fields_get) and gv_field_type_schema_get for field, widget, and search-field shapes. To add or configure a search bar, prefer gv_search_bar_add — one call with a View id plus fields[] of {field_id, input?} creates the search_bar and its fields. To make a search bar\'s fields display SIDE BY SIDE (horizontal, one row) instead of stacked, set the position bucket\'s area_settings.layout to "row", not the widget\'s search_layout setting (which persists but does not arrange fields). Two steps: (1) gv_view_config_get and copy the search_bar widget\'s full search_fields_section; (2) gv_view_widget_patch that widget\'s area+slot with settings={"search_fields_section": <the copied section, keeping every existing field, plus "area_settings": {"layout": "row"} added inside the same position bucket that holds the fields>}. gv_view_widget_patch replaces search_fields_section wholesale, so include all existing fields or they are lost. Use the low-level gv_search_field_* tools only for surgical slot edits after gv_view_config_get. gk_reload_abilities refreshes the catalog when product tools are missing or stale.'
+    instructions: 'GravityKit MCP server. Tools come from two independent planes.\n\ngf_* are always-on Gravity Forms tools (forms, entries, feeds, notifications, fields), present on any site with working Gravity Forms REST credentials.\n\nEverything else is generated from the connected site\'s GravityKit Foundation abilities catalog, one prefix per product: gv_* for GravityView, gmig_* for GravityMigrate, and so on. Which are present depends on what is active on that site, so read the tool list rather than assuming a product is there. gk_reload_abilities refreshes the catalog when product tools are missing or stale, and reports which abilities did NOT become tools and why.\n\nEach tool is self-describing: its description and inputSchema document its parameters and behavior. Prefer a product\'s *_list and *_get tools to discover what exists before changing anything, and a dry run before its matching write where one exists (gmig_migration_analyze before gmig_migration_run, for one).\n\nGravityView specifics worth knowing: its surface is discoverable through gv_views_list, gv_layouts_list, gv_widgets_list and gv_available_fields_get. To add or configure a search bar, prefer gv_search_bar_add — one call with a View id plus fields[] of {field_id, input?} creates the search_bar and its fields. To make a search bar\'s fields display SIDE BY SIDE (horizontal, one row) instead of stacked, set the position bucket\'s area_settings.layout to "row", not the widget\'s search_layout setting (which persists but does not arrange fields). Two steps: (1) gv_view_config_get and copy the search_bar widget\'s full search_fields_section; (2) gv_view_widget_patch that widget\'s area+slot with settings={"search_fields_section": <the copied section, keeping every existing field, plus "area_settings": {"layout": "row"} added inside the same position bucket that holds the fields>}. gv_view_widget_patch replaces search_fields_section wholesale, so include all existing fields or they are lost.'
   }
 );
 
@@ -62,6 +62,9 @@ let wpClient = null;
 // tools/list, and every gv_* call retries the load (self-healing).
 let abilityToolDefinitions = null;
 let abilityToolHandlers = null;
+// Why abilities did not become tools, and which catalog answered. Reported by
+// gk_reload_abilities: these were stderr-only, which nobody running a client reads.
+let abilityDiagnostics = { source: null, skipped: [] };
 // In-flight catalog fetch. Single-flight: concurrent callers share the
 // same promise. On rejection it's cleared so a later call retries —
 // covers transient cert / network / WP-not-yet-booted failures without
@@ -193,10 +196,25 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
       // Same env gate the static gf_delete_* tools honor — destructive
       // ability tools (gv_view_delete, …) must not be easier to run.
       allowDelete: process.env.GRAVITY_FORMS_ALLOW_DELETE === 'true',
+      // Comma-separated: "all", a product prefix (gv, gmig, gf), or an exact
+      // tool name. Lets a Migrate user permit a bundle import without also
+      // permitting every View delete, which the single boolean could not.
+      allowDestructive: parseAllowDestructive(process.env.GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE),
+      // Fired when a call fails the way a stale catalog fails. Refetch in the
+      // background so the next call holds the site's current schema; the call
+      // that noticed still fails, with the reason said out loud.
+      onStaleCatalog: () => {
+        ensureAbilitiesLoaded({ force: true }).catch(() => {});
+      },
+      // Documented as GRAVITY_FORMS_MAX_RETRIES long before anything read it.
+      maxRetries: parseInt(process.env.GRAVITY_FORMS_MAX_RETRIES, 10) >= 0
+        ? parseInt(process.env.GRAVITY_FORMS_MAX_RETRIES, 10)
+        : 2,
     })
-      .then(({ definitions, handlers, count, source }) => {
+      .then(({ definitions, handlers, count, source, skipped }) => {
         abilityToolDefinitions = definitions;
         abilityToolHandlers = handlers;
+        abilityDiagnostics = { source, skipped: skipped || [] };
         const sourceLabel = source === 'foundation-catalog' ? 'gravitykit/v1 catalog' : '/wp-abilities/v1';
         logger.info(`✅ Loaded ${count} GravityKit abilities from ${sourceLabel}`);
         // Tell connected MCP clients to refetch the tool list so the
@@ -224,8 +242,9 @@ async function ensureAbilitiesLoaded({ force = false, timeoutMs } = {}) {
 }
 
 /**
- * Recursively strip null, empty string, and false values from objects/arrays.
- * Reduces token usage by removing noise like empty field values and absent meta keys.
+ * Recursively strip null and empty string values from objects/arrays. `false` is
+ * preserved: `is_active: false` is a value, not noise.
+ * Reduces token usage by removing empty field values and absent meta keys.
  */
 /**
  * Create standard error response
@@ -288,10 +307,7 @@ function wrapViewHandler(handler, params = {}) {
     }
     try {
       const result = await handler();
-      const output = params.compact !== false ? stripEmpty(result) : result;
-      return {
-        content: [{ type: 'text', text: JSON.stringify(output) }],
-      };
+      return abilityToolResult(result, params);
     } catch (error) {
       // Axios errors carry response.data — when the server speaks
       // the inspector REST envelope, that's the most useful payload.
@@ -299,7 +315,7 @@ function wrapViewHandler(handler, params = {}) {
       const status = error?.response?.status;
       const message = restBody?.message || error.message;
       const details = restBody
-        ? { status, code: restBody.code, data: restBody.data }
+        ? { status, code: restBody.code, data: sanitize(restBody.data) }
         : undefined;
       logger.error(`gv_* tool error: ${message}${status ? ` (HTTP ${status})` : ''}`);
       return createErrorResponse(message, details);
@@ -319,7 +335,7 @@ const GF_TOOL_DEFINITIONS = [
   // Forms Management (6 tools)
   {
     name: 'gf_list_forms',
-    description: 'List all forms with optional search and pagination.',
+    description: 'List this site\'s active forms, by title. Trashed and inactive forms are left out unless their ids are named in `include`, which fetches those forms whatever their state. Gravity Forms returns every matching form at once: this endpoint has no search and no paging, so narrow the result with `include` or filter what comes back.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -327,9 +343,9 @@ const GF_TOOL_DEFINITIONS = [
         include: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Form IDs to include'
+          description: 'Form ids to fetch instead of listing. These are returned even when inactive or trashed.'
         },
-        compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
+        compact: { type: 'boolean', description: 'Strip empty and null values from the response. Set false for the raw payload.', default: true }
       }
     }
   },
@@ -934,6 +950,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               loaded: !!abilityToolDefinitions,
               ability_tool_count: after,
               previous_count: before,
+              catalog_source: abilityDiagnostics.source,
+              site_url: wpClient.baseUrl,
+              credential_source: wpClient.credentialSource,
+              // Every ability the catalog carried that did not become a tool,
+              // and why. Answers "it is registered but I cannot see it" without
+              // reading the server's stderr.
+              skipped: abilityDiagnostics.skipped,
               note: abilityToolDefinitions
                 ? 'Catalog refreshed. Clients receive `notifications/tools/list_changed` automatically.'
                 : 'Catalog still unreachable — check WP logs / cert / credentials. Will retry on next gv_* tool call.',

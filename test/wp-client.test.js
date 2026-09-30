@@ -35,3 +35,37 @@ test('allows remote plain-HTTP Basic when explicitly opted in', () => {
     GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH: 'true',
   }));
 });
+
+test('credentials resolve as a pair, never one source\'s user with another\'s secret', () => {
+  // Resolved independently, a username set without its password silently pairs
+  // with a different source's secret, and the resulting 401 reads as a wrong
+  // password rather than a half-configured environment.
+  const c = new WordPressClient({
+    GRAVITYKIT_WP_URL:                       'https://example.test',
+    GRAVITYKIT_WP_USERNAME:                  'canonical-user',
+    WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER:     'local-user',
+    WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD: 'local-password',
+  });
+
+  const decoded = Buffer.from(c.basicAuth.replace('Basic ', ''), 'base64').toString();
+
+  assert.strictEqual(decoded, 'local-user:local-password', 'the first COMPLETE source must win, not the first username');
+});
+
+test('a half-configured source names the half that is missing', () => {
+  assert.throws(
+    () => new WordPressClient({ GRAVITYKIT_WP_URL: 'https://example.test', GRAVITYKIT_WP_USERNAME: 'u' }),
+    /GRAVITYKIT_WP_APP_PASSWORD/
+  );
+});
+
+test('the resolved credential source is recorded, so the two planes can be told apart', () => {
+  const c = new WordPressClient({
+    GRAVITYKIT_WP_URL:          'https://canonical.test',
+    GRAVITYKIT_WP_USERNAME:     'user',
+    GRAVITYKIT_WP_APP_PASSWORD: 'password',
+  });
+
+  assert.strictEqual(c.baseUrl, 'https://canonical.test');
+  assert.strictEqual(c.credentialSource, 'GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD');
+});
