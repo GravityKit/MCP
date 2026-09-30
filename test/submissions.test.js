@@ -104,6 +104,54 @@ suite.test('Submit Form: rejects a field_values OBJECT (GF wants a string/array)
   );
 });
 
+suite.test('Submit Form: rejects a field_values JSON STRING (a serialized object)', async () => {
+  // The object guard above only catches an object that arrives as an object. A
+  // client that serializes its arguments hands the same mistake over as a JSON
+  // string, which satisfies GF's declared ['string','array'] type, reads as a
+  // query string with no pairs, and populates nothing — so the submission
+  // succeeds with every value silently dropped. Cost of it going unguarded: a
+  // real submission that stored only the fields GF itself complained about.
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_1: 'x', field_values: '{"1": "Ada"}' }),
+    'field_values',
+    'a JSON-string field_values must be rejected'
+  );
+});
+
+suite.test('Submit Form: still accepts a real query string and array field_values', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 7, confirmation_message: 'ok'
+  }));
+  const viaString = await client.submitFormData({ form_id: 1, input_1: 'x', field_values: 'p1=a&p2=b' });
+  TestAssert.equal(viaString.entry_id, 7, 'query-string field_values must still work');
+  const viaArray = await client.submitFormData({ form_id: 1, input_1: 'x', field_values: ['a'] });
+  TestAssert.equal(viaArray.entry_id, 7, 'array field_values must still work');
+});
+
+suite.test('Submit Form: rejects a submission carrying no input_N key', async () => {
+  // Submitting nothing returns GF's required-field message for whichever field
+  // happens to be required, which reads as one bad field rather than as none of
+  // the values arriving.
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1 }),
+    'input_N',
+    'a submission with no field values must be rejected'
+  );
+});
+
+suite.test('Submit Form: accepts the form id under either name', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 8, confirmation_message: 'ok'
+  }));
+  const viaId = await client.submitFormData({ id: 1, input_1: 'x' });
+  TestAssert.equal(viaId.entry_id, 8, 'id must work where form_id is documented');
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ id: 5, form_id: 9, input_1: 'x' }),
+    'disagree',
+    'two different ids must be rejected rather than silently picking one'
+  );
+});
+
 suite.test('Submit Form: Should handle multi-page form submission', async () => {
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true,
