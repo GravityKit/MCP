@@ -432,14 +432,13 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_validate_form',
-    description: 'Validate form input. Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3). `field_values` is GF dynamic-population data, not the submitted values.',
+    description: 'Validate form input. Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3). `field_values` is refused: it does nothing on this path.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Form ID (or pass form_id)' },
-        form_id: { type: 'number', description: 'Form ID (or pass id)' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
+        form_id: { type: 'number', description: 'Form ID (or pass id)' }
       },
       additionalProperties: true,
       anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
@@ -599,14 +598,13 @@ const GF_TOOL_DEFINITIONS = [
   // Form Submissions (2 tools)
   {
     name: 'gf_submit_form_data',
-    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Field values go as top-level input_N keys (e.g. input_1: "Ada", input_2; sub-inputs input_1_3) — a call with none is rejected. Not field_values, which is dynamic population.',
+    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Field values go as top-level input_N keys (e.g. input_1: "Ada", input_2; sub-inputs input_1_3) — a call with none is rejected. `field_values` is refused: it does nothing on this path.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Form ID (or pass form_id)' },
-        form_id: { type: 'number', description: 'Form ID (or pass id)' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
+        form_id: { type: 'number', description: 'Form ID (or pass id)' }
       },
       additionalProperties: true,
       anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
@@ -614,7 +612,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_validate_submission',
-    description: 'Validate submission without processing. Field values go as top-level input_N keys, the same as gf_submit_form_data.',
+    description: 'Validate submission without processing. Field values go as top-level input_N keys, the same as gf_submit_form_data. `field_values` is refused: it does nothing on this path.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',

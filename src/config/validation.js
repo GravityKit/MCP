@@ -884,24 +884,24 @@ export class ValidationFactory {
             inputKeyCount++;
           });
 
-          // GF declares field_values as type ['string','array'] — it is GF
-          // dynamic-population data (GFAPI::submit_form's 3rd arg), NOT the
-          // submitted values. Submitted values are the input_N keys above. An
-          // object is rejected by GF's own arg validation (HTTP 400), so reject
-          // it here with a message that points to the right place.
-          const fieldValuesIsWrongType =
-            input.field_values !== undefined &&
-            typeof input.field_values !== 'string' &&
-            !Array.isArray(input.field_values);
-          // GF's API path never parses a string field_values (GFForms::get
-          // returns '' for a non-array), so one populates nothing.
-          const fieldValuesIsSerializedObject =
-            typeof input.field_values === 'string' &&
-            /^\s*[{[]/.test(input.field_values);
-
-          if (fieldValuesIsWrongType || fieldValuesIsSerializedObject) {
-            throw new Error('field_values must be an array — it is GF dynamic-population data, and GF ignores a string one on this path; pass field values as top-level input_N keys (e.g. input_1)');
+          // field_values does nothing on the REST path, in every shape, so it is
+          // refused rather than accepted and ignored:
+          //  - a string: the only consumer that reads it, State_Handler::add_field, uses
+          //    rgget( $name, $field_values ), and GFForms::get() returns '' when
+          //    that array argument is not an array (parse_str runs only in the
+          //    shortcode and ajax render paths);
+          //  - a list: no dynamic-population parameter name is a list index;
+          //  - an associative array: /submissions registers field_values from the
+          //    schema as ['string','array'], and WordPress rest_is_array() needs a
+          //    numeric-keyed array, so it is a 400.
+          // The validation route registers no args, so an associative array does
+          // reach GFAPI::validate_form there and skips state validation for fields
+          // it names. Honoring it on validate but not submit would make validation
+          // report valid a submission that then fails, so it is refused on all three.
+          if (BaseValidator.isGiven(input.field_values)) {
+            throw new Error('field_values does nothing on Gravity Forms\' API path, so it is refused rather than accepted and ignored: pass field values as top-level input_N keys (e.g. input_1: "Ada", input_3: "..."; sub-inputs input_1_3)');
           }
+          delete subValidated.field_values;
 
           // GF answers an empty submission by naming whichever field is
           // required, never the missing values.

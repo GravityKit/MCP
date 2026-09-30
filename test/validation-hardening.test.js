@@ -349,24 +349,16 @@ test('gf_list_forms still validates include ids', () => {
   );
 });
 
-// --- field_values contract (gf_submit_form_data / gf_validate_form) ---
-// GF declares field_values as type ['string','array'] (dynamic population);
-// submitted values are the separate input_N keys. An object is the wrong shape
-// and GF 400s it.
-test('gf_submit_form_data: field_values must be a GF string|array, not an object', () => {
-  assert.throws(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: { '1': 'x' } }),
-    /field_values/,
-    'an object must be rejected (GF rejects it)'
-  );
-  assert.doesNotThrow(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, input_1: 'x', field_values: 'p1=a&p2=b' }),
-    'a query string must be accepted'
-  );
-  assert.doesNotThrow(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, input_1: 'x', field_values: ['a', 'b'] }),
-    'an array must be accepted'
-  );
+// --- field_values is refused (gf_submit_form_data / gf_validate_form) ---
+// It is GF dynamic-population data and does nothing on the API path in any
+// shape; submitted values are the separate input_N keys.
+test('gf_submit_form_data: field_values is refused in every shape', () => {
+  for (const value of [{ '1': 'x' }, 'p1=a&p2=b', ['a', 'b']]) {
+    assert.throws(
+      () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, input_1: 'x', field_values: value }),
+      /field_values does nothing/
+    );
+  }
 });
 
 test('gf_submit_form_data: submission values pass through as input_N keys', () => {
@@ -375,9 +367,9 @@ test('gf_submit_form_data: submission values pass through as input_N keys', () =
   assert.equal(v.input_2, 'j@x.com');
 });
 
-test('gf_validate_form: field_values object likewise rejected, string accepted', () => {
-  assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: { a: 1 } }), /field_values/);
-  assert.doesNotThrow(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: 'a=1' }));
+test('gf_validate_form: field_values is refused too', () => {
+  assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: { a: 1 } }), /field_values does nothing/);
+  assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: 'a=1' }), /field_values does nothing/);
 });
 
 // --- the entry id under either name ---

@@ -70,7 +70,7 @@ suite.test('Submit Form: Should handle validation errors', async () => {
   TestAssert.equal(result.validation_messages['1'], 'Name is required');
 });
 
-suite.test('Submit Form: Should include field values', async () => {
+suite.test('Submit Form: sends input_N values and no field_values', async () => {
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true,
     entry_id: 600
@@ -79,24 +79,19 @@ suite.test('Submit Form: Should include field values', async () => {
   const result = await client.submitFormData({
     form_id: 1,
     input_1: 'Jane Smith',
-    input_2: 'jane@example.com',
-    // Submission values are the input_N keys above. field_values is GF
-    // dynamic-population data — a query string (or array), not an object.
-    field_values: 'utm_source=google&utm_campaign=summer2024'
+    input_2: 'jane@example.com'
   });
 
   TestAssert.isTrue(result.success);
   TestAssert.equal(result.entry_id, 600);
 
-  // Valid shape reaches the wire: input_N values + the field_values string.
   const body = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
   TestAssert.equal(body.input_1, 'Jane Smith');
-  TestAssert.equal(body.field_values, 'utm_source=google&utm_campaign=summer2024');
+  TestAssert.equal(body.field_values, undefined, 'field_values must never ride to GF');
 });
 
-suite.test('Submit Form: rejects a field_values OBJECT (GF wants a string/array)', async () => {
-  // Invalid shape — GF declares field_values as ['string','array'] and 400s an
-  // object. The client must reject it up front rather than send a 400-bound body.
+suite.test('Submit Form: rejects a field_values OBJECT', async () => {
+  // GF 400s an object here (rest_is_array); refuse it up front.
   await TestAssert.throwsAsync(
     () => client.submitFormData({ form_id: 1, field_values: { '1': 'x' } }),
     'field_values',
@@ -125,22 +120,26 @@ suite.test('Submit Form: rejects a field_values JSON STRING (a serialized object
   );
 });
 
-suite.test('Submit Form: a bracket inside a query string is not a serialized object', async () => {
-  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
-    is_valid: true, entry_id: 7, confirmation_message: 'ok'
-  }));
-  const result = await client.submitFormData({ form_id: 1, input_1: 'x', field_values: 'tags[]=a&tags[]=b' });
-  TestAssert.equal(result.entry_id, 7, 'PHP array syntax in a query string must still be accepted');
-});
-
-suite.test('Submit Form: still accepts a real query string and array field_values', async () => {
-  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
-    is_valid: true, entry_id: 7, confirmation_message: 'ok'
-  }));
-  const viaString = await client.submitFormData({ form_id: 1, input_1: 'x', field_values: 'p1=a&p2=b' });
-  TestAssert.equal(viaString.entry_id, 7, 'query-string field_values must still work');
-  const viaArray = await client.submitFormData({ form_id: 1, input_1: 'x', field_values: ['a'] });
-  TestAssert.equal(viaArray.entry_id, 7, 'array field_values must still work');
+suite.test('Submit Form: refuses a plain query string and an array field_values too', async () => {
+  // Every shape is inert on GF's API path, so a query string is refused like the
+  // JSON shapes above instead of being accepted and ignored. Nothing is sent.
+  const before = mockHttpClient.getRequests().length;
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_1: 'x', field_values: 'p1=a&p2=b' }),
+    'does nothing',
+    'a query-string field_values must be refused'
+  );
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_1: 'x', field_values: 'tags[]=a&tags[]=b' }),
+    'input_N',
+    'the refusal points at input_N keys'
+  );
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_1: 'x', field_values: ['a'] }),
+    'does nothing',
+    'an array field_values must be refused'
+  );
+  TestAssert.equal(mockHttpClient.getRequests().length, before, 'no request may be sent');
 });
 
 suite.test('Submit Form: rejects a submission carrying no input_N key', async () => {
