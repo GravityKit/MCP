@@ -121,3 +121,46 @@ test('the entry tool schemas name the accepted date formats', () => {
   }
 });
 
+
+// --- 3. date_updated on update -----------------------------------------------
+//
+// GFAPI::update_entry fills date_updated with utc_timestamp() only when the value
+// it is given is empty (includes/api.php:904). updateEntry fetch-then-merges, so
+// the stored stamp rode along in the PUT body and GF kept it: every entry changed
+// through the tool looked untouched since creation.
+
+const STORED = { id: 9, form_id: 161, '1': 'Ada', date_created: '2026-09-30 23:41:13', date_updated: '2026-09-30 23:41:13' };
+
+test('an update that names no date_updated does not resend the stored one, so GF stamps the change', async () => {
+  const { client, requests } = makeClient({
+    'GET /entries/9': STORED,
+    'GET /forms/161': FORM,
+    'PUT /entries/9': (b) => b
+  });
+  await client.updateEntry({ id: 9, '1': 'Grace' });
+  const put = requests.find((r) => r.method === 'PUT').body;
+  assert.equal(put['1'], 'Grace');
+  assert.equal(put.date_created, STORED.date_created, 'date_created still round-trips');
+  assert.ok(!('date_updated' in put) || put.date_updated === '' || put.date_updated == null,
+    `stored date_updated must not be resent, got ${JSON.stringify(put.date_updated)}`);
+});
+
+test('an explicit date_updated on an update still wins', async () => {
+  const { client, requests } = makeClient({
+    'GET /entries/9': STORED,
+    'GET /forms/161': FORM,
+    'PUT /entries/9': (b) => b
+  });
+  await client.updateEntry({ id: 9, '1': 'Grace', date_updated: '2027-01-02 03:04:05' });
+  assert.equal(requests.find((r) => r.method === 'PUT').body.date_updated, '2027-01-02 03:04:05');
+});
+
+test('an explicit date_updated equal to the stored one is still sent', async () => {
+  const { client, requests } = makeClient({
+    'GET /entries/9': STORED,
+    'GET /forms/161': FORM,
+    'PUT /entries/9': (b) => b
+  });
+  await client.updateEntry({ id: 9, '1': 'Grace', date_updated: STORED.date_updated });
+  assert.equal(requests.find((r) => r.method === 'PUT').body.date_updated, STORED.date_updated);
+});

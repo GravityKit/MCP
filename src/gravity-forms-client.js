@@ -765,6 +765,14 @@ export class GravityFormsClient {
           ...expandedUpdates
         };
 
+        // GFAPI::update_entry stamps date_updated with the current time only when
+        // the value it receives is empty, so the stored stamp resent by the merge
+        // above would keep the entry looking untouched. A caller's own value wins.
+        const callerSetDateUpdated = Object.prototype.hasOwnProperty.call(expandedUpdates, 'date_updated');
+        if (!callerSetDateUpdated) {
+          delete updatedEntryData.date_updated;
+        }
+
         const response = await this.httpClient.put(`/entries/${id}`, updatedEntryData);
 
         return {
