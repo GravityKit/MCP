@@ -88,6 +88,17 @@ export class FieldManager {
     // Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
     this.normalizeLayoutProperties(field, formId);
     
+    // Refuse a position that is a caller mistake (unknown mode, bad page) before
+    // anything is written; placements that fall back (missing reference field,
+    // clamped index) are allowed but reported in `warnings` below, because the
+    // positioner's own logging goes to stderr, which an MCP client never sees.
+    const positionCheck = this.positionEngine
+      ? this.positionEngine.validatePositionConfig(position, form.fields || [])
+      : { valid: true, errors: [], warnings: [] };
+    if (!positionCheck.valid) {
+      throw new Error(`Invalid position: ${positionCheck.errors.join('; ')}`);
+    }
+
     // Calculate insertion position (page-aware). Never `||` this result:
     // 0 is a legitimate index (prepend / index:0 / before-the-first-field)
     // and a falsy fallback would silently append instead.
@@ -115,6 +126,8 @@ export class FieldManager {
       );
     }
 
+    warnings.push(...positionCheck.warnings);
+
     return {
       success: true,
       field: field,
@@ -122,7 +135,7 @@ export class FieldManager {
       form_id: formId,
       position: { 
         index: insertIndex, 
-        page: field.pageNumber || 1 
+        page: this.positionEngine?.getFieldPage?.(field, form.fields) || 1
       }
     };
   }

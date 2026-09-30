@@ -217,6 +217,7 @@ test('FieldManager - addField', async (t) => {
     
     // Mock position engine
     manager.positionEngine = {
+      validatePositionConfig: () => ({ valid: true, errors: [], warnings: [] }),
       calculatePosition: () => 3
     };
 
@@ -877,4 +878,109 @@ test('addField leaves storageType off a field type that does not need it', async
   const result = await manager.addField(1, 'select', { label: 'Pick one' });
 
   assert.strictEqual(result.field.storageType, undefined);
+});
+
+
+// A position the server cannot honor must not be reported as a plain success.
+// Before, a reference to a missing field and an unknown mode both appended the
+// field and returned `warnings: []`; the only trace was a stderr log line no
+// MCP client sees.
+test('FieldManager - addField reports positions it could not honor', async (t) => {
+  const mk = (formExtra = {}) => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({
+        form: {
+          id: 1,
+          title: 'Test Form',
+          fields: [
+            { id: 1, type: 'text', label: 'A' },
+            { id: 2, type: 'text', label: 'B' },
+            { id: 3, type: 'text', label: 'C' }
+          ],
+          ...formExtra
+        }
+      }),
+      replaceForm: async (formId, form) => {
+        puts.push(form);
+        return { form };
+      }
+    };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.positionEngine = new PositionEngine();
+    return { manager, puts };
+  };
+
+  await t.test('after a nonexistent field: appends and says so', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'after', reference: 99999 });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.position.index, 3);
+    assert.ok(result.warnings.some((w) => /99999/.test(w) && /not found/.test(w)), result.warnings.join('|'));
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['A', 'B', 'C', 'NEW']);
+  });
+
+  await t.test('before a nonexistent field: places it and says so', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'before', reference: 99999 });
+    assert.ok(result.warnings.some((w) => /99999/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('an unknown mode throws and does not save the form', async () => {
+    const { manager, puts } = mk();
+    await assert.rejects(
+      () => manager.addField(1, 'text', { label: 'NEW' }, { mode: 'sideways', reference: 1 }),
+      /Invalid position mode: sideways.*append, prepend, after, before, index/
+    );
+    assert.strictEqual(puts.length, 0, 'the form must not be written');
+  });
+
+  await t.test('an invalid page number throws and does not save the form', async () => {
+    const { manager, puts } = mk();
+    await assert.rejects(
+      () => manager.addField(1, 'text', { label: 'NEW' }, { page: -1 }),
+      /Invalid page number/
+    );
+    assert.strictEqual(puts.length, 0);
+  });
+
+  await t.test('an out-of-range index is clamped and reported', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'index', reference: 50 });
+    assert.strictEqual(result.position.index, 3);
+    assert.ok(result.warnings.some((w) => /index 50/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('a page past the last page is reported', async () => {
+    const { manager } = mk({ pagination: { type: 'percentage' } });
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { page: 9 });
+    assert.ok(result.warnings.some((w) => /Page 9/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('position.page reports the page the field landed on', async () => {
+    const { manager } = mk({
+      fields: [
+        { id: 1, type: 'text', label: 'A' },
+        { id: 2, type: 'page', label: 'Break' },
+        { id: 3, type: 'text', label: 'C' }
+      ],
+      pagination: { type: 'percentage' }
+    });
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'after', reference: 3 });
+    assert.strictEqual(result.position.page, 2);
+  });
+
+  await t.test('a valid position adds no warnings', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'after', reference: 1 });
+    assert.strictEqual(result.position.index, 1);
+    assert.deepStrictEqual(result.warnings, []);
+  });
+
+  await t.test('position warnings sit beside the field-shape warnings', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'customtype', { label: 'NEW' }, { mode: 'after', reference: 99999 });
+    assert.ok(result.warnings.some((w) => /not in the known field registry/.test(w)));
+    assert.ok(result.warnings.some((w) => /99999/.test(w)));
+  });
 });
