@@ -39,16 +39,12 @@ export class BaseValidator {
   }
 
   /**
-   * Resolves a form id given under either name.
-   *
-   * The tools disagree about what to call it: gf_get_form and gf_update_form
-   * take `id`, while gf_submit_form_data and gf_create_entry take `form_id`.
-   * Guessing wrong costs a round trip and an error that names only the name it
-   * wanted, so accept both everywhere and reject only a genuine contradiction.
+   * Resolves a form id given under either `id` or `form_id`.
    *
    * @param {object} input     The tool input.
-   * @param {string} preferred The name this tool documents.
+   * @param {string} preferred The name this tool documents; the other is accepted too.
    * @returns {number} The validated id.
+   * @throws When neither is present, or both are present and disagree.
    */
   static resolveFormId(input, preferred = 'form_id') {
     const other = preferred === 'form_id' ? 'id' : 'form_id';
@@ -589,26 +585,15 @@ export class ValidationFactory {
           let inputKeyCount = 0;
           Object.keys(input).forEach(key => {
             if (key.startsWith('input_')) {
-              // Coerce scalars to strings, which is what GF wants on the wire,
-              // but never flatten a composite value. The same String() lesson
-              // the field filters above already learned, on the submission path:
-              //
-              //   - A multiselect or checkbox value is an ARRAY. String() joins
-              //     it with commas, and a value that itself contains a comma
-              //     ("Atlanta, GA") then cannot be told from the separator, so
-              //     the choices arrive wrong with nothing reported.
-              //   - A GF 3.0 "formatted" phone value is an OBJECT of country /
-              //     national / formatted / e164. String() makes it the literal
-              //     text "[object Object]".
-              //
-              // Both are what GF's own guidance tells callers to send, so both
-              // have to survive the trip.
-              // GF's abilities layer documents sub-inputs in DOT notation
-              // (input_5.3 for First Name on field 5) and converts internally.
-              // GFAPI::submit_form, which this endpoint calls, wants underscore
-              // (its own docblock: $input_values['input_2_6']). An agent
-              // carrying the abilities habit here would have its sub-input
-              // values dropped without a word, so accept either and normalize.
+              // GF wants scalars as strings, but two value shapes must reach it
+              // intact: a multiselect or checkbox value is an array, where a
+              // comma inside a value ("Atlanta, GA") is indistinguishable from a
+              // separator once joined, and a GF 3.0 "formatted" phone value is an
+              // object of country / national / formatted / e164.
+              // Sub-inputs reach this server in either spelling: GF's abilities
+              // layer documents dot notation (input_5.3), while
+              // GFAPI::submit_form reads only underscore (its docblock:
+              // $input_values['input_2_6']).
               const targetKey = /^input_\d+\.\d+$/.test(key) ? key.replace('.', '_') : key;
               if (targetKey !== key) {
                 delete subValidated[key];
@@ -636,10 +621,9 @@ export class ValidationFactory {
             input.field_values !== undefined &&
             typeof input.field_values !== 'string' &&
             !Array.isArray(input.field_values);
-          // A client that serializes an object argument hands this through as a
-          // JSON string, which the type check above lets past. GF then reads it
-          // as a query string, finds no pairs, and populates nothing — the
-          // submission succeeds with every value silently dropped.
+          // A serialized object satisfies the string type above, and GF then
+          // reads it as a query string with no pairs: the submission succeeds
+          // having populated nothing.
           const fieldValuesIsSerializedObject =
             typeof input.field_values === 'string' &&
             /^\s*[{[]/.test(input.field_values);
@@ -648,10 +632,9 @@ export class ValidationFactory {
             throw new Error('field_values must be a query string (e.g. "p1=a&p2=b") or array — it is GF dynamic-population data, not submission values; pass field values as top-level input_N keys (e.g. input_1)');
           }
 
-          // A submission carrying no input_N key submits nothing. GF answers
-          // with a required-field message for whatever field happens to be
-          // required, which reads as "that one field is wrong" rather than
-          // "none of your values arrived" — so say the real thing here.
+          // GF answers an empty submission with a required-field message for
+          // whichever field happens to be required, which names one field rather
+          // than the missing values.
           if (toolName === 'gf_submit_form_data' && inputKeyCount === 0) {
             throw new Error('no field values were given: pass them as top-level input_N keys (e.g. input_1: "Ada", input_3: "..."), one per field id');
           }

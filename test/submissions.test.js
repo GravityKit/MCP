@@ -105,12 +105,9 @@ suite.test('Submit Form: rejects a field_values OBJECT (GF wants a string/array)
 });
 
 suite.test('Submit Form: rejects a field_values JSON STRING (a serialized object)', async () => {
-  // The object guard above only catches an object that arrives as an object. A
-  // client that serializes its arguments hands the same mistake over as a JSON
-  // string, which satisfies GF's declared ['string','array'] type, reads as a
-  // query string with no pairs, and populates nothing — so the submission
-  // succeeds with every value silently dropped. Cost of it going unguarded: a
-  // real submission that stored only the fields GF itself complained about.
+  // A serialized object satisfies GF's declared ['string','array'] type, so the
+  // object guard above does not see it. GF reads it as a query string with no
+  // pairs: the submission succeeds having populated nothing.
   await TestAssert.throwsAsync(
     () => client.submitFormData({ form_id: 1, input_1: 'x', field_values: '{"1": "Ada"}' }),
     'field_values',
@@ -129,9 +126,8 @@ suite.test('Submit Form: still accepts a real query string and array field_value
 });
 
 suite.test('Submit Form: rejects a submission carrying no input_N key', async () => {
-  // Submitting nothing returns GF's required-field message for whichever field
-  // happens to be required, which reads as one bad field rather than as none of
-  // the values arriving.
+  // GF answers an empty submission by naming whichever field is required, not
+  // the missing values.
   await TestAssert.throwsAsync(
     () => client.submitFormData({ form_id: 1 }),
     'input_N',
@@ -153,10 +149,8 @@ suite.test('Submit Form: accepts the form id under either name', async () => {
 });
 
 suite.test('Submit Form: keeps a multiselect value an array', async () => {
-  // GF's own guidance: multiselect and checkbox values go as an array, never a
-  // comma-separated string, because a value containing a comma ("Atlanta, GA")
-  // is then indistinguishable from the separator. String()-coercing the whole
-  // value flattened exactly that away.
+  // Multiselect and checkbox values go to GF as an array: once joined, a comma
+  // inside a value ("Atlanta, GA") is indistinguishable from a separator.
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true, entry_id: 9, confirmation_message: 'ok'
   }));
@@ -168,7 +162,7 @@ suite.test('Submit Form: keeps a multiselect value an array', async () => {
 
 suite.test('Submit Form: keeps a formatted phone value an object', async () => {
   // A GF 3.0 "formatted" phone is an object of country/national/formatted/e164
-  // and must be submitted as one. String() turned it into "[object Object]".
+  // and has to be submitted as one.
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true, entry_id: 10, confirmation_message: 'ok'
   }));
@@ -190,9 +184,8 @@ suite.test('Submit Form: still stringifies scalar values', async () => {
 
 suite.test('Submit Form: accepts GF abilities dot notation for sub-inputs', async () => {
   // GF's abilities layer documents sub-inputs as input_5.3; GFAPI::submit_form,
-  // which the REST endpoint calls, wants input_5_3 (its own docblock says
-  // $input_values['input_2_6']). Passing the dot form through unchanged loses
-  // the value with nothing reported, so accept either spelling.
+  // which the REST endpoint calls, reads only input_5_3 (its docblock:
+  // $input_values['input_2_6']).
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true, entry_id: 12, confirmation_message: 'ok'
   }));
