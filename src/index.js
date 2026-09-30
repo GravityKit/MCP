@@ -430,7 +430,7 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
         form_id: { type: 'number', description: 'Form ID (or pass id)' },
         field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
@@ -587,7 +587,7 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
         form_id: { type: 'number', description: 'Form ID (or pass id)' },
         field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
@@ -602,7 +602,7 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
         form_id: { type: 'number', description: 'Form ID (or pass id)' }
       },
       additionalProperties: true,

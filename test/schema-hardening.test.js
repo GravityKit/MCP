@@ -174,3 +174,39 @@ test('gf_send_notifications keeps entry_id/notification_ids/event; notification_
     'notification_ids items description must note ids must be non-empty'
   );
 });
+
+test('every form tool publishes both id and form_id, and requires one of them', () => {
+  // BaseValidator.resolveFormId accepts either spelling, so a schema requiring
+  // only one makes a schema-enforcing client reject the alias before the server
+  // sees it. Evaluating the literal also collapses a duplicate key, which is how
+  // a `form_id` declared twice in place of `id` becomes visible here.
+  const defs = loadToolDefinitions();
+  const tools = [
+    'gf_get_form',
+    'gf_delete_form',
+    'gf_update_form',
+    'gf_validate_form',
+    'gf_submit_form_data',
+    'gf_validate_submission'
+  ];
+
+  for (const name of tools) {
+    const schema = findTool(defs, name).inputSchema;
+    const props = Object.keys(schema.properties);
+
+    assert.ok(props.includes('id'), `${name} must advertise id`);
+    assert.ok(props.includes('form_id'), `${name} must advertise form_id`);
+    assert.equal(
+      schema.required,
+      undefined,
+      `${name} must not require one spelling outright; use anyOf`
+    );
+
+    const required = (schema.anyOf || []).map((branch) => (branch.required || []).join(','));
+    assert.deepEqual(
+      required.sort(),
+      ['form_id', 'id'],
+      `${name} anyOf must require exactly one of id or form_id`
+    );
+  }
+});
