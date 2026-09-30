@@ -386,3 +386,69 @@ test('gf_validate_form: field_values object likewise rejected, string accepted',
   assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: { a: 1 } }), /field_values/);
   assert.doesNotThrow(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: 'a=1' }));
 });
+
+// --- the entry id under either name ---
+//
+// The entry tools document `id` while gf_send_notifications names the same entry
+// `entry_id`, so a caller who learned one spelling reaches for it on the other
+// tools. BaseValidator.resolveEntryId accepts both and refuses only a genuine
+// contradiction, the same way resolveFormId does for the form tools.
+
+for (const tool of ['gf_get_entry', 'gf_delete_entry', 'gf_update_entry']) {
+  test(`${tool}: entry_id is accepted as the entry id`, () => {
+    const v = ValidationFactory.validateToolInput(tool, { entry_id: 101691 });
+    assert.equal(v.id, 101691);
+  });
+
+  test(`${tool}: id still works and is unaffected`, () => {
+    const v = ValidationFactory.validateToolInput(tool, { id: 101691 });
+    assert.equal(v.id, 101691);
+  });
+
+  test(`${tool}: id and entry_id naming the same entry agree`, () => {
+    const v = ValidationFactory.validateToolInput(tool, { id: 101691, entry_id: 101691 });
+    assert.equal(v.id, 101691);
+  });
+
+  test(`${tool}: id and entry_id that disagree are rejected`, () => {
+    assert.throws(
+      () => ValidationFactory.validateToolInput(tool, { id: 101691, entry_id: 999 }),
+      /id and entry_id were both given and disagree \(101691 vs 999\); pass one/
+    );
+  });
+
+  test(`${tool}: neither name given still reports id as required`, () => {
+    assert.throws(() => ValidationFactory.validateToolInput(tool, {}), /id is required/);
+  });
+
+  test(`${tool}: a bad entry_id is reported under its own name`, () => {
+    assert.throws(
+      () => ValidationFactory.validateToolInput(tool, { entry_id: 0 }),
+      /entry_id must be a positive integer/
+    );
+  });
+}
+
+test('gf_update_entry: an entry_id alias does not survive into the PUT body', () => {
+  // updateEntry spreads everything but `id` into the entry it saves, so an alias
+  // left behind would be written onto the entry as a field of its own.
+  const v = ValidationFactory.validateToolInput('gf_update_entry', { entry_id: 101691, status: 'spam', 1: 'Ada' });
+  assert.equal(v.id, 101691);
+  assert.ok(!('entry_id' in v), 'entry_id must not ride into the saved entry');
+  assert.equal(v.status, 'spam');
+  assert.equal(v['1'], 'Ada');
+});
+
+test('gf_create_entry keys on form_id and gains no entry id alias', () => {
+  // The control: create has no entry id at all, so neither name may appear.
+  const v = ValidationFactory.validateToolInput('gf_create_entry', { form_id: 159, 1: 'Ada' });
+  assert.equal(v.form_id, 159);
+  assert.ok(!('entry_id' in v));
+  assert.throws(() => ValidationFactory.validateToolInput('gf_create_entry', { entry_id: 1 }), /form_id is required/);
+});
+
+test('resolveEntryId and resolveFormId share one mechanism', () => {
+  assert.equal(BaseValidator.resolveIdAlias({ entry_id: 7 }, 'id', 'entry_id'), 7);
+  assert.equal(BaseValidator.resolveEntryId({ entry_id: 7 }), 7);
+  assert.equal(BaseValidator.resolveFormId({ id: 7 }), 7);
+});

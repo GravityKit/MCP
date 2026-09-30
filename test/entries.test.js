@@ -216,6 +216,47 @@ suite.test('List Entries: consecutive pages produce different wire (pagination i
   TestAssert.isTrue(page1 !== page2, 'different pages must yield different requests');
 });
 
+suite.test('List Entries: a singular form_id goes out as the form_ids array GF reads', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [], total_count: 0 }));
+
+  await client.listEntries({ form_id: 159 });
+
+  // GF /entries reads form_ids[0]=… and knows no singular form_id, so a query
+  // carrying only the singular is site-wide: measured on staging it returned two
+  // other forms' 2014 entries and a total_count of the whole entry table. Assert
+  // the outgoing REQUEST, because the response alone cannot bite — GF sorts id
+  // DESC by default, so a newly created form's entries sit at the top of an
+  // unscoped page and read as correctly filtered.
+  const request = mockHttpClient.getRequests().find(r => r.method === 'GET');
+  TestAssert.exists(request, 'the call must have reached GF');
+  TestAssert.deepEqual(request.config.params.form_ids, [159], 'the request must carry form_ids');
+  TestAssert.isTrue(request.config.params.form_id === undefined, 'the singular must not ride along as a param GF ignores');
+
+  const wire = new Map(flattenParams(request.config.params));
+  TestAssert.equal(wire.get('form_ids[0]'), '159');
+  TestAssert.isFalse(wire.has('form_id'), 'form_id must not reach the wire — GF ignores it there');
+});
+
+suite.test('List Entries: a singular form_id still filters when sorting is also given', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [], total_count: 0 }));
+
+  await client.listEntries({ form_id: 159, sorting: { key: 'date_created', direction: 'DESC' } });
+
+  const wire = new Map(flattenParams(mockHttpClient.getRequests()[0].config.params));
+  TestAssert.equal(wire.get('form_ids[0]'), '159');
+  TestAssert.equal(wire.get('sorting[key]'), 'date_created');
+});
+
+suite.test('List Entries: form_id and form_ids that disagree are rejected', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries', new MockResponse({ entries: [] }));
+
+  await TestAssert.throwsAsync(
+    () => client.listEntries({ form_id: 159, form_ids: [70] }),
+    'disagree'
+  );
+  TestAssert.lengthOf(mockHttpClient.getRequests(), 0, 'a contradiction must not reach GF');
+});
+
 suite.test('List Entries: Should validate search operators', async () => {
   const invalidSearch = {
     field_filters: [{
@@ -587,3 +628,44 @@ suite.run().then(results => {
 }
 
 export default suite;
+// =================================
+// ENTRY ID ALIAS TESTS
+// =================================
+
+suite.test('Get Entry: entry_id reaches the same /entries/{id} request as id', async () => {
+  mockHttpClient.setMockResponse('GET', '/entries/101691', new MockResponse(
+    generateMockEntry(159, { id: 101691 })
+  ));
+
+  const result = await client.getEntry({ entry_id: 101691 });
+
+  TestAssert.equal(result.entry.id, 101691);
+  const req = mockHttpClient.getRequests().find(r => r.method === 'GET' && r.path === '/entries/101691');
+  TestAssert.exists(req, 'the alias must resolve to the entry route, not to an undefined id');
+});
+
+suite.test('Update Entry: entry_id resolves the entry and never lands in the saved body', async () => {
+  const existing = generateMockEntry(159, { id: 101691, status: 'active' });
+  mockHttpClient.setMockResponse('GET', '/entries/101691', new MockResponse(existing));
+  mockHttpClient.setMockResponse('GET', '/forms/159', new MockResponse({ id: 159, fields: [] }));
+  mockHttpClient.setMockResponse('PUT', '/entries/101691', new MockResponse({ ...existing, status: 'spam' }));
+
+  await client.updateEntry({ entry_id: 101691, status: 'spam' });
+
+  const put = mockHttpClient.getRequests().find(r => r.method === 'PUT' && r.path === '/entries/101691');
+  TestAssert.exists(put, 'the alias must resolve to the entry route');
+  TestAssert.isFalse('entry_id' in put.config.data, 'entry_id must not be written onto the entry');
+  TestAssert.equal(put.config.data.status, 'spam');
+});
+
+suite.test('Delete Entry: entry_id resolves the entry route', async () => {
+  mockHttpClient.setMockResponse('DELETE', '/entries/101691', new MockResponse({ deleted: true }));
+
+  const result = await client.deleteEntry({ entry_id: 101691 });
+
+  TestAssert.equal(result.entry_id, 101691);
+  TestAssert.exists(
+    mockHttpClient.getRequests().find(r => r.method === 'DELETE' && r.path === '/entries/101691'),
+    'the alias must resolve to the entry route'
+  );
+});

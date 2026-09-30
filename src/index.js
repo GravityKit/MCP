@@ -650,13 +650,18 @@ const GF_TOOL_DEFINITIONS = [
   // Add-on Feeds (7 tools)
   {
     name: 'gf_list_feeds',
-    description: 'List feeds. Filter by form_id and/or addon slug.',
+    description: 'List ACTIVE feeds only. Filter by form_id and/or addon slug. Gravity Forms filters this endpoint to is_active=1 and reads no parameter to widen it, so a feed with is_active false is absent here and its absence does not mean it was never created. Read one by id with gf_get_feed, which does return an inactive feed.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         addon: { type: 'string', description: 'Addon slug' },
         form_id: { type: 'number', description: 'Form ID' },
+        include: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Feed IDs to limit the result set to'
+        },
         compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       }
     }
@@ -679,7 +684,7 @@ const GF_TOOL_DEFINITIONS = [
   // backwards compatibility but no longer exposed as a tool.
   {
     name: 'gf_create_feed',
-    description: 'Create a feed',
+    description: 'Create a feed. is_active false is honored, and a feed created that way does not appear in gf_list_feeds, which Gravity Forms limits to active feeds — confirm it with gf_get_feed on the id returned here.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

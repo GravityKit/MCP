@@ -210,3 +210,56 @@ test('every form tool publishes both id and form_id, and requires one of them', 
     );
   }
 });
+
+test('gf_list_entries publishes both form_ids and form_id, and requires neither', () => {
+  // The validator accepts a singular form_id as a one-element form_ids, so a
+  // schema-enforcing client must be able to see the spelling every neighbouring
+  // gf_* tool uses. Unlike the form tools, neither name is required here —
+  // listing across every form is a legitimate call — so there is no anyOf.
+  const defs = loadToolDefinitions();
+  const schema = findTool(defs, 'gf_list_entries').inputSchema;
+  const props = Object.keys(schema.properties);
+
+  assert.ok(props.includes('form_ids'), 'gf_list_entries must advertise form_ids');
+  assert.ok(props.includes('form_id'), 'gf_list_entries must advertise form_id');
+  assert.equal(schema.properties.form_id.type, 'number', 'form_id must be a single number');
+  assert.equal(schema.required, undefined, 'gf_list_entries must not require a form');
+  assert.equal(schema.anyOf, undefined, 'gf_list_entries needs no anyOf — neither name is required');
+});
+
+test('every entry tool that keys on an entry id publishes both id and entry_id', () => {
+  // resolveEntryId accepts either spelling, so a schema requiring only `id` makes
+  // a schema-enforcing client reject the alias before the server sees it.
+  // Evaluating the literal also collapses a duplicate key, which is how an
+  // `entry_id` declared twice in place of `id` becomes visible here.
+  const defs = loadToolDefinitions();
+
+  for (const name of ['gf_get_entry', 'gf_update_entry', 'gf_delete_entry']) {
+    const schema = findTool(defs, name).inputSchema;
+    const props = Object.keys(schema.properties);
+
+    assert.ok(props.includes('id'), `${name} must advertise id`);
+    assert.ok(props.includes('entry_id'), `${name} must advertise entry_id`);
+    assert.equal(
+      schema.required,
+      undefined,
+      `${name} must not require one spelling outright; use anyOf`
+    );
+
+    const required = (schema.anyOf || []).map((branch) => (branch.required || []).join(','));
+    assert.deepEqual(
+      required.sort(),
+      ['entry_id', 'id'],
+      `${name} anyOf must require exactly one of id or entry_id`
+    );
+  }
+});
+
+test('gf_create_entry keys on form_id, so it gains no entry_id', () => {
+  // The control: create has no entry id, and an alias published there would
+  // advertise a parameter the validator ignores.
+  const defs = loadToolDefinitions();
+  const schema = findTool(defs, 'gf_create_entry').inputSchema;
+  assert.ok(!('entry_id' in schema.properties), 'gf_create_entry must not advertise entry_id');
+  assert.deepEqual(schema.required, ['form_id']);
+});

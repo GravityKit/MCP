@@ -39,16 +39,16 @@ export class BaseValidator {
   }
 
   /**
-   * Resolves a form id given under either `id` or `form_id`.
+   * Resolves an id given under either of two accepted names.
    *
    * @param {object} input     The tool input.
    * @param {string} preferred The name this tool documents; the other is accepted too.
+   * @param {string} other     The accepted alias.
    * @returns {number} The validated id.
    * @throws When neither is present, either is not a positive integer, or both
    *   are present and resolve to different ids.
    */
-  static resolveFormId(input, preferred = 'form_id') {
-    const other = preferred === 'form_id' ? 'id' : 'form_id';
+  static resolveIdAlias(input, preferred, other) {
     const isGiven = name => input[name] !== undefined && input[name] !== null && input[name] !== '';
     const hasPreferred = isGiven(preferred);
     const hasOther = isGiven(other);
@@ -65,6 +65,31 @@ export class BaseValidator {
     }
 
     return hasPreferred ? preferredId : otherId;
+  }
+
+  /**
+   * Resolves a form id given under either `id` or `form_id`. The form tools are
+   * split between the two spellings, so both are accepted everywhere.
+   *
+   * @param {object} input     The tool input.
+   * @param {string} preferred The name this tool documents.
+   * @returns {number} The validated id.
+   */
+  static resolveFormId(input, preferred = 'form_id') {
+    return BaseValidator.resolveIdAlias(input, preferred, preferred === 'form_id' ? 'id' : 'form_id');
+  }
+
+  /**
+   * Resolves an entry id given under either `id` or `entry_id`. The entry tools
+   * document `id` while gf_send_notifications names the same entry `entry_id`, so
+   * both are accepted.
+   *
+   * @param {object} input     The tool input.
+   * @param {string} preferred The name this tool documents.
+   * @returns {number} The validated id.
+   */
+  static resolveEntryId(input, preferred = 'id') {
+    return BaseValidator.resolveIdAlias(input, preferred, preferred === 'id' ? 'entry_id' : 'id');
   }
 
   static validateId(id, fieldName = 'id') {
@@ -415,11 +440,34 @@ export class EntriesValidator extends BaseValidator {
     // Emitting page/per_page here leaked them to the wire as no-op params, so
     // they are intentionally NOT merged in. Entry paging is the `paging` block below.
 
-    if (params.form_ids !== undefined) {
+    // GF reads the form filter on /entries as an ARRAY (form_ids[0]=…) and has no
+    // singular form_id there, so one that reaches the wire is ignored and the
+    // response is every entry on the site. Every other gf_* tool spells the form
+    // as form_id, so accept it here as a one-element form_ids. An empty array
+    // says nothing, so it does not contradict a singular alongside it.
+    const formIdsArrayGiven = params.form_ids !== undefined;
+    const formIdGiven = params.form_id !== undefined && params.form_id !== null && params.form_id !== '';
+
+    if (formIdsArrayGiven) {
       validated.form_ids = this.validateArray(params.form_ids, 'form_ids');
       if (validated.form_ids.length > 0) {
         validated.form_ids = this.validateIds(validated.form_ids, 'form_ids');
       }
+    }
+
+    if (formIdGiven) {
+      // Both values are validated before they are compared, so a bad id is
+      // reported as a bad id rather than as a disagreement.
+      const formId = this.validateId(params.form_id, 'form_id');
+      const plural = validated.form_ids || [];
+      const pluralNamesForms = plural.length > 0;
+      const namesTheSameForm = plural.length === 1 && plural[0] === formId;
+
+      if (pluralNamesForms && !namesTheSameForm) {
+        throw new Error(`form_id and form_ids were both given and disagree (${formId} vs [${plural.join(', ')}]); pass one`);
+      }
+
+      validated.form_ids = [formId];
     }
 
     if (params.include !== undefined) {
@@ -502,8 +550,10 @@ export class EntriesValidator extends BaseValidator {
       BaseValidator.validateRequired(entryData, ['form_id']);
       validated.form_id = this.validateId(entryData.form_id, 'form_id');
     } else {
-      BaseValidator.validateRequired(entryData, ['id']);
-      validated.id = this.validateId(entryData.id, 'id');
+      validated.id = BaseValidator.resolveEntryId(entryData, 'id');
+      // The client spreads everything but `id` into the PUT body, so an alias left
+      // here would be saved onto the entry as a field of its own.
+      delete validated.entry_id;
       if (entryData.form_id !== undefined) {
         validated.form_id = this.validateId(entryData.form_id, 'form_id');
       }
@@ -659,9 +709,8 @@ export class ValidationFactory {
           return EntriesValidator.validateEntryData(input, true);
         case 'gf_get_entry':
         case 'gf_delete_entry':
-          BaseValidator.validateRequired(input, ['id']);
           const entryResult = {
-            id: BaseValidator.validateId(input.id, 'id')
+            id: BaseValidator.resolveEntryId(input, 'id')
           };
           if (toolName === 'gf_delete_entry' && input.force !== undefined) {
             entryResult.force = BaseValidator.validateBoolean(input.force, 'force');
@@ -678,6 +727,16 @@ export class ValidationFactory {
           }
           if (input.form_id) {
             feedsValidated.form_id = BaseValidator.validateId(input.form_id, 'form_id');
+          }
+          // GF's /feeds controller reads `include` as the feed-id filter
+          // (class-controller-feeds.php get_items), and its per-form sibling
+          // declares it in get_collection_params. Without it the query is every
+          // feed on the site whatever ids were asked for.
+          if (input.include !== undefined) {
+            feedsValidated.include = BaseValidator.validateArray(input.include, 'include');
+            if (feedsValidated.include.length > 0) {
+              feedsValidated.include = BaseValidator.validateIds(feedsValidated.include, 'include');
+            }
           }
           return feedsValidated;
 

@@ -198,3 +198,54 @@ test('gf_create_feed: a failed deactivation still returns the feed id', async ()
   assert.equal(out.is_active, true, 'and it is reported as still active');
   assert.match(out.warning, /could not be deactivated/);
 });
+
+// --- include reaches the wire as GF's feed-id filter ---
+
+test('gf_list_feeds: include ids go out as the feed-id filter GF reads', async () => {
+  // GF's /feeds controller reads $request['include'] as the feed ids
+  // (class-controller-feeds.php get_items). Dropping it returned every feed on the
+  // site while the caller believed the result was narrowed to the ids asked for.
+  const client = makeClient();
+  const gets = [];
+  client.httpClient.get = async (path, config) => {
+    gets.push({ path, params: config?.params });
+    return { data: [{ id: 153, form_id: 159 }] };
+  };
+
+  await client.listFeeds({ include: [153, 154] });
+
+  assert.equal(gets[0].path, '/feeds');
+  assert.deepEqual(gets[0].params.include, [153, 154], 'include must reach GF');
+});
+
+test('gf_list_feeds: include composes with the addon and form_id filters', async () => {
+  const client = makeClient();
+  const gets = [];
+  client.httpClient.get = async (path, config) => {
+    gets.push(config?.params);
+    return { data: [{ id: 153, form_id: 159 }, { id: 154, form_id: 70 }] };
+  };
+
+  const out = await client.listFeeds({ include: [153, 154], addon: 'gravityformsmailchimp', form_id: 159 });
+
+  assert.deepEqual(gets[0].include, [153, 154]);
+  assert.equal(gets[0].addon, 'gravityformsmailchimp');
+  assert.deepEqual(out.feeds.map((feed) => feed.id), [153], 'form_id scoping still applies on top');
+});
+
+test('gf_list_feeds: a non-numeric include id is refused rather than dropped', async () => {
+  const client = makeClient();
+  client.httpClient.get = async () => ({ data: [] });
+
+  await assert.rejects(() => client.listFeeds({ include: ['abc'] }), /include/);
+});
+
+test('gf_list_feeds: no include means no include param (still lists everything asked for)', async () => {
+  const client = makeClient();
+  const gets = [];
+  client.httpClient.get = async (path, config) => { gets.push(config?.params); return { data: [] }; };
+
+  await client.listFeeds({ addon: 'gravityformsmailchimp' });
+
+  assert.ok(!('include' in gets[0]), 'an absent include must not become an empty filter');
+});
