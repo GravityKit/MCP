@@ -7,10 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.6.0] - 2026-09-30
 
-This release stops `gf_submit_form_data` silently discarding submitted values, and updates two dependencies past known advisories.
+This release stops `gf_submit_form_data` silently discarding submitted values, keeps the GravityKit product tools on the same site as the Gravity Forms tools, and updates two dependencies past known advisories.
 
 ### 🔒 Security
 
+- **The GravityKit product tools now act on the same site as the Gravity Forms tools.** The two planes each resolve their own address and credentials, and the product plane ranked `WORDPRESS_LOCAL_DEV_TEST_URL` and `WORDPRESS_LOCAL_DEV_TEST_ADMIN_*` above the Gravity Forms values. Those variables are ambient in any shell that has a local WordPress configured, so a server given only `GRAVITY_FORMS_*` sent every `gv_*` read and write, and the credentials carrying them, to whichever site those variables named, while the `gf_*` tools worked against the intended one. No response said so, and `gv_view_delete` is on that plane. Both planes now resolve to the Gravity Forms site unless `GRAVITYKIT_WP_URL` says otherwise, and a caller who does point them at different hosts is told which is which, at startup and in `gk_reload_abilities`.
 - **Updated `axios` to 1.20.0 and `fast-uri` to 4.2.1.** Both are on paths the server uses on every request and every tool call, and both sat on versions with published advisories. `ip-address` is updated to 10.7.2 for the same reason.
 
 ### 🐛 Fixed
@@ -21,6 +22,7 @@ This release stops `gf_submit_form_data` silently discarding submitted values, a
   - `null` arrived as the text `"null"`, and now arrives empty.
 - **New multiselect fields are now created with JSON storage.** Without it Gravity Forms joins the selected values with commas and reads them back by splitting on every comma, so "Atlanta, GA" returns as two values. `gf_create_form`, `gf_update_form` and `gf_add_field` now match the form editor, including post fields set to multiselect. Pass `storageType` to choose the legacy format.
 - **A submission that cannot store anything is now refused rather than reported as successful.** Three cases: `field_values` passed as a JSON object or a JSON string, which Gravity Forms ignores on this path; a call with no `input_N` value at all; and the same sub-input sent under both `input_5.3` and `input_5_3` with different values, where Gravity Forms kept whichever it saw last.
+- **`gk_reload_abilities` now tells a reachable empty catalog apart from a site it could not reach.** A catalog that answered with no GravityKit abilities was reported as unreachable with no source, which sends you off to check a certificate, a credential and a WordPress log that are all working. An empty answer now reports as loaded with zero tools, names the catalog that answered, and says to activate a product and reload. Only a catalog that could not be read at all reports no source.
 - **`gf_list_feeds` now honors `form_id`.** Asking for one form's feeds returned every feed on the site, because Gravity Forms' `/feeds` endpoint accepts the parameter and then ignores it. The tool now narrows the response to the form you asked for. `addon` and `include` are still filtered by Gravity Forms itself.
 - **Every form tool now accepts the form id as either `id` or `form_id`.** `gf_get_form`, `gf_delete_form`, `gf_update_form`, `gf_submit_form_data` and the submission-validation tools each previously named only one of the two.
 

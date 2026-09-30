@@ -24,7 +24,7 @@ import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse, abilityToolResult } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
-import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive } from './server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive, abilitiesStatusNote } from './server-runtime.js';
 import { VERSION } from './version.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -148,6 +148,13 @@ function initializeWordPressPlane() {
     // don't need to mint two separate credentials.
     wpClient = new WordPressClient(process.env);
     logger.info('✅ WordPress client initialized — loading GravityKit abilities');
+
+    // Both planes serve one session, and only GRAVITYKIT_WP_URL can send them to
+    // different hosts. When it has, a product-tool write lands on a site the
+    // gf_* reads never saw, so say which is which before anything runs.
+    if (wpClient.hostMismatch) {
+      logger.warn(`⚠️  Split target: GravityKit product tools act on ${wpClient.hostMismatch.abilities_site}, Gravity Forms tools on ${wpClient.hostMismatch.gravity_forms_site}. Unset GRAVITYKIT_WP_URL to put both on the Gravity Forms site.`);
+    }
 
     // Fire-and-forget: kick off the abilities catalog fetch in the
     // background so MCP startup is fast. ListTools awaits up to 2s
@@ -450,7 +457,11 @@ const GF_TOOL_DEFINITIONS = [
         form_ids: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Filter by form IDs'
+          description: 'Filter by form IDs (or pass form_id for a single form)'
+        },
+        form_id: {
+          type: 'number',
+          description: 'Filter by a single form ID. Same as form_ids: [form_id]. Omit both to list entries from every form.'
         },
         include: {
           type: 'array',
@@ -521,10 +532,11 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Entry ID' },
+        id: { type: 'number', description: 'Entry ID (or pass entry_id)' },
+        entry_id: { type: 'number', description: 'Entry ID (or pass id)' },
         compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['entry_id'] }]
     }
   },
   {
@@ -554,7 +566,8 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Entry ID' },
+        id: { type: 'number', description: 'Entry ID (or pass entry_id)' },
+        entry_id: { type: 'number', description: 'Entry ID (or pass id)' },
         status: {
           type: 'string',
           enum: ['active', 'spam', 'trash'],
@@ -562,7 +575,7 @@ const GF_TOOL_DEFINITIONS = [
         }
       },
       additionalProperties: true,
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['entry_id'] }]
     }
   },
   {
@@ -572,10 +585,11 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Entry ID' },
+        id: { type: 'number', description: 'Entry ID (or pass entry_id)' },
+        entry_id: { type: 'number', description: 'Entry ID (or pass id)' },
         force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['entry_id'] }]
     }
   },
 
@@ -959,13 +973,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               catalog_source: abilityDiagnostics.source,
               site_url: wpClient.baseUrl,
               credential_source: wpClient.credentialSource,
+              // The other plane's target beside this one's: a session that reads
+              // one site and writes another looks identical to a working one from
+              // inside a single tool response.
+              gravity_forms_site: wpClient.gravityFormsBaseUrl,
+              ...(wpClient.hostMismatch ? { host_mismatch: wpClient.hostMismatch } : {}),
               // Every ability the catalog carried that did not become a tool,
               // and why. Answers "it is registered but I cannot see it" without
               // reading the server's stderr.
               skipped: abilityDiagnostics.skipped,
-              note: abilityToolDefinitions
-                ? 'Catalog refreshed. Clients receive `notifications/tools/list_changed` automatically.'
-                : 'Catalog still unreachable — check WP logs / cert / credentials. Will retry on next gv_* tool call.',
+              note: abilitiesStatusNote(abilityToolDefinitions),
             }, null, 2),
           }],
         };

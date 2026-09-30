@@ -66,7 +66,7 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
    - Prefer a Gravity Forms key pair? Use `"GRAVITY_FORMS_CONSUMER_KEY": "ck_…"` and `"GRAVITY_FORMS_CONSUMER_SECRET": "cs_…"`.
    - Local dev with self-signed certs: add `"GRAVITY_FORMS_ALLOW_SELF_SIGNED_CERTS": "true"` to the `env` block.
    - Pin a version with `@gravitykit/mcp@x.y.z` if you don't want `npx` tracking latest.
-   - Set `GRAVITYKIT_WP_URL`, `GRAVITYKIT_WP_USERNAME` and `GRAVITYKIT_WP_APP_PASSWORD` in the same `env` block if you use the GravityKit product tools. The two planes resolve credentials separately, so without them the `gv_*`/`gmig_*` tools can pick up values inherited from your shell and talk to a different site than the `gf_*` tools do.
+   - The GravityKit product tools (`gv_*`, `gmig_*`, …) reuse the `GRAVITY_FORMS_*` values above, so they act on the same site. Set `GRAVITYKIT_WP_URL`, `GRAVITYKIT_WP_USERNAME` and `GRAVITYKIT_WP_APP_PASSWORD` in the same `env` block only when the WordPress root differs from the Gravity Forms URL, or to use a separate credential.
 
 ## Available Tools
 
@@ -185,6 +185,8 @@ The GravityKit product tools reach the same site over the WordPress REST Abiliti
 - `GRAVITYKIT_WP_URL`          - WordPress site URL (defaults to `GRAVITY_FORMS_BASE_URL`)
 - `GRAVITYKIT_WP_USERNAME`     - WordPress username (defaults to `GRAVITY_FORMS_CONSUMER_KEY`)
 - `GRAVITYKIT_WP_APP_PASSWORD` - Application password (defaults to `GRAVITY_FORMS_CONSUMER_SECRET`)
+
+`GRAVITYKIT_WP_URL` is the only setting that can put the product tools on a different host from the Gravity Forms tools. When it does, the server says so on startup and `gk_reload_abilities` reports both sites, so one session never reads one install and writes another without telling you.
 
 These tools appear only when GravityKit Foundation is active on the connected site. They authenticate with a WordPress application password over Basic auth, so — like the Gravity Forms plane — they refuse a remote plain-HTTP URL unless `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true` (HTTPS and local URLs are always fine).
 
