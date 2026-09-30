@@ -7,15 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-This release stops `gf_submit_form_data` losing submitted values without saying so, and updates the two dependencies the server runs on every request and every tool call past their known advisories.
+This release stops `gf_submit_form_data` silently discarding submitted values, and updates two dependencies past known advisories.
 
 ### 🔒 Security
 
-- **Two dependencies the server executes are no longer running with known advisories.** `axios`, which carries every Gravity Forms request, was pinned below the release that fixes seven advisories against it, five of them high. `fast-uri`, which the schema validator uses on every tool call, was forced to exactly the version one advisory names. Both are now pinned past them (`axios ^1.20.0`, `fast-uri ^4.2.1`), and `ip-address` is updated rather than waived, so it and `express-rate-limit` come off the audit allowlist entirely. The allowlist now holds only packages reached through the MCP SDK's HTTP transport, which a stdio server never loads; anything this server actually runs is pinned instead of excused.
+- **Updated `axios` to 1.20.0 and `fast-uri` to 4.2.1.** Both are on paths the server uses on every request and every tool call, and both sat on versions with published advisories. `ip-address` is updated to 10.7.2 for the same reason.
 
 ### 🐛 Fixed
 
-- **`gf_submit_form_data` no longer drops the values it was given.** A multiselect or list array was coerced with `String()` into a comma-joined string, so a value that itself contains a comma ("Atlanta, GA") could no longer be told from the separator and the choices landed wrong; a Gravity Forms 3.0 `formatted` phone value, which Gravity Forms decodes only from a JSON string, became the literal text `"[object Object]"`. Arrays now reach Gravity Forms intact, an object is serialized to the JSON string Gravity Forms reads, and `null` arrives as an empty value rather than the text `"null"`. Scalars are still coerced to strings. Three further ways a submission quietly stored nothing are now refused outright: `field_values` passed as a JSON object or a JSON string (Gravity Forms takes dynamic-population data as an array and ignores a string on this path, so either populates nothing), a call carrying no `input_N` key at all, and the same sub-input sent under both spellings with different values (`input_5.3` and `input_5_3`), where Gravity Forms would silently keep whichever it saw last. `gf_get_form`, `gf_delete_form`, `gf_update_form`, `gf_submit_form_data` and the submission-validation tools now accept the form id under either `id` or `form_id`, rejecting only a genuine contradiction, rather than each naming just the one it wanted. Note for anyone submitting checkbox values: Gravity Forms reads each checkbox choice from its own sub-input (`input_5_1`, `input_5_2`), so pass those rather than an array under `input_5`.
+- **`gf_submit_form_data` no longer discards values it was given.** Several shapes of submitted value were lost without any error:
+  - a multiselect or list array was joined into one comma-separated string, so a value containing a comma ("Atlanta, GA") could no longer be told from the separator;
+  - a `formatted` phone value arrived as the text `"[object Object]"`, and is now sent as the JSON string Gravity Forms reads;
+  - `null` arrived as the text `"null"`, and now arrives empty.
+- **A submission that cannot store anything is now refused rather than reported as successful.** Three cases: `field_values` passed as a JSON object or string, which Gravity Forms ignores on this path; a call with no `input_N` value at all; and the same sub-input sent under both `input_5.3` and `input_5_3` with different values, where Gravity Forms kept whichever it saw last.
+- **Every form tool now accepts the form id as either `id` or `form_id`.** `gf_get_form`, `gf_delete_form`, `gf_update_form`, `gf_submit_form_data` and the submission-validation tools each previously named only one of the two.
+
+Checkbox values are the exception to the first entry: Gravity Forms reads each choice from its own sub-input, so pass `input_5_1` and `input_5_2` rather than an array under `input_5`.
 
 ## [2.5.0] - 2026-09-17
 
