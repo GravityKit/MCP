@@ -847,7 +847,7 @@ export class GravityFormsClient {
   // =================================
 
   /**
-   * List all feeds or filter by addon
+   * List feeds, narrowed to one form and/or one addon
    */
   async listFeeds(params = {}) {
     return this.validateAndCall('gf_list_feeds', params, async (validated) => {
@@ -859,9 +859,21 @@ export class GravityFormsClient {
       // get an array; real failures arrive as non-200 and throw before here.
       const data = response.data;
       const isEmptyWpError = data && !Array.isArray(data) && !!data.errors;
+      const feeds = isEmptyWpError ? [] : data;
+
+      // GF's /feeds controller passes null for GFAPI::get_feeds()'s $form_id
+      // (class-controller-feeds.php:87), so only `addon` and `include` narrow the
+      // query server-side and the response carries every form's feeds whatever was
+      // asked for. Scoping to one form happens here. The per-form route
+      // /forms/{id}/feeds does filter server-side, but answers HTTP 500 for a form
+      // with no feeds, where /feeds returns the not_found WP_Error inside a 200.
+      // form_id comes back from GF as a string ("1") and from callers as a number.
+      const scopeToForm = validated.form_id !== undefined && Array.isArray(feeds);
 
       return {
-        feeds: isEmptyWpError ? [] : data
+        feeds: scopeToForm
+          ? feeds.filter(feed => feed && String(feed.form_id) === String(validated.form_id))
+          : feeds
       };
     });
   }
