@@ -4,7 +4,7 @@
  */
 
 import { createHash } from 'crypto';
-import { assignFieldIds } from '../field-definitions/field-registry.js';
+import { assignFieldIds, applyStorageTypeDefault } from '../field-definitions/field-registry.js';
 
 /**
  * Field properties that dependents actually consume. Conditional-logic rules
@@ -296,7 +296,10 @@ export class FieldManager {
     // the properties spread — a caller-supplied properties.id after the spread
     // was how duplicate field ids (form corruption) got in.
     const { id: _requestedId, type: _requestedType, ...safeProperties } = properties;
-    return {
+    // applyStorageTypeDefault runs LAST because it reads the assembled field:
+    // a caller-supplied storageType has to win, and the property it keys off
+    // (`inputType`) arrives with safeProperties.
+    return applyStorageTypeDefault({
       id,
       type,
       label: properties.label || fieldDef.label || 'Untitled',
@@ -308,7 +311,7 @@ export class FieldManager {
       cssClass: properties.cssClass || '',
       ...this.getTypeSpecificDefaults(type, fieldDef),
       ...safeProperties
-    };
+    });
   }
 
   /**

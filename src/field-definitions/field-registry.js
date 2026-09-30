@@ -1038,6 +1038,46 @@ export function assignFieldIds(fields) {
 }
 
 /**
+ * Fill in the storage mode a NEW field needs, where leaving it unset changes how
+ * Gravity Forms reads the stored value back.
+ *
+ * A multiselect with no storageType stores its values comma-joined, and
+ * GF_Field_MultiSelect::to_array() then splits on every comma
+ * (class-gf-field-multiselect.php:417), so a selected value that itself contains
+ * one is read back as several: ["Atlanta, GA", "Austin, TX"] returns four values.
+ * The form editor writes 'json' on every multiselect it creates (js.php:818);
+ * GFAPI and the REST API write nothing.
+ *
+ * Keyed off the type GF resolves the field to rather than `type` alone, because
+ * GF_Fields::create() instantiates by `inputType` when one is set — so
+ * post_category, post_tags and post_custom_field with inputType 'multiselect'
+ * are GF_Field_MultiSelect and split on commas the same way.
+ *
+ * An explicit storageType is kept as given, including a legacy '': that spelling
+ * is how a caller matches a field whose existing entries are comma-joined.
+ *
+ * Apply this to new fields only. Flipping a stored field to json changes how
+ * GF_Query matches its already-saved comma-joined values
+ * (class-gf-query.php:360 picks GF_Query_JSON_Literal off storageType).
+ *
+ * @param {object} field A field object.
+ * @returns {object} The field, with storageType filled in where it applies.
+ */
+export function applyStorageTypeDefault(field) {
+  if (!field || typeof field !== 'object' || field.storageType !== undefined) {
+    return field;
+  }
+
+  const resolvedType = field.inputType || field.type;
+
+  if (resolvedType !== 'multiselect') {
+    return field;
+  }
+
+  return { ...field, storageType: 'json' };
+}
+
+/**
  * Get all field types by category
  */
 export function getFieldsByCategory() {

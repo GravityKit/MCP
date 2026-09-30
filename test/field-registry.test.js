@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig, detectFieldVariant } from '../src/field-definitions/field-registry.js';
+import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig, detectFieldVariant, applyStorageTypeDefault } from '../src/field-definitions/field-registry.js';
 
 test('assignFieldIds', async (t) => {
   await t.test('assigns sequential ids when none are provided', () => {
@@ -406,5 +406,60 @@ test('survey field type exists with all variants', async (t) => {
     assert.ok(getFieldDefinition('survey_likert'));
     assert.ok(getFieldDefinition('survey_rank'));
     assert.ok(getFieldDefinition('survey_rating'));
+  });
+});
+
+// applyStorageTypeDefault: a multiselect with no storageType stores its values
+// comma-joined, and GF_Field_MultiSelect::to_array() splits on every comma
+// (class-gf-field-multiselect.php:417), so a value containing one is read back as
+// several. The form editor writes 'json' on every multiselect (js.php:818).
+test('applyStorageTypeDefault', async (t) => {
+  await t.test('a multiselect with no storageType gets json', () => {
+    const out = applyStorageTypeDefault({ id: 1, type: 'multiselect', label: 'Cities' });
+    assert.strictEqual(out.storageType, 'json');
+  });
+
+  await t.test("an explicit legacy '' is kept", () => {
+    // That spelling is how a caller matches a field whose stored values are comma-joined.
+    const out = applyStorageTypeDefault({ id: 1, type: 'multiselect', storageType: '' });
+    assert.strictEqual(out.storageType, '');
+  });
+
+  await t.test('an explicit json returns the same object, uncopied', () => {
+    const field = { id: 1, type: 'multiselect', storageType: 'json' };
+    assert.strictEqual(applyStorageTypeDefault(field), field);
+  });
+
+  await t.test('the caller field is never mutated', () => {
+    const field = { id: 1, type: 'multiselect' };
+    applyStorageTypeDefault(field);
+    assert.strictEqual(field.storageType, undefined);
+  });
+
+  await t.test('inputType multiselect on a post field gets json too', () => {
+    // GF_Fields::create() instantiates by inputType when one is set, so these are
+    // GF_Field_MultiSelect and split on commas the same way.
+    for (const type of ['post_category', 'post_tags', 'post_custom_field']) {
+      const out = applyStorageTypeDefault({ id: 1, type, inputType: 'multiselect' });
+      assert.strictEqual(out.storageType, 'json', `${type} with inputType multiselect`);
+    }
+  });
+
+  await t.test('a non-multiselect inputType wins over the type', () => {
+    const out = applyStorageTypeDefault({ id: 1, type: 'multiselect', inputType: 'select' });
+    assert.strictEqual(out.storageType, undefined);
+  });
+
+  await t.test('field types that read storageType differently are left alone', () => {
+    // fileupload and phone resolve their own storage at runtime and post_image
+    // nulls the property outright (class-gf-field-post-image.php:360).
+    for (const type of ['select', 'checkbox', 'radio', 'text', 'list', 'fileupload', 'phone', 'post_image']) {
+      assert.strictEqual(applyStorageTypeDefault({ id: 1, type }).storageType, undefined, type);
+    }
+  });
+
+  await t.test('non-object input passes through', () => {
+    assert.strictEqual(applyStorageTypeDefault(null), null);
+    assert.strictEqual(applyStorageTypeDefault(undefined), undefined);
   });
 });

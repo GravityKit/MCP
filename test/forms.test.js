@@ -298,6 +298,76 @@ suite.test('Create Form: Should accept an unknown field type without leaking _un
   TestAssert.isFalse('_unknown' in postReq.config.data.fields[0], 'must not POST the internal _unknown flag');
 });
 
+// A multiselect created with no storageType stores its values comma-joined, and
+// GF_Field_MultiSelect::to_array() splits on every comma
+// (class-gf-field-multiselect.php:417) — so a submitted "Atlanta, GA" is read back
+// as two values. The form editor writes 'json' on every multiselect (js.php:818).
+
+suite.test('Create Form: Should give a new multiselect json storage', async () => {
+  const form = {
+    title: 'Cities Form',
+    fields: [
+      {
+        id: 1,
+        type: 'multiselect',
+        label: 'Cities',
+        choices: [
+          { text: 'Atlanta, GA', value: 'Atlanta, GA' },
+          { text: 'Austin, TX', value: 'Austin, TX' }
+        ]
+      }
+    ]
+  };
+
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ ...form, id: 50 }));
+  mockHttpClient.clearRequests();
+
+  await client.createForm(form);
+
+  const postReq = mockHttpClient.getRequests().find((r) => r.method === 'POST' && r.path === '/forms');
+  TestAssert.exists(postReq, 'expected a POST /forms request');
+  TestAssert.equal(postReq.config.data.fields[0].storageType, 'json', 'multiselect must be created with json storage');
+});
+
+suite.test('Create Form: Should read inputType for the storage mode, and leave other types alone', async () => {
+  // GF_Fields::create() instantiates by inputType, so post_category set to
+  // multiselect is a GF_Field_MultiSelect. A select is not, and must stay unset.
+  const form = {
+    title: 'Post Form',
+    fields: [
+      { id: 1, type: 'post_category', label: 'Category', inputType: 'multiselect', choices: [{ text: 'News', value: 'News' }] },
+      { id: 2, type: 'select', label: 'Pick one', choices: [{ text: 'A', value: 'A' }] }
+    ]
+  };
+
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ ...form, id: 51 }));
+  mockHttpClient.clearRequests();
+
+  await client.createForm(form);
+
+  const postReq = mockHttpClient.getRequests().find((r) => r.method === 'POST' && r.path === '/forms');
+  TestAssert.equal(postReq.config.data.fields[0].storageType, 'json', 'inputType multiselect must get json storage');
+  TestAssert.equal(postReq.config.data.fields[1].storageType, undefined, 'a select must keep storageType unset');
+});
+
+suite.test('Create Form: Should keep an explicit legacy storageType on a multiselect', async () => {
+  // '' is how a caller matches a field whose stored values are already comma-joined.
+  const form = {
+    title: 'Legacy Form',
+    fields: [
+      { id: 1, type: 'multiselect', label: 'Cities', storageType: '', choices: [{ text: 'A', value: 'A' }] }
+    ]
+  };
+
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ ...form, id: 52 }));
+  mockHttpClient.clearRequests();
+
+  await client.createForm(form);
+
+  const postReq = mockHttpClient.getRequests().find((r) => r.method === 'POST' && r.path === '/forms');
+  TestAssert.equal(postReq.config.data.fields[0].storageType, '', 'an explicit legacy storageType must survive');
+});
+
 // =================================
 // UPDATE FORM TESTS
 // =================================
@@ -405,6 +475,53 @@ suite.test('Update Form: Should preserve all form data when updating single prop
   TestAssert.equal(putRequest.config.data.is_active, false, 'is_active should be updated');
 
   TestAssert.equal(result.form.is_active, false, 'Updated property changed');
+});
+
+suite.test('Update Form: Should give json storage to a multiselect the update ADDS', async () => {
+  const existingForm = {
+    id: 7,
+    title: 'Roster',
+    fields: [{ id: 1, type: 'text', label: 'Name' }]
+  };
+
+  mockHttpClient.setMockResponse('GET', '/forms/7', new MockResponse(existingForm));
+  mockHttpClient.setMockResponse('PUT', '/forms/7', new MockResponse(existingForm));
+  mockHttpClient.clearRequests();
+
+  await client.updateForm({
+    id: 7,
+    fields: [
+      { id: 1, type: 'text', label: 'Name' },
+      { id: 2, type: 'multiselect', label: 'Cities', choices: [{ text: 'Atlanta, GA', value: 'Atlanta, GA' }] }
+    ]
+  });
+
+  const putReq = mockHttpClient.getRequests().find((r) => r.method === 'PUT');
+  TestAssert.exists(putReq, 'expected a PUT /forms/7 request');
+  TestAssert.equal(putReq.config.data.fields[1].storageType, 'json', 'the added multiselect must get json storage');
+});
+
+suite.test('Update Form: Should leave a stored multiselect\'s storage mode alone', async () => {
+  // A field already on the form round-trips untouched: its storageType decides how
+  // GF reads the values already saved under it (class-gf-query.php:360 picks
+  // GF_Query_JSON_Literal off storageType), so flipping it strands those entries.
+  const existingForm = {
+    id: 8,
+    title: 'Legacy Roster',
+    fields: [{ id: 1, type: 'multiselect', label: 'Cities', choices: [{ text: 'A', value: 'A' }] }]
+  };
+
+  mockHttpClient.setMockResponse('GET', '/forms/8', new MockResponse(existingForm));
+  mockHttpClient.setMockResponse('PUT', '/forms/8', new MockResponse(existingForm));
+  mockHttpClient.clearRequests();
+
+  await client.updateForm({
+    id: 8,
+    fields: [{ id: 1, type: 'multiselect', label: 'Cities renamed', choices: [{ text: 'A', value: 'A' }] }]
+  });
+
+  const putReq = mockHttpClient.getRequests().find((r) => r.method === 'PUT');
+  TestAssert.equal(putReq.config.data.fields[0].storageType, undefined, 'a stored field keeps its storage mode');
 });
 
 suite.test('Update Form: Should validate form ID is required', async () => {

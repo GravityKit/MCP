@@ -52,6 +52,11 @@ const createMockRegistry = () => ({
     category: 'standard',
     hasChoices: true
   },
+  multiselect: {
+    label: 'Multi Select',
+    category: 'choice',
+    hasChoices: true
+  },
   date: {
     label: 'Date',
     category: 'advanced'
@@ -822,4 +827,54 @@ test('deleteField still works when deletes are permitted', async () => {
 
   const result = await manager.deleteField(1, 2);
   assert.ok(result, 'a permitted delete still returns a result');
+});
+
+// --- multiselect storage mode ---
+//
+// A multiselect created with no storageType stores its values comma-joined, and
+// GF_Field_MultiSelect::to_array() splits on every comma
+// (class-gf-field-multiselect.php:417), so "Atlanta, GA" is read back as two
+// values. The form editor writes 'json' on every multiselect (js.php:818).
+
+test('addField gives a new multiselect json storage', async () => {
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'multiselect', {
+    label: 'Cities',
+    choices: [{ text: 'Atlanta, GA', value: 'Atlanta, GA' }]
+  });
+
+  assert.strictEqual(result.field.storageType, 'json');
+});
+
+test('addField keeps an explicit legacy storageType on a multiselect', async () => {
+  // '' is how a caller matches a field whose stored values are already comma-joined.
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'multiselect', { label: 'Cities', storageType: '' });
+
+  assert.strictEqual(result.field.storageType, '');
+});
+
+test('addField reads inputType, not just type, for the storage mode', async () => {
+  // GF_Fields::create() instantiates by inputType, so a post_category field set to
+  // multiselect is a GF_Field_MultiSelect.
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'post_category', { label: 'Category', inputType: 'multiselect' });
+
+  assert.strictEqual(result.field.storageType, 'json');
+});
+
+test('addField leaves storageType off a field type that does not need it', async () => {
+  // The control: setting it unconditionally would pass the three tests above.
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'select', { label: 'Pick one' });
+
+  assert.strictEqual(result.field.storageType, undefined);
 });
