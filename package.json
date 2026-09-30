@@ -114,7 +114,7 @@
     "publint": "^0.3.21"
   },
   "overrides": {
-    "fast-uri": "^4.2.1",
-    "ip-address": "^10.7.2"
+    "fast-uri": "4.2.1",
+    "ip-address": "10.7.2"
   }
 }
