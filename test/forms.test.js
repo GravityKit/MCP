@@ -368,6 +368,112 @@ suite.test('Create Form: Should keep an explicit legacy storageType on a multise
   TestAssert.equal(postReq.config.data.fields[0].storageType, '', 'an explicit legacy storageType must survive');
 });
 
+// A notification with no `event` never fires: GFAPI::send_notifications skips any
+// notification whose event differs from the one requested (api.php:2566), and an
+// absent event is '' — never 'form_submission'. The form editor writes
+// 'form_submission' on every notification (class-gf-form-crud-handler.php:403);
+// GFAPI::add_form and update_form write nothing.
+
+const postedForm = () => mockHttpClient.getRequests().find((r) => r.method === 'POST' && r.path === '/forms').config.data;
+const putForm = (id) => mockHttpClient.getRequests().find((r) => r.method === 'PUT' && r.path === `/forms/${id}`).config.data;
+
+suite.test('Create Form: Should give a notification with no event the form_submission event', async () => {
+  const notifications = {
+    n1: { id: 'n1', isActive: true, name: 'Admin', to: 'a@example.com', subject: 'Hi', message: '{all_fields}' }
+  };
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ id: 60, title: 'T' }));
+  mockHttpClient.clearRequests();
+
+  await client.createForm({ title: 'T', fields: [{ id: 1, type: 'text', label: 'Name' }], notifications });
+
+  TestAssert.equal(postedForm().notifications.n1.event, 'form_submission', 'an event-less notification must be created with the submission event');
+  TestAssert.equal(postedForm().notifications.n1.to, 'a@example.com', 'the rest of the notification is untouched');
+});
+
+suite.test('Create Form: Should keep an explicit notification event, and default only the ones without', async () => {
+  const notifications = {
+    n1: { id: 'n1', event: 'form_saved', to: 'a@example.com' },
+    n2: { id: 'n2', to: 'b@example.com' },
+    n3: { id: 'n3', event: null, to: 'c@example.com' }
+  };
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ id: 61, title: 'T' }));
+  mockHttpClient.clearRequests();
+
+  await client.createForm({ title: 'T', fields: [{ id: 1, type: 'text', label: 'Name' }], notifications });
+
+  const sent = postedForm().notifications;
+  TestAssert.equal(sent.n1.event, 'form_saved', 'an explicit event must survive');
+  TestAssert.equal(sent.n2.event, 'form_submission');
+  TestAssert.equal(sent.n3.event, 'form_submission', 'null is no event');
+});
+
+suite.test('Create Form: Should not mutate the notifications object the caller passed', async () => {
+  const notifications = { n1: { id: 'n1', to: 'a@example.com' } };
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ id: 62, title: 'T' }));
+
+  await client.createForm({ title: 'T', fields: [{ id: 1, type: 'text', label: 'Name' }], notifications });
+
+  TestAssert.equal(notifications.n1.event, undefined, 'the caller object must be left alone');
+});
+
+suite.test('Create Form: Should leave confirmations, button and a form with no notifications as sent', async () => {
+  // GF's default confirmation carries no event (forms_model.php:7104) and the
+  // editor stores it as '', so a confirmation needs no default. A missing button
+  // is filled on read (forms_model.php:1082).
+  const confirmations = { c1: { id: 'c1', name: 'Thanks', type: 'message', message: 'Thanks' } };
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ id: 63, title: 'T' }));
+  mockHttpClient.clearRequests();
+
+  await client.createForm({ title: 'T', fields: [{ id: 1, type: 'text', label: 'Name' }], confirmations });
+
+  const sent = postedForm();
+  TestAssert.deepEqual(sent.confirmations, confirmations, 'confirmations must be sent as given');
+  TestAssert.equal(sent.notifications, undefined, 'no notifications key is invented');
+  TestAssert.equal(sent.button, undefined, 'no button is invented');
+});
+
+suite.test('Update Form: Should default the event on a notification the call adds, not on a stored one', async () => {
+  // Flipping a stored notification's event changes when it fires on a live form,
+  // so a stored one round-trips untouched — the rule storageType follows.
+  const existingForm = generateMockForm({
+    id: 70,
+    title: 'Live',
+    fields: [{ id: 1, type: 'text', label: 'Name' }],
+    notifications: { old1: { id: 'old1', to: 'old@example.com' } }
+  });
+  mockHttpClient.setMockResponse('GET', '/forms/70', new MockResponse(existingForm));
+  mockHttpClient.setMockResponse('PUT', '/forms/70', new MockResponse(existingForm));
+  mockHttpClient.clearRequests();
+
+  await client.updateForm({
+    id: 70,
+    notifications: {
+      old1: { id: 'old1', to: 'old@example.com' },
+      new1: { id: 'new1', to: 'new@example.com' }
+    }
+  });
+
+  const sent = putForm(70).notifications;
+  TestAssert.equal(sent.old1.event, undefined, 'a stored notification must not be rewritten');
+  TestAssert.equal(sent.new1.event, 'form_submission', 'an added notification gets the submission event');
+});
+
+suite.test('Update Form: Should keep an explicit event a caller sets on a stored notification', async () => {
+  const existingForm = generateMockForm({
+    id: 71,
+    title: 'Live',
+    fields: [{ id: 1, type: 'text', label: 'Name' }],
+    notifications: { old1: { id: 'old1', to: 'old@example.com' } }
+  });
+  mockHttpClient.setMockResponse('GET', '/forms/71', new MockResponse(existingForm));
+  mockHttpClient.setMockResponse('PUT', '/forms/71', new MockResponse(existingForm));
+  mockHttpClient.clearRequests();
+
+  await client.updateForm({ id: 71, notifications: { old1: { id: 'old1', to: 'old@example.com', event: 'form_submission' } } });
+
+  TestAssert.equal(putForm(71).notifications.old1.event, 'form_submission', 'repairing a stored notification by naming its event works');
+});
+
 // =================================
 // UPDATE FORM TESTS
 // =================================

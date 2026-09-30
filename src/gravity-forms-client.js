@@ -85,6 +85,43 @@ export function buildEntriesQuery(validated) {
   return query;
 }
 
+/**
+ * Fill in the event a NEW notification needs to ever fire.
+ *
+ * GFAPI::send_notifications skips every notification whose `event` differs from
+ * the one requested (api.php:2566), and an absent event is '' — never
+ * 'form_submission'. The form editor writes 'form_submission' on each
+ * notification it creates (class-gf-form-crud-handler.php:403); add_form and
+ * update_form write nothing, so an API-created notification with a recipient,
+ * subject and message was silently inert.
+ *
+ * Only an absent (undefined/null) event is filled; any value the caller set is
+ * kept as given. Returns a new object and leaves the caller's untouched.
+ *
+ * @param {object} notifications Notifications keyed by id.
+ * @param {(key: string, notification: object) => boolean} [isNew] Limits the default
+ *   to notifications for which it returns true. Omit to default every one.
+ * @returns {object} The notifications, with the default filled in where it applies.
+ */
+export function applyNotificationEventDefault(notifications, isNew = () => true) {
+  if (!notifications || typeof notifications !== 'object' || Array.isArray(notifications)) {
+    return notifications;
+  }
+
+  const defaulted = {};
+
+  for (const [key, notification] of Object.entries(notifications)) {
+    const isObject = notification && typeof notification === 'object' && !Array.isArray(notification);
+    const lacksEvent = isObject && (notification.event === undefined || notification.event === null);
+
+    defaulted[key] = lacksEvent && isNew(key, notification)
+      ? { ...notification, event: 'form_submission' }
+      : notification;
+  }
+
+  return defaulted;
+}
+
 export class GravityFormsClient {
   constructor(config) {
     this.config = testConfig.resolveEnv(config);
@@ -397,6 +434,11 @@ export class GravityFormsClient {
         });
       }
 
+      // Every notification here is new, so the event default always applies.
+      if (validated.notifications !== undefined) {
+        validated.notifications = applyNotificationEventDefault(validated.notifications);
+      }
+
       const response = await this.httpClient.post('/forms', validated);
 
       return {
@@ -435,6 +477,24 @@ export class GravityFormsClient {
           updatedFormData.fields = updates.fields.map((field) => (
             storedFieldIds.has(String(field?.id)) ? field : applyStorageTypeDefault(field)
           ));
+        }
+
+        // The same holds for notifications: one already on the form round-trips
+        // untouched, because changing its event changes when it fires on a live
+        // form. Only the notifications this call adds get the default.
+        if (updates.notifications !== undefined) {
+          const storedNotifications = existingForm.notifications && typeof existingForm.notifications === 'object'
+            ? existingForm.notifications
+            : {};
+          const storedNotificationIds = new Set(Object.keys(storedNotifications));
+          Object.values(storedNotifications).forEach((stored) => {
+            if (stored && stored.id !== undefined) storedNotificationIds.add(String(stored.id));
+          });
+
+          updatedFormData.notifications = applyNotificationEventDefault(
+            updates.notifications,
+            (key, notification) => !storedNotificationIds.has(key) && !storedNotificationIds.has(String(notification.id))
+          );
         }
 
         const response = await this.httpClient.put(`/forms/${id}`, updatedFormData);
