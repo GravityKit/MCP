@@ -121,8 +121,12 @@ export class FieldManager {
       );
     }
     if (!isKnownType) {
+      // Stored as given (a site may register a custom type); only point at the near match.
+      const lowerType = fieldType.toLowerCase();
+      const caseMatch = Object.keys(this.registry).find((name) => name.toLowerCase() === lowerType);
+      const hint = caseMatch ? ` Did you mean '${caseMatch}'? Field types are lowercase.` : '';
       warnings.unshift(
-        `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.`
+        `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.${hint}`
       );
     }
 

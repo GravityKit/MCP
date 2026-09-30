@@ -984,3 +984,32 @@ test('FieldManager - addField reports positions it could not honor', async (t) =
     assert.ok(result.warnings.some((w) => /99999/.test(w)));
   });
 });
+
+
+// `Text` is not a Gravity Forms field type. The type is stored as given (a site
+// may register a custom type, and rewriting the caller's input is its own bug),
+// but the existing unknown-type warning must point at the lowercase match.
+test('FieldManager - addField unknown-type warning names a case-insensitive match', async (t) => {
+  const mk = () => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({ form: { id: 1, title: 'T', fields: [] } }),
+      replaceForm: async (formId, form) => { puts.push(form); return { form }; }
+    };
+    return { manager: new FieldManager(apiClient, createMockRegistry(), createMockValidator()), puts };
+  };
+
+  await t.test('suggests the registry type that differs only by case, and stores the type as given', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'Text', { label: 'X' });
+    assert.ok(result.warnings.some((w) => /not in the known field registry/.test(w) && /did you mean 'text'/i.test(w)), result.warnings.join('|'));
+    assert.strictEqual(puts[0].fields[0].type, 'Text');
+  });
+
+  await t.test('no suggestion when nothing matches', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'zzz-custom', { label: 'X' });
+    assert.ok(result.warnings.some((w) => /not in the known field registry/.test(w)));
+    assert.ok(!result.warnings.some((w) => /did you mean/i.test(w)));
+  });
+});

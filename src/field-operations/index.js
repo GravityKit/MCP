@@ -43,6 +43,53 @@ export function createFieldOperations(apiClient, fieldRegistry, validator) {
   };
 }
 
+// `feature` filter name -> registry flag.
+const FEATURE_FLAGS = {
+  required: 'supportsRequired',
+  conditional: 'supportsConditionalLogic',
+  duplicate: 'supportsDuplicate',
+  prepopulate: 'supportsPrepopulate',
+  visibility: 'supportsVisibility',
+  description: 'supportsDescription',
+  validation: 'supportsValidation',
+  css_class: 'supportsCssClass'
+};
+
+const isUnset = (value) => value === undefined || value === null || value === '';
+
+/**
+ * Case-fold a category filter (as `search` does) and check it against the
+ * categories the registry actually holds. Returns the canonical value, or
+ * undefined when no filter was given.
+ */
+function resolveCategoryFilter(category, registry) {
+  if (isUnset(category)) return undefined;
+  const folded = String(category).trim().toLowerCase();
+  const valid = [...new Set(Object.values(registry).map((def) => def.category))];
+  const match = valid.find((name) => String(name).toLowerCase() === folded);
+  if (!match) {
+    throw new Error(`Unknown category '${category}'. Valid categories: ${valid.join(', ')}`);
+  }
+  return match;
+}
+
+/**
+ * Map a feature filter to its registry flag. A feature is valid only if some
+ * registry entry declares the flag; one nothing declares would always answer
+ * an empty list, which reads as a fact about the site.
+ */
+function resolveFeatureKey(feature, registry) {
+  if (isUnset(feature)) return undefined;
+  const folded = String(feature).trim().toLowerCase();
+  const defs = Object.values(registry);
+  const supported = Object.keys(FEATURE_FLAGS)
+    .filter((name) => defs.some((def) => def[FEATURE_FLAGS[name]] === true));
+  if (!supported.includes(folded)) {
+    throw new Error(`Unknown feature '${feature}'. Supported features: ${supported.join(', ')}`);
+  }
+  return FEATURE_FLAGS[folded];
+}
+
 /**
  * Field operation tool handlers for MCP integration
  */
@@ -98,12 +145,17 @@ export const fieldOperationHandlers = {
   async gf_list_field_types(params, { fieldRegistry }) {
     const { category, feature, search, detail = false, include_variants = false } = params;
 
+    // Closed-set filters are checked before the try: an unknown value is a
+    // caller mistake and must surface as an error, not as `total: 0`.
+    const categoryFilter = resolveCategoryFilter(category, fieldRegistry);
+    const featureKey = resolveFeatureKey(feature, fieldRegistry);
+
     try {
       // Apply filters first on raw registry to avoid unnecessary mapping
       let entries = Object.entries(fieldRegistry);
 
-      if (category) {
-        entries = entries.filter(([, def]) => def.category === category);
+      if (categoryFilter) {
+        entries = entries.filter(([, def]) => def.category === categoryFilter);
       }
 
       if (search) {
@@ -115,19 +167,8 @@ export const fieldOperationHandlers = {
         );
       }
 
-      if (feature) {
-        const featureMap = {
-          required: 'supportsRequired',
-          conditional: 'supportsConditionalLogic',
-          duplicate: 'supportsDuplicate',
-          prepopulate: 'supportsPrepopulate',
-          visibility: 'supportsVisibility',
-          description: 'supportsDescription',
-          validation: 'supportsValidation',
-          css_class: 'supportsCssClass'
-        };
-        const key = featureMap[feature] || feature;
-        entries = entries.filter(([, def]) => def[key] === true);
+      if (featureKey) {
+        entries = entries.filter(([, def]) => def[featureKey] === true);
       }
 
       // Map to output format based on mode
@@ -141,7 +182,7 @@ export const fieldOperationHandlers = {
           icon: def.icon,
           supports: {
             required: def.supportsRequired || false,
-            conditional: def.supportsConditional || false,
+            conditional: def.supportsConditionalLogic || false,
             duplicate: def.supportsDuplicate || false,
             prepopulate: def.supportsPrepopulate || false,
             visibility: def.supportsVisibility || false,
@@ -358,11 +399,11 @@ export const fieldOperationTools = [
       properties: {
         category: {
           type: 'string',
-          description: 'Filter by category (standard, advanced, pricing, post)'
+          description: 'Filter by category (case-insensitive); an unknown value is rejected with the valid ones'
         },
         feature: {
           type: 'string',
-          description: 'Filter by feature (required, conditional, duplicate, prepopulate, visibility)'
+          description: 'Filter by feature: required, conditional (case-insensitive)'
         },
         search: {
           type: 'string',
