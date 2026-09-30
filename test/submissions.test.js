@@ -224,9 +224,8 @@ suite.test('Submit Form: keeps a multiselect value an array', async () => {
 });
 
 suite.test('Submit Form: sends a formatted phone object as the JSON string GF decodes', async () => {
-  // GF_Field_Phone posts a "formatted" phone from a hidden input as a JSON
-  // string of country/national/formatted/e164, and decodes only a string: an
-  // object arrives as a PHP array and fails "correct format" validation.
+  // GF decodes a "formatted" phone only from a JSON string; an object arrives as
+  // a PHP array and fails validation.
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true, entry_id: 10, confirmation_message: 'ok'
   }));
@@ -282,8 +281,8 @@ suite.test('Submit Form: accepts GF abilities dot notation for sub-inputs', asyn
 });
 
 suite.test('Submit Form: both spellings of one sub-input must agree', async () => {
-  // GF keeps whichever spelling it sees last; a contradiction is refused here
-  // instead. The same value under both is one value.
+  // GF keeps whichever spelling it sees last, so a contradiction is refused
+  // here. The same value under both is one value.
   await TestAssert.throwsAsync(
     () => client.submitFormData({ form_id: 1, 'input_5.3': 'Ada', input_5_3: 'Grace' }),
     'disagree',

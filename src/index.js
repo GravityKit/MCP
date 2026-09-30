@@ -411,8 +411,8 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID (`id` is accepted too)' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys. A JSON object, or a JSON string, is rejected.' }
+        form_id: { type: 'number', description: 'Form ID' },
+        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
       additionalProperties: true,
       required: ['form_id']
@@ -567,8 +567,8 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID (`id` is accepted too)' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys. A JSON object, or a JSON string, is rejected.' }
+        form_id: { type: 'number', description: 'Form ID' },
+        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
       additionalProperties: true,
       required: ['form_id']
@@ -581,7 +581,7 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID (`id` is accepted too)' }
+        form_id: { type: 'number', description: 'Form ID' }
       },
       additionalProperties: true,
       required: ['form_id']

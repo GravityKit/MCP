@@ -589,18 +589,14 @@ export class ValidationFactory {
           subValidated.form_id = BaseValidator.resolveFormId(input, 'form_id');
           delete subValidated.id;
           let inputKeyCount = 0;
-          // GF reads a scalar input as a string; JSON null means no value,
-          // which GF spells ''.
+          // GF spells "no value" as '', never the text "null".
           const toWireScalar = entry => (entry === null || entry === undefined) ? '' : String(entry);
           Object.keys(input).forEach(key => {
             if (!key.startsWith('input_')) {
               return;
             }
-            // Sub-inputs arrive in either spelling: GF's abilities layer
-            // documents dot notation (input_5.3), and GFAPI::submit_form
-            // rewrites dots to underscores itself (normalize_post_keys, GF
-            // 2.6.4+), keeping the last of two spellings of one input.
-            // Normalizing here lets the two be compared instead.
+            // GF collapses input_5.3 to input_5_3 and keeps whichever spelling
+            // came last. Normalizing first is what lets the two be compared.
             const targetKey = /^input_\d+\.\d+$/.test(key) ? key.replace('.', '_') : key;
             if (targetKey !== key) {
               delete subValidated[key];
@@ -613,14 +609,10 @@ export class ValidationFactory {
                 return;
               }
             }
-            // Two value shapes must reach GF unjoined. A multiselect or list
-            // value is an array: joined, a comma inside a value ("Atlanta, GA")
-            // cannot be told from a separator. A GF 3.0 "formatted" phone is a
-            // JSON string of {country, national, formatted, e164}: GF_Field_Phone
-            // posts it from a hidden input as text and decodes only a string,
-            // so an object is serialized. A checkbox is neither: GF reads each
-            // choice from its own sub-input (input_5_1, input_5_2) and ignores
-            // an array under input_5.
+            // Joined, a comma inside an array value ("Atlanta, GA") cannot be
+            // told from a separator. A GF 3.0 "formatted" phone decodes only from
+            // a JSON string. A checkbox reads each choice from its own sub-input
+            // and ignores an array under input_5.
             const value = input[key];
             if (Array.isArray(value)) {
               subValidated[targetKey] = value.map(entry =>
@@ -643,10 +635,8 @@ export class ValidationFactory {
             input.field_values !== undefined &&
             typeof input.field_values !== 'string' &&
             !Array.isArray(input.field_values);
-          // A serialized object satisfies the string type above. GF's API
-          // submit path never parses a string field_values (GFForms::get
-          // returns '' for a non-array), so the submission succeeds having
-          // populated nothing.
+          // GF's API path never parses a string field_values (GFForms::get
+          // returns '' for a non-array), so one populates nothing.
           const fieldValuesIsSerializedObject =
             typeof input.field_values === 'string' &&
             /^\s*[{[]/.test(input.field_values);
@@ -655,9 +645,8 @@ export class ValidationFactory {
             throw new Error('field_values must be a query string (e.g. "p1=a&p2=b") or array — it is GF dynamic-population data, not submission values; pass field values as top-level input_N keys (e.g. input_1)');
           }
 
-          // GF answers an empty submission with a required-field message for
-          // whichever field happens to be required, which names one field rather
-          // than the missing values.
+          // GF answers an empty submission by naming whichever field is
+          // required, never the missing values.
           if (toolName === 'gf_submit_form_data' && inputKeyCount === 0) {
             throw new Error('no field values were given: pass them as top-level input_N keys (e.g. input_1: "Ada", input_3: "..."), one per field id');
           }
