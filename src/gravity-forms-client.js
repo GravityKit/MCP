@@ -1046,8 +1046,37 @@ export class GravityFormsClient {
       const requestParams = normalized ? { search: normalized } : {};
       const response = await this.httpClient.get(`/forms/${form_id}/results`, { params: requestParams });
 
+      // GF's results controller hands whatever the results cache returned straight
+      // to prepare_item_for_response, which wraps it in an HTTP 200 unconditionally
+      // (class-controller-form-results.php), so a failure arrives as a serialized
+      // WP_Error inside a success. The cache returns exactly one — not_found, for a
+      // form id GFAPI::get_form cannot resolve (class-results-cache.php
+      // get_results) — and a form with no entries answers with an ordinary results
+      // payload of zero counts (timestamp/entry_count/field_data/status, never an
+      // `errors` key). So `errors` here always means the read failed, and reporting
+      // it as an empty result set would read as a successful count of nothing.
+      const data = response.data;
+      const isPlainObject = data && typeof data === 'object' && !Array.isArray(data);
+      const wpErrorCodes = isPlainObject && data.errors && typeof data.errors === 'object'
+        ? Object.keys(data.errors)
+        : [];
+
+      if (wpErrorCodes.length > 0) {
+        const code = wpErrorCodes[0];
+        const messages = data.errors[code];
+        const message = (Array.isArray(messages) ? messages[0] : messages) || code;
+        // A missing form is what GF's own /forms/{id} route answers 404 to, so the
+        // failure reads the same here as it does on the sibling field-filters call.
+        return this.handleApiError({
+          response: {
+            status: code === 'not_found' ? 404 : 500,
+            data: { code, message }
+          }
+        });
+      }
+
       return {
-        results: response.data
+        results: data
       };
     });
   }
