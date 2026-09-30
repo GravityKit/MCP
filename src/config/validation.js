@@ -347,9 +347,8 @@ export class FormsValidator extends BaseValidator {
     const validated = { ...formData };
 
     if (isUpdate) {
-      // Use lowercase for validation tests
-      BaseValidator.validateRequired(formData, ['id']);
-      validated.id = BaseValidator.validateId(formData.id, 'id');
+      validated.id = BaseValidator.resolveFormId(formData, 'id');
+      delete validated.form_id;
     } else {
       BaseValidator.validateRequired(formData, ['title']);
     }

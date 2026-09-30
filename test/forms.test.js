@@ -597,4 +597,18 @@ suite.run().then(results => {
 
 }
 
+suite.test('Update Form: accepts the form id under either name', async () => {
+  mockHttpClient.setMockResponse('GET', '/forms/5', new MockResponse({ id: 5, title: 'Before', fields: [] }));
+  mockHttpClient.setMockResponse('PUT', '/forms/5', new MockResponse({ id: 5, title: 'Renamed' }));
+  const viaFormId = await client.updateForm({ form_id: 5, title: 'Renamed' });
+  TestAssert.equal(viaFormId.form.id, 5, 'form_id must work where id is documented');
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'PUT').config.data;
+  TestAssert.isFalse('form_id' in sent, 'only the normalized id may be sent');
+  await TestAssert.throwsAsync(
+    () => client.updateForm({ id: 5, form_id: 9, title: 'Renamed' }),
+    'disagree',
+    'two different ids must be rejected'
+  );
+});
+
 export default suite;
