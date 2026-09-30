@@ -541,7 +541,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_create_entry',
-    description: 'Create an entry. Checkbox/multiselect arrays auto-normalized.',
+    description: 'Create an entry. Put field values at the top level beside form_id ("1": "Ada", "6.3": "Oslo"), never nested under "entry". A key naming no field on the form is refused. Returns the entry as stored. Checkbox/multiselect arrays auto-normalized.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

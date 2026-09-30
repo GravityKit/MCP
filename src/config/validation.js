@@ -539,12 +539,139 @@ export class EntriesValidator extends BaseValidator {
     return validated;
   }
 
+  /**
+   * Entry properties GF writes that are not form fields. A key in this list is
+   * never checked against the form.
+   */
+  static ENTRY_PROPERTY_KEYS = new Set([
+    'id', 'form_id', 'status', 'created_by', 'date_created', 'date_updated',
+    'is_starred', 'is_read', 'ip', 'source_url', 'user_agent', 'currency',
+    'payment_status', 'payment_date', 'payment_amount', 'payment_method',
+    'transaction_id', 'transaction_type', 'is_fulfilled', 'post_id'
+  ]);
+
+  /**
+   * A field id ("6") or a sub-input id ("6.3", or "6_3" as submissions spell it).
+   */
+  static isFieldKey(key) {
+    return /^\d+(?:[._]\d+)?$/.test(key);
+  }
+
+  /**
+   * Puts sub-input keys in the dotted spelling GF stores them under.
+   *
+   * gf_submit_form_data treats `input_5.3` and `input_5_3` as one input and refuses
+   * two values for it; entries follow the same rule. GF reads `6.3` from an entry
+   * body and ignores `6_3`, so the underscored spelling is rewritten rather than
+   * passed through to be dropped.
+   *
+   * @param {object} data Entry data.
+   * @returns {object} A copy with dotted sub-input keys.
+   * @throws When one sub-input is given under both spellings with different values.
+   */
+  static normalizeFieldKeys(data) {
+    const out = { ...data };
+
+    Object.keys(data).forEach(key => {
+      if (!/^\d+_\d+$/.test(key)) {
+        return;
+      }
+      const dotted = key.replace('_', '.');
+      delete out[key];
+
+      const hasBothSpellings = Object.prototype.hasOwnProperty.call(data, dotted);
+      if (hasBothSpellings) {
+        const spellingsDisagree = JSON.stringify(data[dotted]) !== JSON.stringify(data[key]);
+        if (spellingsDisagree) {
+          throw new Error(`${key} and ${dotted} name the same input and disagree; pass one`);
+        }
+        return;
+      }
+      out[dotted] = data[key];
+    });
+
+    return out;
+  }
+
+  /**
+   * Refuses a write that cannot store what it carries, before any HTTP call.
+   *
+   * GF reads field values from top-level keys and ignores the rest. A plain object
+   * under a non-field key is the nested `entry: { "1": "Ada" }` guess; accepted, it
+   * stored nothing and reported success. On create, a payload with no field key at
+   * all stores nothing either.
+   *
+   * @param {object} data      Entry data, sub-input keys already normalized.
+   * @param {boolean} isUpdate Whether this is gf_update_entry.
+   * @throws When the payload cannot store a value.
+   */
+  static assertStorableShape(data, isUpdate) {
+    const idKey = isUpdate ? 'id' : 'form_id';
+    const idExample = `${idKey}: ${data[idKey]}`;
+
+    Object.keys(data).forEach(key => {
+      const value = data[key];
+      const isNamedProperty = this.isFieldKey(key) || this.ENTRY_PROPERTY_KEYS.has(key);
+      const isPlainObject = value !== null && typeof value === 'object' && !Array.isArray(value);
+
+      if (!isNamedProperty && isPlainObject) {
+        throw new Error(`"${key}" holds an object, and Gravity Forms reads field values only from top-level keys beside ${idKey}: pass { ${idExample}, "1": "Ada", "2": "ada@example.com" }, not values nested under "${key}"`);
+      }
+    });
+
+    const hasFieldKey = Object.keys(data).some(key => this.isFieldKey(key));
+    if (!isUpdate && !hasFieldKey) {
+      throw new Error('no field values were given: pass them as top-level field-id keys (e.g. "1": "Ada", "2": "ada@example.com", "6.3": "..."), one per field id or sub-input, not nested under "entry"');
+    }
+  }
+
+  /**
+   * Refuses field keys that name no field (or no input) on the form.
+   *
+   * GF drops such a key and still answers with the request body, so the value
+   * looks stored. A sub-input is checked against the field's listed inputs; a
+   * field that lists none (some post fields) accepts any sub-input, since refusing
+   * would block a legitimate write.
+   *
+   * @param {object} data   Entry data, sub-input keys already normalized.
+   * @param {Array} fields  The form's `fields`.
+   * @param {number} formId The form id, for the message.
+   * @throws When a key resolves to nothing.
+   */
+  static assertKeysResolve(data, fields, formId) {
+    const problems = [];
+
+    Object.keys(data).filter(key => this.isFieldKey(key)).forEach(key => {
+      const [fieldPart, inputPart] = key.split('.');
+      const field = fields.find(candidate => Number(candidate?.id) === Number(fieldPart));
+
+      if (!field) {
+        const ids = fields.map(candidate => candidate?.id).filter(id => id !== undefined);
+        const shown = ids.length > 40 ? `${ids.slice(0, 40).join(', ')}, …` : ids.join(', ');
+        problems.push(`field ${fieldPart} does not exist on form ${formId} (its fields: ${shown || 'none'})`);
+        return;
+      }
+
+      const listsInputs = Array.isArray(field.inputs) && field.inputs.length > 0;
+      if (inputPart !== undefined && listsInputs) {
+        const inputIds = field.inputs.map(input => String(input.id));
+        if (!inputIds.includes(key)) {
+          problems.push(`input ${key} does not exist on field ${fieldPart} of form ${formId} (its inputs: ${inputIds.join(', ')})`);
+        }
+      }
+    });
+
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('; ')}. Gravity Forms ignores a key like this, so nothing would be stored for it`);
+    }
+  }
+
   static validateEntryData(entryData, isUpdate = false) {
     if (!entryData || typeof entryData !== 'object') {
       throw new Error('Entry data must be an object');
     }
 
-    const validated = { ...entryData };
+    const validated = this.normalizeFieldKeys(entryData);
 
     if (!isUpdate) {
       BaseValidator.validateRequired(entryData, ['form_id']);
@@ -570,6 +697,8 @@ export class EntriesValidator extends BaseValidator {
     if (entryData.date_created) {
       validated.date_created = this.validateDate(entryData.date_created, 'date_created');
     }
+
+    this.assertStorableShape(validated, isUpdate);
 
     return validated;
   }

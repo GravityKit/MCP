@@ -7,7 +7,7 @@
 import axios from 'axios';
 import https from 'https';
 import { AuthManager, validateRestApiAccess, flattenParams, rfc3986Encode } from './config/auth.js';
-import { ValidationFactory } from './config/validation.js';
+import { ValidationFactory, EntriesValidator } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
 import { generateCompoundInputs, assignFieldIds, applyStorageTypeDefault } from './field-definitions/field-registry.js';
@@ -601,14 +601,19 @@ export class GravityFormsClient {
    *
    * @param {object} entryData - Entry data, possibly containing array values.
    * @param {number} formId - The form ID to fetch field definitions from.
+   * @param {Array} [preloadedFields] - The form's fields when the caller already
+   *   fetched the form, which saves a second request for the same form.
    * @returns {Promise<object>} Entry data with arrays normalized per field type.
    */
-  async _normalizeArrayValues(entryData, formId) {
+  async _normalizeArrayValues(entryData, formId, preloadedFields) {
     const arrayKeys = Object.keys(entryData).filter(k => Array.isArray(entryData[k]));
     if (arrayKeys.length === 0) return entryData;
 
-    const formResponse = await this.httpClient.get(`/forms/${formId}`);
-    const fields = formResponse.data.fields || [];
+    let fields = preloadedFields;
+    if (!fields) {
+      const formResponse = await this.httpClient.get(`/forms/${formId}`);
+      fields = formResponse.data.fields || [];
+    }
 
     const expanded = { ...entryData };
 
@@ -682,16 +687,61 @@ export class GravityFormsClient {
   }
 
   /**
-   * Create new entry with validation
+   * Checks an entry write's field keys against the form, then normalizes arrays.
+   *
+   * GF drops a key that is not a field on the form and still answers with the body
+   * it was sent, so an unchecked write reports values it never stored. The form is
+   * fetched once for both this check and array normalization. A write with no
+   * field key (a status change) needs no form. A form that returns no `fields`
+   * array cannot be checked, so the write goes through and the stored-entry
+   * read-back on create is what shows the result.
+   *
+   * @param {object} entryData Validated entry data.
+   * @param {number} formId    The form the entry belongs to.
+   * @returns {Promise<object>} Entry data ready to send.
+   * @throws When a key names no field on the form.
+   */
+  async _prepareEntryValues(entryData, formId) {
+    const hasFieldKey = Object.keys(entryData).some(key => EntriesValidator.isFieldKey(key));
+    if (!hasFieldKey) {
+      return entryData;
+    }
+
+    const formResponse = await this.httpClient.get(`/forms/${formId}`);
+    const fields = formResponse.data?.fields;
+    const fieldsAreReadable = Array.isArray(fields);
+
+    if (fieldsAreReadable) {
+      EntriesValidator.assertKeysResolve(entryData, fields, formId);
+    }
+
+    return this._normalizeArrayValues(entryData, formId, fieldsAreReadable ? fields : undefined);
+  }
+
+  /**
+   * Create new entry with validation.
+   *
+   * GF answers POST /entries with the request body plus an id, so its response
+   * cannot say what was stored. The entry is read back by id and that is returned.
    */
   async createEntry(params) {
     return this.validateAndCall('gf_create_entry', params, async (validated) => {
-      const expanded = await this._normalizeArrayValues(validated, validated.form_id);
+      const expanded = await this._prepareEntryValues(validated, validated.form_id);
       const response = await this.httpClient.post('/entries', expanded);
+      const entryId = response.data?.id;
 
-      return {
-        entry: response.data
-      };
+      // The entry exists by now. Throwing on a failed read-back would return an error
+      // carrying no id, and a caller that retries creates a second entry (the same
+      // trap createFeed guards against).
+      try {
+        const stored = await this.httpClient.get(`/entries/${entryId}`);
+        return { entry: stored.data };
+      } catch (error) {
+        return {
+          entry: { id: entryId, form_id: validated.form_id },
+          warning: `The entry was created (id ${entryId}) but could not be read back: ${error.message}. Its values are unverified. Check them with gf_get_entry rather than creating another.`
+        };
+      }
     });
   }
 
@@ -706,7 +756,8 @@ export class GravityFormsClient {
         const existingEntryResponse = await this.httpClient.get(`/entries/${id}`);
         const existingEntry = existingEntryResponse.data;
 
-        // Expand checkbox arrays before merging so stale sub-inputs are cleared
+        // Check keys against the entry's own form, then expand checkbox arrays
+        // before merging so stale sub-inputs are cleared
         const expandedUpdates = await this._normalizeArrayValues(updates, existingEntry.form_id);
 
         const updatedEntryData = {

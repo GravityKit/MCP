@@ -511,6 +511,9 @@ suite.test('Special Characters: HTML encoding', async () => {
   mockHttpClient.setMockResponse('POST', '/entries',
     new MockResponse({ id: 1 })
   );
+  mockHttpClient.setMockResponse('GET', '/entries/1',
+    new MockResponse({ id: 1, form_id: 1 })
+  );
 
   const result = await client.createEntry({
     form_id: 1,

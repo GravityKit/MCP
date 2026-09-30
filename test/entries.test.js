@@ -344,6 +344,8 @@ suite.test('Create Entry: Should create new entry with field values', async () =
   const newEntry = generateMockEntry(1, { id: 500 });
 
   mockHttpClient.setMockResponse('POST', '/entries', new MockResponse(newEntry));
+  // create returns the entry as stored, read back by id, not GF's echo of the POST
+  mockHttpClient.setMockResponse('GET', '/entries/500', new MockResponse(newEntry));
 
   const result = await client.createEntry({
     form_id: 1,
@@ -392,6 +394,10 @@ suite.test('Create Entry: Should handle complex field types', async () => {
   };
 
   mockHttpClient.setMockResponse('POST', '/entries', new MockResponse({
+    ...complexEntry,
+    id: 600
+  }));
+  mockHttpClient.setMockResponse('GET', '/entries/600', new MockResponse({
     ...complexEntry,
     id: 600
   }));
@@ -612,7 +618,7 @@ suite.test('Failure Mode: Should handle database errors', async () => {
   ));
 
   await TestAssert.throwsAsync(
-    () => client.createEntry({ form_id: 1 }),
+    () => client.createEntry({ form_id: 1, '1': 'Ada' }),
     'Server error',
     'Should handle database errors'
   );

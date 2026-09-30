@@ -171,7 +171,7 @@ GET/list methods return just the data:
 { form: responseData }              // gf_get_form
 { forms: responseData, total_count, total_pages }  // gf_list_forms
 { entries: responseData, total_count }              // gf_list_entries
-{ entry: responseData }             // gf_get_entry
+{ entry: responseData }             // gf_get_entry; gf_create_entry returns the entry read back after the POST
 { feed: responseData }              // gf_get_feed, gf_create_feed, gf_update_feed, gf_patch_feed
 { feeds: responseData }             // gf_list_feeds (pass form_id to scope to one form)
 ```
@@ -226,6 +226,8 @@ const existing = await this.httpClient.get(`/resource/${id}`);
 const merged = { ...existing.data, ...updates };
 await this.httpClient.put(`/resource/${id}`, merged);
 ```
+
+Entry writes are checked before they are sent: a key that names no field (or sub-input) on the form is refused, as is a value nested under a non-field key such as `entry`. Sub-inputs take the dotted spelling (`6.3`); `6_3` is rewritten to it and two different values for one sub-input are refused, the same rule `gf_submit_form_data` applies to `input_5.3` / `input_5_3`. GF answers `POST /entries` with the request body, so `createEntry` reads the entry back by id (`GET /entries/{id}`) and returns that.
 
 ### Delete Safety
 
