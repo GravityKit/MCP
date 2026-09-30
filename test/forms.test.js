@@ -98,6 +98,26 @@ suite.test('Get Form: Should get specific form by ID', async () => {
   TestAssert.isTrue(result.form.is_active);
 });
 
+suite.test('Get Form: accepts the form id as form_id, the name the submission tools use', async () => {
+  const mockForm = generateMockForm({ id: 7 });
+  mockHttpClient.setMockResponse('GET', '/forms/7', new MockResponse(mockForm));
+
+  const result = await client.getForm({ form_id: 7 });
+
+  TestAssert.equal(result.form.id, 7);
+  TestAssert.isTrue(mockHttpClient.hasRequest('GET', '/forms/7'), 'form_id must resolve to the same route as id');
+  await TestAssert.throwsAsync(
+    () => client.getForm({ id: 7, form_id: 8 }),
+    'disagree',
+    'two different ids must be rejected rather than silently picking one'
+  );
+  await TestAssert.throwsAsync(
+    () => client.getForm({}),
+    'id is required',
+    'the error must still name the documented parameter'
+  );
+});
+
 suite.test('Get Form: Should handle form with no fields', async () => {
   const emptyForm = generateMockForm({ id: 1, fields: [] });
 
@@ -419,6 +439,16 @@ suite.test('Delete Form: Should trash form by default', async () => {
 
   TestAssert.isTrue(result.deleted);
   TestAssert.isFalse(result.permanently);
+});
+
+suite.test('Delete Form: accepts the form id as form_id', async () => {
+  mockHttpClient.setMockResponse('DELETE', '/forms/7', new MockResponse({}));
+
+  const result = await client.deleteForm({ form_id: 7, force: true });
+
+  TestAssert.isTrue(result.deleted);
+  TestAssert.equal(result.form_id, 7);
+  TestAssert.isTrue(mockHttpClient.hasRequest('DELETE', '/forms/7'), 'form_id must resolve to the same route as id');
 });
 
 suite.test('Delete Form: Should permanently delete with force=true', async () => {

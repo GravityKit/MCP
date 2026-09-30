@@ -113,6 +113,24 @@ suite.test('Submit Form: rejects a field_values JSON STRING (a serialized object
     'field_values',
     'a JSON-string field_values must be rejected'
   );
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_1: 'x', field_values: '["Ada"]' }),
+    'field_values',
+    'a serialized array must be rejected too'
+  );
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_1: 'x', field_values: '  {"1": "Ada"}' }),
+    'field_values',
+    'leading whitespace must not hide a serialized object'
+  );
+});
+
+suite.test('Submit Form: a bracket inside a query string is not a serialized object', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 7, confirmation_message: 'ok'
+  }));
+  const result = await client.submitFormData({ form_id: 1, input_1: 'x', field_values: 'tags[]=a&tags[]=b' });
+  TestAssert.equal(result.entry_id, 7, 'PHP array syntax in a query string must still be accepted');
 });
 
 suite.test('Submit Form: still accepts a real query string and array field_values', async () => {
@@ -130,8 +148,36 @@ suite.test('Submit Form: rejects a submission carrying no input_N key', async ()
   // the missing values.
   await TestAssert.throwsAsync(
     () => client.submitFormData({ form_id: 1 }),
-    'input_N',
+    'no field values were given',
     'a submission with no field values must be rejected'
+  );
+  // Page navigation keys are not field values.
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, source_page_number: 1, target_page_number: 2 }),
+    'no field values were given',
+    'page numbers alone are not a submission'
+  );
+});
+
+suite.test('Validate Submission / Validate Form: still accept a submission with no input_N key', async () => {
+  // Checking what a form does with nothing is what these tools are for.
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions/validation', new MockResponse({
+    is_valid: false, validation_messages: { '1': 'This field is required.' }, page_number: 1
+  }, 400));
+  const viaSubmission = await client.validateSubmission({ form_id: 1 });
+  TestAssert.isFalse(viaSubmission.valid, 'gf_validate_submission must reach GF with no values');
+  TestAssert.equal(viaSubmission.validation_messages['1'], 'This field is required.');
+  const viaForm = await client.validateForm({ form_id: 1 });
+  TestAssert.isFalse(viaForm.valid, 'gf_validate_form must reach GF with no values');
+  TestAssert.equal(mockHttpClient.getRequests().filter(r => r.method === 'POST').length, 2,
+    'both empty validations must be sent');
+});
+
+suite.test('Submit Form: a field_values JSON string is refused before the empty-submission check', async () => {
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, field_values: '{"1": "Ada"}' }),
+    'field_values must be a query string',
+    'the field_values mistake must be named, not the missing input_N keys'
   );
 });
 
@@ -141,10 +187,27 @@ suite.test('Submit Form: accepts the form id under either name', async () => {
   }));
   const viaId = await client.submitFormData({ id: 1, input_1: 'x' });
   TestAssert.equal(viaId.entry_id, 8, 'id must work where form_id is documented');
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.isFalse('id' in sent, 'the alias must not reach GF as a stray body key');
   await TestAssert.throwsAsync(
     () => client.submitFormData({ id: 5, form_id: 9, input_1: 'x' }),
     'disagree',
     'two different ids must be rejected rather than silently picking one'
+  );
+});
+
+suite.test('Submit Form: the same id under both names is one id, however it is spelled', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 8, confirmation_message: 'ok'
+  }));
+  const asNumberAndString = await client.submitFormData({ id: '1', form_id: 1, input_1: 'x' });
+  TestAssert.equal(asNumberAndString.entry_id, 8, '"1" and 1 are the same id');
+  const withLeadingZero = await client.submitFormData({ id: '01', form_id: 1, input_1: 'x' });
+  TestAssert.equal(withLeadingZero.entry_id, 8, '"01" and 1 are the same id');
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ id: 0, form_id: 1, input_1: 'x' }),
+    'positive integer',
+    'an invalid alias is reported as invalid, not as a disagreement'
   );
 });
 
@@ -160,16 +223,38 @@ suite.test('Submit Form: keeps a multiselect value an array', async () => {
     'an array value must reach GF as an array');
 });
 
-suite.test('Submit Form: keeps a formatted phone value an object', async () => {
-  // A GF 3.0 "formatted" phone is an object of country/national/formatted/e164
-  // and has to be submitted as one.
+suite.test('Submit Form: sends a formatted phone object as the JSON string GF decodes', async () => {
+  // GF_Field_Phone posts a "formatted" phone from a hidden input as a JSON
+  // string of country/national/formatted/e164, and decodes only a string: an
+  // object arrives as a PHP array and fails "correct format" validation.
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true, entry_id: 10, confirmation_message: 'ok'
   }));
   const phone = { country: 'us', national: '(555) 123-4567', formatted: '+1 555 123 4567', e164: '+15551234567' };
   await client.submitFormData({ form_id: 1, input_4: phone });
   const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
-  TestAssert.deepEqual(sent.input_4, phone, 'an object value must reach GF as an object');
+  TestAssert.equal(typeof sent.input_4, 'string', 'an object value must reach GF as a string');
+  TestAssert.deepEqual(JSON.parse(sent.input_4), phone, 'the string must decode to the object given');
+});
+
+suite.test('Submit Form: stringifies scalars inside an array and keeps nested arrays', async () => {
+  // A list field is an array of rows; a row of several columns is itself an array.
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 10, confirmation_message: 'ok'
+  }));
+  await client.submitFormData({ form_id: 1, input_3: [1, true, ['a', 'b']] });
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.deepEqual(sent.input_3, ['1', 'true', ['a', 'b']], 'array entries are coerced the way top-level scalars are');
+});
+
+suite.test('Submit Form: sends null as an empty value, not the text "null"', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 10, confirmation_message: 'ok'
+  }));
+  await client.submitFormData({ form_id: 1, input_1: null, input_3: [null, 'x'] });
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.equal(sent.input_1, '', 'a null scalar is an empty value');
+  TestAssert.deepEqual(sent.input_3, ['', 'x'], 'a null array entry is an empty value');
 });
 
 suite.test('Submit Form: still stringifies scalar values', async () => {
@@ -194,6 +279,41 @@ suite.test('Submit Form: accepts GF abilities dot notation for sub-inputs', asyn
   TestAssert.equal(sent.input_5_3, 'Ada', 'dot notation must be normalized to underscore');
   TestAssert.equal(sent.input_5_6, 'Lovelace', 'every dotted sub-input must be normalized');
   TestAssert.isFalse('input_5.3' in sent, 'the dotted key must not also be sent');
+});
+
+suite.test('Submit Form: both spellings of one sub-input must agree', async () => {
+  // GF keeps whichever spelling it sees last; a contradiction is refused here
+  // instead. The same value under both is one value.
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, 'input_5.3': 'Ada', input_5_3: 'Grace' }),
+    'disagree',
+    'two values for one input must not be resolved by key order'
+  );
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_5_3: 'Grace', 'input_5.3': 'Ada' }),
+    'disagree',
+    'the refusal must not depend on which spelling comes first'
+  );
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 12, confirmation_message: 'ok'
+  }));
+  await client.submitFormData({ form_id: 1, 'input_5.3': 'Ada', input_5_3: 'Ada' });
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.equal(sent.input_5_3, 'Ada', 'agreeing spellings collapse to the underscore key');
+  TestAssert.isFalse('input_5.3' in sent, 'the dotted spelling must not also be sent');
+});
+
+suite.test('Submit Form: id alias, dot notation and an array value in one call', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 13, confirmation_message: 'ok'
+  }));
+  const result = await client.submitFormData({ id: 1, 'input_5.3': 'Ada', input_3: ['Atlanta, GA', 'Austin, TX'] });
+  TestAssert.equal(result.entry_id, 13, 'the call must reach /forms/1/submissions');
+  const req = mockHttpClient.getRequests().find(r => r.method === 'POST');
+  TestAssert.equal(req.path, '/forms/1/submissions');
+  TestAssert.deepEqual(Object.keys(req.config.data).sort(), ['input_3', 'input_5_3'],
+    'the body carries exactly the normalized inputs: no id, no form_id, no dotted key');
+  TestAssert.deepEqual(req.config.data.input_3, ['Atlanta, GA', 'Austin, TX']);
 });
 
 suite.test('Submit Form: Should handle multi-page form submission', async () => {

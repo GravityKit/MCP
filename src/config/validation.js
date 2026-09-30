@@ -44,21 +44,27 @@ export class BaseValidator {
    * @param {object} input     The tool input.
    * @param {string} preferred The name this tool documents; the other is accepted too.
    * @returns {number} The validated id.
-   * @throws When neither is present, or both are present and disagree.
+   * @throws When neither is present, either is not a positive integer, or both
+   *   are present and resolve to different ids.
    */
   static resolveFormId(input, preferred = 'form_id') {
     const other = preferred === 'form_id' ? 'id' : 'form_id';
-    const hasPreferred = input[preferred] !== undefined && input[preferred] !== null && input[preferred] !== '';
-    const hasOther = input[other] !== undefined && input[other] !== null && input[other] !== '';
+    const isGiven = name => input[name] !== undefined && input[name] !== null && input[name] !== '';
+    const hasPreferred = isGiven(preferred);
+    const hasOther = isGiven(other);
 
-    if (hasPreferred && hasOther && String(input[preferred]) !== String(input[other])) {
-      throw new Error(`${preferred} and ${other} were both given and disagree (${input[preferred]} vs ${input[other]}); pass one`);
-    }
     if (!hasPreferred && !hasOther) {
       throw new Error(`${preferred} is required`);
     }
 
-    return BaseValidator.validateId(hasPreferred ? input[preferred] : input[other], preferred);
+    const preferredId = hasPreferred ? BaseValidator.validateId(input[preferred], preferred) : null;
+    const otherId = hasOther ? BaseValidator.validateId(input[other], other) : null;
+
+    if (hasPreferred && hasOther && preferredId !== otherId) {
+      throw new Error(`${preferred} and ${other} were both given and disagree (${input[preferred]} vs ${input[other]}); pass one`);
+    }
+
+    return hasPreferred ? preferredId : otherId;
   }
 
   static validateId(id, fieldName = 'id') {
@@ -583,33 +589,49 @@ export class ValidationFactory {
           subValidated.form_id = BaseValidator.resolveFormId(input, 'form_id');
           delete subValidated.id;
           let inputKeyCount = 0;
+          // GF reads a scalar input as a string; JSON null means no value,
+          // which GF spells ''.
+          const toWireScalar = entry => (entry === null || entry === undefined) ? '' : String(entry);
           Object.keys(input).forEach(key => {
-            if (key.startsWith('input_')) {
-              // GF wants scalars as strings, but two value shapes must reach it
-              // intact: a multiselect or checkbox value is an array, where a
-              // comma inside a value ("Atlanta, GA") is indistinguishable from a
-              // separator once joined, and a GF 3.0 "formatted" phone value is an
-              // object of country / national / formatted / e164.
-              // Sub-inputs reach this server in either spelling: GF's abilities
-              // layer documents dot notation (input_5.3), while
-              // GFAPI::submit_form reads only underscore (its docblock:
-              // $input_values['input_2_6']).
-              const targetKey = /^input_\d+\.\d+$/.test(key) ? key.replace('.', '_') : key;
-              if (targetKey !== key) {
-                delete subValidated[key];
-              }
-              const value = input[key];
-              if (Array.isArray(value)) {
-                subValidated[targetKey] = value.map(entry =>
-                  entry !== null && typeof entry === 'object' ? entry : String(entry)
-                );
-              } else if (value !== null && typeof value === 'object') {
-                subValidated[targetKey] = value;
-              } else {
-                subValidated[targetKey] = String(value);
-              }
-              inputKeyCount++;
+            if (!key.startsWith('input_')) {
+              return;
             }
+            // Sub-inputs arrive in either spelling: GF's abilities layer
+            // documents dot notation (input_5.3), and GFAPI::submit_form
+            // rewrites dots to underscores itself (normalize_post_keys, GF
+            // 2.6.4+), keeping the last of two spellings of one input.
+            // Normalizing here lets the two be compared instead.
+            const targetKey = /^input_\d+\.\d+$/.test(key) ? key.replace('.', '_') : key;
+            if (targetKey !== key) {
+              delete subValidated[key];
+              const hasBothSpellings = Object.prototype.hasOwnProperty.call(input, targetKey);
+              if (hasBothSpellings) {
+                const spellingsDisagree = JSON.stringify(input[targetKey]) !== JSON.stringify(input[key]);
+                if (spellingsDisagree) {
+                  throw new Error(`${key} and ${targetKey} name the same input and disagree; pass one`);
+                }
+                return;
+              }
+            }
+            // Two value shapes must reach GF unjoined. A multiselect or list
+            // value is an array: joined, a comma inside a value ("Atlanta, GA")
+            // cannot be told from a separator. A GF 3.0 "formatted" phone is a
+            // JSON string of {country, national, formatted, e164}: GF_Field_Phone
+            // posts it from a hidden input as text and decodes only a string,
+            // so an object is serialized. A checkbox is neither: GF reads each
+            // choice from its own sub-input (input_5_1, input_5_2) and ignores
+            // an array under input_5.
+            const value = input[key];
+            if (Array.isArray(value)) {
+              subValidated[targetKey] = value.map(entry =>
+                entry !== null && typeof entry === 'object' ? entry : toWireScalar(entry)
+              );
+            } else if (value !== null && typeof value === 'object') {
+              subValidated[targetKey] = JSON.stringify(value);
+            } else {
+              subValidated[targetKey] = toWireScalar(value);
+            }
+            inputKeyCount++;
           });
 
           // GF declares field_values as type ['string','array'] — it is GF
@@ -621,9 +643,10 @@ export class ValidationFactory {
             input.field_values !== undefined &&
             typeof input.field_values !== 'string' &&
             !Array.isArray(input.field_values);
-          // A serialized object satisfies the string type above, and GF then
-          // reads it as a query string with no pairs: the submission succeeds
-          // having populated nothing.
+          // A serialized object satisfies the string type above. GF's API
+          // submit path never parses a string field_values (GFForms::get
+          // returns '' for a non-array), so the submission succeeds having
+          // populated nothing.
           const fieldValuesIsSerializedObject =
             typeof input.field_values === 'string' &&
             /^\s*[{[]/.test(input.field_values);
