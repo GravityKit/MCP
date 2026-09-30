@@ -428,7 +428,7 @@ const GF_TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         form_id: { type: 'number', description: 'Form ID' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys.' }
+        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
       additionalProperties: true,
       required: ['form_id']
@@ -578,13 +578,13 @@ const GF_TOOL_DEFINITIONS = [
   // Form Submissions (2 tools)
   {
     name: 'gf_submit_form_data',
-    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3).',
+    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Field values go as top-level input_N keys (e.g. input_1: "Ada", input_2; sub-inputs input_1_3) — a call with none is rejected. Not field_values, which is dynamic population.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         form_id: { type: 'number', description: 'Form ID' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys.' }
+        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
       additionalProperties: true,
       required: ['form_id']
@@ -592,7 +592,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_validate_submission',
-    description: 'Validate submission without processing',
+    description: 'Validate submission without processing. Field values go as top-level input_N keys, the same as gf_submit_form_data.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',

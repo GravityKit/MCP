@@ -38,6 +38,35 @@ export class BaseValidator {
     }
   }
 
+  /**
+   * Resolves a form id given under either `id` or `form_id`.
+   *
+   * @param {object} input     The tool input.
+   * @param {string} preferred The name this tool documents; the other is accepted too.
+   * @returns {number} The validated id.
+   * @throws When neither is present, either is not a positive integer, or both
+   *   are present and resolve to different ids.
+   */
+  static resolveFormId(input, preferred = 'form_id') {
+    const other = preferred === 'form_id' ? 'id' : 'form_id';
+    const isGiven = name => input[name] !== undefined && input[name] !== null && input[name] !== '';
+    const hasPreferred = isGiven(preferred);
+    const hasOther = isGiven(other);
+
+    if (!hasPreferred && !hasOther) {
+      throw new Error(`${preferred} is required`);
+    }
+
+    const preferredId = hasPreferred ? BaseValidator.validateId(input[preferred], preferred) : null;
+    const otherId = hasOther ? BaseValidator.validateId(input[other], other) : null;
+
+    if (hasPreferred && hasOther && preferredId !== otherId) {
+      throw new Error(`${preferred} and ${other} were both given and disagree (${input[preferred]} vs ${input[other]}); pass one`);
+    }
+
+    return hasPreferred ? preferredId : otherId;
+  }
+
   static validateId(id, fieldName = 'id') {
     const schema = new ValidationSchema();
     schema.field('value', validate('value')
@@ -318,9 +347,8 @@ export class FormsValidator extends BaseValidator {
     const validated = { ...formData };
 
     if (isUpdate) {
-      // Use lowercase for validation tests
-      BaseValidator.validateRequired(formData, ['id']);
-      validated.id = BaseValidator.validateId(formData.id, 'id');
+      validated.id = BaseValidator.resolveFormId(formData, 'id');
+      delete validated.form_id;
     } else {
       BaseValidator.validateRequired(formData, ['title']);
     }
@@ -542,9 +570,8 @@ export class ValidationFactory {
           return FormsValidator.validateFormData(input, true);
         case 'gf_get_form':
         case 'gf_delete_form':
-          BaseValidator.validateRequired(input, ['id']);
           const result = {
-            id: BaseValidator.validateId(input.id, 'id')
+            id: BaseValidator.resolveFormId(input, 'id')
           };
           if (toolName === 'gf_delete_form' && input.force !== undefined) {
             result.force = BaseValidator.validateBoolean(input.force, 'force');
@@ -558,26 +585,69 @@ export class ValidationFactory {
             throw new Error('Submission data must be an object');
           }
           const subValidated = { ...input };
-          if (!input.form_id) {
-            throw new Error('form_id is required for form submission');
-          }
-          subValidated.form_id = BaseValidator.validateId(input.form_id, 'form_id');
+          subValidated.form_id = BaseValidator.resolveFormId(input, 'form_id');
+          delete subValidated.id;
+          let inputKeyCount = 0;
+          // GF spells "no value" as '', never the text "null".
+          const toWireScalar = entry => (entry === null || entry === undefined) ? '' : String(entry);
           Object.keys(input).forEach(key => {
-            if (key.startsWith('input_')) {
-              subValidated[key] = String(input[key]);
+            if (!key.startsWith('input_')) {
+              return;
             }
+            // GF collapses input_5.3 to input_5_3 and keeps whichever spelling
+            // came last. Normalizing first is what lets the two be compared.
+            const targetKey = /^input_\d+\.\d+$/.test(key) ? key.replace('.', '_') : key;
+            if (targetKey !== key) {
+              delete subValidated[key];
+              const hasBothSpellings = Object.prototype.hasOwnProperty.call(input, targetKey);
+              if (hasBothSpellings) {
+                const spellingsDisagree = JSON.stringify(input[targetKey]) !== JSON.stringify(input[key]);
+                if (spellingsDisagree) {
+                  throw new Error(`${key} and ${targetKey} name the same input and disagree; pass one`);
+                }
+                return;
+              }
+            }
+            // Joined, a comma inside an array value ("Atlanta, GA") cannot be
+            // told from a separator. A GF 3.0 "formatted" phone decodes only from
+            // a JSON string. A checkbox reads each choice from its own sub-input
+            // and ignores an array under input_5.
+            const value = input[key];
+            if (Array.isArray(value)) {
+              subValidated[targetKey] = value.map(entry =>
+                entry !== null && typeof entry === 'object' ? entry : toWireScalar(entry)
+              );
+            } else if (value !== null && typeof value === 'object') {
+              subValidated[targetKey] = JSON.stringify(value);
+            } else {
+              subValidated[targetKey] = toWireScalar(value);
+            }
+            inputKeyCount++;
           });
+
           // GF declares field_values as type ['string','array'] — it is GF
           // dynamic-population data (GFAPI::submit_form's 3rd arg), NOT the
           // submitted values. Submitted values are the input_N keys above. An
           // object is rejected by GF's own arg validation (HTTP 400), so reject
           // it here with a message that points to the right place.
-          if (
+          const fieldValuesIsWrongType =
             input.field_values !== undefined &&
             typeof input.field_values !== 'string' &&
-            !Array.isArray(input.field_values)
-          ) {
-            throw new Error('field_values must be a string (e.g. "p1=a&p2=b") or array — it is GF dynamic-population data, not submission values; pass field values as input_N keys (e.g. input_1)');
+            !Array.isArray(input.field_values);
+          // GF's API path never parses a string field_values (GFForms::get
+          // returns '' for a non-array), so one populates nothing.
+          const fieldValuesIsSerializedObject =
+            typeof input.field_values === 'string' &&
+            /^\s*[{[]/.test(input.field_values);
+
+          if (fieldValuesIsWrongType || fieldValuesIsSerializedObject) {
+            throw new Error('field_values must be a query string (e.g. "p1=a&p2=b") or array — it is GF dynamic-population data, not submission values; pass field values as top-level input_N keys (e.g. input_1)');
+          }
+
+          // GF answers an empty submission by naming whichever field is
+          // required, never the missing values.
+          if (toolName === 'gf_submit_form_data' && inputKeyCount === 0) {
+            throw new Error('no field values were given: pass them as top-level input_N keys (e.g. input_1: "Ada", input_3: "..."), one per field id');
           }
           return subValidated;
 

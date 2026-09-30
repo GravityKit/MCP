@@ -367,11 +367,11 @@ test('gf_submit_form_data: field_values must be a GF string|array, not an object
     'an object must be rejected (GF rejects it)'
   );
   assert.doesNotThrow(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: 'p1=a&p2=b' }),
+    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, input_1: 'x', field_values: 'p1=a&p2=b' }),
     'a query string must be accepted'
   );
   assert.doesNotThrow(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: ['a', 'b'] }),
+    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, input_1: 'x', field_values: ['a', 'b'] }),
     'an array must be accepted'
   );
 });
