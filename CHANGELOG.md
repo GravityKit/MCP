@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🔒 Security
+
+- **Two dependencies the server executes are no longer running with known advisories.** `axios`, which carries every Gravity Forms request, was pinned below the release that fixes seven advisories against it, five of them high. `fast-uri`, which the schema validator uses on every tool call, was forced to exactly the version one advisory names. Both are now pinned past them (`axios ^1.20.0`, `fast-uri ^4.2.1`), and `ip-address` is updated rather than waived, so it and `express-rate-limit` come off the audit allowlist entirely. The allowlist now holds only packages reached through the MCP SDK's HTTP transport, which a stdio server never loads; anything this server actually runs is pinned instead of excused.
+
 ## [2.5.0] - 2026-09-17
 
 This release improves how GravityKit product tools register themselves: they now publish output schemas and return more structured results. Destructive requests can be permitted per-product instead of all or nothing, and a site with more than 50 abilities now exposes all of them. GravityKit MCP also installs into Claude Desktop [as a one-click extension](https://github.com/GravityKit/MCP/releases/latest/download/gravitykit-mcp.mcpb). Gravity Forms tools gain more accurate errors and improved feed and field handling.
