@@ -945,7 +945,20 @@ export class GravityFormsClient {
    */
   async sendNotifications(params) {
     return this.validateAndCall('gf_send_notifications', params, async (validated) => {
-      const { entry_id, notification_ids, event } = validated;
+      const { entry_id, form_id, notification_ids, event } = validated;
+
+      // GF derives the form from the entry and ignores any form_id, so a wrong one
+      // was accepted and "sent". When the caller names a form it is checked here,
+      // before anything is sent. The entry is kept: the empty-answer path reuses it.
+      let entry;
+      if (form_id !== undefined) {
+        entry = (await this.httpClient.get(`/entries/${entry_id}`)).data;
+        const actualFormId = entry && entry.form_id;
+        const isSameForm = String(actualFormId) === String(form_id);
+        if (!isSameForm) {
+          throw new Error(`Entry ${entry_id} belongs to form ${actualFormId}, not form ${form_id}. Nothing was sent.`);
+        }
+      }
 
       // GF reads `_notifications` (comma-separated ids) and `_event` as query
       // params. An EMPTY _notifications string makes GF send ALL notifications
@@ -968,11 +981,53 @@ export class GravityFormsClient {
 
       const response = await this.httpClient.post(`/entries/${entry_id}/notifications`, {}, { params: queryParams });
 
-      return {
-        sent: true,
-        notifications_sent: Array.isArray(response.data) ? response.data : []
-      };
+      // GF answers with the ids GFAPI::send_notifications returned, which is [] when
+      // no notification carries the requested event. `sent` follows that list.
+      const notificationsSent = Array.isArray(response.data) ? response.data : [];
+      const wasSent = notificationsSent.length > 0;
+
+      if (wasSent) {
+        return { sent: true, notifications_sent: notificationsSent };
+      }
+
+      // Naming the cause costs an entry read (skipped when form_id already fetched
+      // it) and a form read, paid only on this path so a send that worked stays one request.
+      const reason = await this._explainNoNotifications(entry_id, entry, event || 'form_submission');
+
+      return { sent: false, notifications_sent: [], reason };
     });
+  }
+
+  /**
+   * Say why GF sent no notifications for an entry. Never throws: the send already
+   * happened, and a failed read must not hide its result.
+   */
+  async _explainNoNotifications(entryId, knownEntry, event) {
+    try {
+      const entry = knownEntry || (await this.httpClient.get(`/entries/${entryId}`)).data;
+      const formId = entry.form_id;
+      const form = (await this.httpClient.get(`/forms/${formId}`)).data;
+      const notifications = Object.values(form.notifications && typeof form.notifications === 'object' ? form.notifications : {});
+
+      if (notifications.length === 0) {
+        return `Nothing was sent: form ${formId} has no notifications.`;
+      }
+
+      const matching = notifications.filter((notification) => notification && notification.event === event);
+      if (matching.length > 0) {
+        return `Nothing was sent: ${matching.length} notification(s) on form ${formId} carry the event '${event}', but Gravity Forms sent none (a gform_disable_notification filter can disable them).`;
+      }
+
+      const events = [...new Set(notifications.map((notification) => (notification && notification.event) || '(no event)'))];
+      const hasEventless = events.includes('(no event)');
+      const hint = hasEventless
+        ? " A notification with no event never fires; set event to 'form_submission' with gf_update_form."
+        : ' Pass event to send one of those.';
+
+      return `Nothing was sent: no notification on form ${formId} has the event '${event}'. Events on this form: ${events.join(', ')}.${hint}`;
+    } catch (error) {
+      return 'Nothing was sent: Gravity Forms returned an empty list, and the form could not be read to say why.';
+    }
   }
 
   // =================================

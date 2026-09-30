@@ -182,7 +182,7 @@ Mutation methods return minimal confirmation:
 { deleted: true, feed_id }               // gf_delete_feed
 { valid: true/false, validation_messages }  // gf_validate_form, gf_validate_submission
 { success: true/false, entry_id, confirmation_message, validation_messages }  // gf_submit_form_data
-{ sent: true, notifications_sent }       // gf_send_notifications
+{ sent, notifications_sent, reason? }  // gf_send_notifications (sent is false, with a reason, when GF sent none)
 ```
 
 ## Conventions
