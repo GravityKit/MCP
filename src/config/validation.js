@@ -892,7 +892,14 @@ export class ValidationFactory {
           return ChainFeedsValidator.validateFeedData(input, true);
 
         case 'gf_update_feed':
+          return ChainFeedsValidator.validateFeedData(input, false);
+
         case 'gf_patch_feed':
+          // PATCH already merges meta, so the opt-in has nothing to opt into. Accepting
+          // and ignoring it would let a caller believe it had chosen something.
+          if (input && input.replace_meta !== undefined) {
+            throw new Error('replace_meta applies to gf_update_feed; gf_patch_feed already merges meta into the stored feed');
+          }
           return ChainFeedsValidator.validateFeedData(input, false);
 
         case 'gf_get_feed':

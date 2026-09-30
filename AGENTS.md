@@ -108,7 +108,7 @@ The server registers tools from two independent sources, initialized separately 
 
 ### Core Concepts
 
-**GravityFormsClient** (`gravity-forms-client.js`): Single class wrapping all GF API endpoints. Each method uses the `validateAndCall(toolName, input, apiCall)` pattern — validates input via `ValidationFactory`, then executes the HTTP call. Update operations (forms, entries, feeds) fetch-then-merge to preserve existing data. Returns minimal payloads.
+**GravityFormsClient** (`gravity-forms-client.js`): Single class wrapping all GF API endpoints. Each method uses the `validateAndCall(toolName, input, apiCall)` pattern — validates input via `ValidationFactory`, then executes the HTTP call. Update operations (forms, entries, feeds) fetch-then-merge at the top level only: a top-level key you omit is kept, but a nested object you send (a feed's `meta`, a form's `confirmations`/`notifications`/`button`) replaces the stored one whole. Returns minimal payloads.
 
 **WordPressClient** (`wp-client.js`): Product-agnostic authenticated WordPress transport for Plane B. The abilities loader rides it to reach the Foundation catalog (`/wp-json/gravitykit/v1/...`) and the WP core Abilities API (`/wp-json/wp-abilities/v1/...`). Auth is a WordPress Application Password via HTTP Basic; when `GRAVITYKIT_WP_*` creds aren't set it falls back to `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` (commonly the same WP user + app password), which keeps both planes on one site. It records `gravityFormsBaseUrl` and `hostMismatch` so a split target is reportable.
 
@@ -226,6 +226,8 @@ const existing = await this.httpClient.get(`/resource/${id}`);
 const merged = { ...existing.data, ...updates };
 await this.httpClient.put(`/resource/${id}`, merged);
 ```
+
+The spread is **shallow**. A nested object in `updates` replaces the stored one. `updateFeed` guards this for `meta`: a `meta` that omits stored keys is refused, naming them, unless the caller passes `replace_meta: true`; `gf_patch_feed` is the partial update (GF merges `meta` keys). `updateForm` has no such guard for `confirmations`, `notifications`, `button` or `fields`; send the complete object.
 
 Entry writes are checked before they are sent: a key that names no field (or sub-input) on the form is refused, as is a value nested under a non-field key such as `entry`. Sub-inputs take the dotted spelling (`6.3`); `6_3` is rewritten to it and two different values for one sub-input are refused, the same rule `gf_submit_form_data` applies to `input_5.3` / `input_5_3`. GF answers `POST /entries` with the request body, so `createEntry` reads the entry back by id (`GET /entries/{id}`) and returns that.
 
@@ -390,7 +392,7 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 3. **Auth method is credential-aware.** `AuthManager` picks the transport from the credential shape: app-password creds use Basic over HTTPS or local URLs; `ck_`/`cs_` key pairs use Basic over HTTPS and OAuth 1.0a over plain HTTP (Gravity Forms only checks key-pair Basic auth when `is_ssl()`). An explicit `GRAVITY_FORMS_AUTH_METHOD` is always honored — including `basic` over remote HTTP, so don't set it in `.env` "just in case". Remote-HTTP Basic without an explicit method needs `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true`.
 
-4. **Update operations fetch-then-merge.** `updateForm`, `updateEntry`, and `updateFeed` GET the existing resource, merge, then PUT — two HTTP calls per update. If the resource changes between GET and PUT, the intermediate change is overwritten.
+4. **Update operations fetch-then-merge, shallowly.** `updateForm`, `updateEntry`, and `updateFeed` GET the existing resource, merge, then PUT — two HTTP calls per update (three when an entry update names fields, because the form is fetched to check the keys). If the resource changes between GET and PUT, the intermediate change is overwritten. The merge replaces any nested object you send: `updateFeed` refuses a `meta` that would drop stored keys unless `replace_meta: true`, while `updateForm` still replaces `confirmations`, `notifications`, `button` and `fields` whole.
 
 5. **Field ID generation uses max+1.** If field ID 10 is deleted, the next field gets ID 11, not 10. IDs are never reused within a form.
 

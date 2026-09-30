@@ -366,6 +366,11 @@ export class FeedsValidator {
         )
         .field('is_active', validate('is_active')
           .boolean()
+        )
+        // Only gf_update_feed reads this (see updateFeed); gf_patch_feed refuses it
+        // before the schema runs.
+        .field('replace_meta', validate('replace_meta')
+          .boolean()
         );
     }
     

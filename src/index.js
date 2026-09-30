@@ -699,21 +699,22 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_feed',
-    description: 'Update a feed (full replace)',
+    description: 'Update a feed. A meta you send REPLACES the stored meta whole (other top-level properties are kept). A meta that omits stored keys is refused and names them, unless replace_meta=true. To change only some meta keys use gf_patch_feed.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Feed ID' },
         is_active: { type: 'boolean', description: 'Feed active state' },
-        meta: { type: 'object', description: 'Feed config' }
+        meta: { type: 'object', description: 'Feed config; replaces the stored meta whole' },
+        replace_meta: { type: 'boolean', description: 'Allow meta to drop stored keys it omits' }
       },
       required: ['id']
     }
   },
   {
     name: 'gf_patch_feed',
-    description: 'Patch a feed (partial update)',
+    description: 'Patch a feed (partial update): only the meta keys you send change; the rest are kept',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

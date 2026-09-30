@@ -1008,15 +1008,32 @@ export class GravityFormsClient {
   }
 
   /**
-   * Update existing feed completely (fetch-then-merge, mutex-serialized).
+   * Update existing feed (fetch-then-merge, mutex-serialized).
+   *
+   * The merge is shallow: top-level keys (is_active, form_id) survive, but a
+   * submitted `meta` replaces the stored one whole. A caller changing one setting
+   * used to delete the rest (a webhook feed lost its URL and stayed active), so a
+   * `meta` that omits stored keys is refused unless `replace_meta: true` says the
+   * removal is wanted. gf_patch_feed is the partial update.
    */
   async updateFeed(params) {
     return this.validateAndCall('gf_update_feed', params, async (validated) => {
-      const { id, ...updates } = validated;
+      const { id, replace_meta: replaceMeta, ...updates } = validated;
 
       return resourceMutex.withLock(`feed:${id}`, async () => {
         const existingFeedResponse = await this.httpClient.get(`/feeds/${id}`);
         const existingFeed = existingFeedResponse.data;
+
+        const storedMeta = existingFeed?.meta;
+        const storedMetaIsObject = storedMeta !== null && typeof storedMeta === 'object';
+        const submittedKeys = updates.meta ? Object.keys(updates.meta) : [];
+        const droppedKeys = (updates.meta && storedMetaIsObject)
+          ? Object.keys(storedMeta).filter(key => !submittedKeys.includes(key))
+          : [];
+
+        if (droppedKeys.length > 0 && replaceMeta !== true) {
+          throw new Error(`gf_update_feed replaces meta whole, and this meta would drop ${droppedKeys.length} stored key(s): ${droppedKeys.join(', ')}. The feed was not changed. Use gf_patch_feed to change only the keys you send, or send every key you want kept, or pass replace_meta: true to remove these on purpose`);
+        }
 
         const updatedFeedData = {
           ...existingFeed,
@@ -1025,9 +1042,11 @@ export class GravityFormsClient {
 
         const response = await this.httpClient.put(`/feeds/${id}`, updatedFeedData);
 
-        return {
-          feed: response.data
-        };
+        const result = { feed: response.data };
+        if (droppedKeys.length > 0) {
+          result.removed_meta_keys = droppedKeys;
+        }
+        return result;
       });
     });
   }
