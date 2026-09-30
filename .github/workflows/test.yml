@@ -28,8 +28,9 @@ jobs:
       
       - name: Run unit tests
         run: |
-          npm run test:unit || true
-          npm run test:tools || true
+          npm run test:unit
+          npm run test:node
+          npm run test:tools
         env:
           CI: true
       
