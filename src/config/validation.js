@@ -589,7 +589,40 @@ export class ValidationFactory {
           let inputKeyCount = 0;
           Object.keys(input).forEach(key => {
             if (key.startsWith('input_')) {
-              subValidated[key] = String(input[key]);
+              // Coerce scalars to strings, which is what GF wants on the wire,
+              // but never flatten a composite value. The same String() lesson
+              // the field filters above already learned, on the submission path:
+              //
+              //   - A multiselect or checkbox value is an ARRAY. String() joins
+              //     it with commas, and a value that itself contains a comma
+              //     ("Atlanta, GA") then cannot be told from the separator, so
+              //     the choices arrive wrong with nothing reported.
+              //   - A GF 3.0 "formatted" phone value is an OBJECT of country /
+              //     national / formatted / e164. String() makes it the literal
+              //     text "[object Object]".
+              //
+              // Both are what GF's own guidance tells callers to send, so both
+              // have to survive the trip.
+              // GF's abilities layer documents sub-inputs in DOT notation
+              // (input_5.3 for First Name on field 5) and converts internally.
+              // GFAPI::submit_form, which this endpoint calls, wants underscore
+              // (its own docblock: $input_values['input_2_6']). An agent
+              // carrying the abilities habit here would have its sub-input
+              // values dropped without a word, so accept either and normalize.
+              const targetKey = /^input_\d+\.\d+$/.test(key) ? key.replace('.', '_') : key;
+              if (targetKey !== key) {
+                delete subValidated[key];
+              }
+              const value = input[key];
+              if (Array.isArray(value)) {
+                subValidated[targetKey] = value.map(entry =>
+                  entry !== null && typeof entry === 'object' ? entry : String(entry)
+                );
+              } else if (value !== null && typeof value === 'object') {
+                subValidated[targetKey] = value;
+              } else {
+                subValidated[targetKey] = String(value);
+              }
               inputKeyCount++;
             }
           });

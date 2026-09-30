@@ -152,6 +152,57 @@ suite.test('Submit Form: accepts the form id under either name', async () => {
   );
 });
 
+suite.test('Submit Form: keeps a multiselect value an array', async () => {
+  // GF's own guidance: multiselect and checkbox values go as an array, never a
+  // comma-separated string, because a value containing a comma ("Atlanta, GA")
+  // is then indistinguishable from the separator. String()-coercing the whole
+  // value flattened exactly that away.
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 9, confirmation_message: 'ok'
+  }));
+  await client.submitFormData({ form_id: 1, input_3: ['Atlanta, GA', 'Austin, TX'] });
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.deepEqual(sent.input_3, ['Atlanta, GA', 'Austin, TX'],
+    'an array value must reach GF as an array');
+});
+
+suite.test('Submit Form: keeps a formatted phone value an object', async () => {
+  // A GF 3.0 "formatted" phone is an object of country/national/formatted/e164
+  // and must be submitted as one. String() turned it into "[object Object]".
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 10, confirmation_message: 'ok'
+  }));
+  const phone = { country: 'us', national: '(555) 123-4567', formatted: '+1 555 123 4567', e164: '+15551234567' };
+  await client.submitFormData({ form_id: 1, input_4: phone });
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.deepEqual(sent.input_4, phone, 'an object value must reach GF as an object');
+});
+
+suite.test('Submit Form: still stringifies scalar values', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 11, confirmation_message: 'ok'
+  }));
+  await client.submitFormData({ form_id: 1, input_1: 42, input_2: true });
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.equal(sent.input_1, '42', 'a number must still be coerced to a string');
+  TestAssert.equal(sent.input_2, 'true', 'a boolean must still be coerced to a string');
+});
+
+suite.test('Submit Form: accepts GF abilities dot notation for sub-inputs', async () => {
+  // GF's abilities layer documents sub-inputs as input_5.3; GFAPI::submit_form,
+  // which the REST endpoint calls, wants input_5_3 (its own docblock says
+  // $input_values['input_2_6']). Passing the dot form through unchanged loses
+  // the value with nothing reported, so accept either spelling.
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
+    is_valid: true, entry_id: 12, confirmation_message: 'ok'
+  }));
+  await client.submitFormData({ form_id: 1, 'input_5.3': 'Ada', 'input_5.6': 'Lovelace' });
+  const sent = mockHttpClient.getRequests().find(r => r.method === 'POST').config.data;
+  TestAssert.equal(sent.input_5_3, 'Ada', 'dot notation must be normalized to underscore');
+  TestAssert.equal(sent.input_5_6, 'Lovelace', 'every dotted sub-input must be normalized');
+  TestAssert.isFalse('input_5.3' in sent, 'the dotted key must not also be sent');
+});
+
 suite.test('Submit Form: Should handle multi-page form submission', async () => {
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true,
