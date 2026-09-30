@@ -16,6 +16,8 @@ This release stops `gf_submit_form_data` silently discarding submitted values, k
 
 ### 🐛 Fixed
 
+- **`gf_delete_field` with `cascade: true` now deletes the field.** It was refused with "Field has dependencies that would break" and a suggestion to use `cascade=true`, the flag already passed. Cascade only worked when `force` was also set. A call that passes `cascade` alone used to refuse and now deletes the field and removes the rules that referenced it from other fields' conditional logic. A field left with no rules loses its conditional logic entirely, which is the state Gravity Forms treats as "no logic" (an empty rules list behind `enabled: false` would hide a "hide if" field permanently on submission). Calculation formulas and merge tags are not rewritten, because removing a token changes what a formula computes.
+- **`gf_delete_field` now says what it cleaned and what it left broken.** `actions_taken` read "Dependencies cleaned up" on every cascade delete, including ones that cleaned nothing, such as a field used only in a calculation or a confirmation merge tag. It now lists each field it changed. A new `left_dangling` list, with a `warning`, names every calculation, merge tag (and, without `cascade`, conditional logic rule) that still references the deleted field, so you can fix them.
 - **`gf_submit_form_data` no longer discards values it was given.** Three kinds of value were lost with no error, and each now arrives intact:
   - a multiselect or list array was joined into one comma-separated string, which lost any value containing a comma, such as "Atlanta, GA";
   - a `formatted` phone value arrived as the text `"[object Object]"`, and is now sent as the JSON string Gravity Forms reads;

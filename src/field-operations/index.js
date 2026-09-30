@@ -373,12 +373,12 @@ export const fieldOperationTools = [
         },
         cascade: {
           type: 'boolean',
-          description: 'Clean up dependencies',
+          description: 'Delete despite dependents and remove their conditional logic rules (calculations and merge tags are reported, not rewritten)',
           default: false
         },
         force: {
           type: 'boolean',
-          description: 'Force delete',
+          description: 'Delete despite dependents and change nothing else',
           default: false
         },
         test_mode: {

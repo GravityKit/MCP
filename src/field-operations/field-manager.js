@@ -233,8 +233,10 @@ export class FieldManager {
     const dependencies = this.dependencyTracker?.scanFormDependencies(form, fieldId) || {};
     const hasBreakingDeps = this.dependencyTracker?.hasBreakingDependencies(dependencies);
     
-    // Handle dependencies
-    if (hasBreakingDeps && !force) {
+    // cascade means "delete and clean up", so it proceeds like force. The refusal
+    // below recommends cascade=true, which is useless if cascade alone is refused.
+    const mayProceed = force || cascade;
+    if (hasBreakingDeps && !mayProceed) {
       return {
         success: false,
         error: 'Field has dependencies that would break',
@@ -244,7 +246,7 @@ export class FieldManager {
           label: field.label
         },
         dependencies,
-        suggestion: 'Use force=true to delete anyway, or cascade=true to clean up dependencies'
+        suggestion: 'Use cascade=true to delete and remove its conditional logic rules (calculations and merge tags are reported, not rewritten), or force=true to delete and leave everything as is'
       };
     }
     
@@ -252,9 +254,24 @@ export class FieldManager {
     form.fields = form.fields.filter(f => f.id != fieldId);
     
     // Clean up dependencies if cascade
+    let actionsTaken = [];
     if (cascade && hasBreakingDeps) {
-      this.cleanupDependencies(form, fieldId);
+      actionsTaken = this.cleanupDependencies(form, fieldId);
     }
+
+    // Report what is still pointing at the deleted field. Only conditional logic
+    // is cleaned (and only on cascade); the rest stays and the caller must fix it.
+    const leftDangling = {};
+    if (!cascade && dependencies.conditionalLogic?.length > 0) {
+      leftDangling.conditionalLogic = dependencies.conditionalLogic;
+    }
+    if (dependencies.calculations?.length > 0) {
+      leftDangling.calculations = dependencies.calculations;
+    }
+    if (dependencies.mergeTags?.length > 0) {
+      leftDangling.mergeTags = dependencies.mergeTags;
+    }
+    const hasDangling = Object.keys(leftDangling).length > 0;
     
     // Replace form via direct PUT (no re-fetch — we already have the full state)
     await this.api.replaceForm(formId, form);
@@ -267,7 +284,11 @@ export class FieldManager {
         label: field.label
       },
       dependencies,
-      actions_taken: cascade ? ['Dependencies cleaned up'] : []
+      actions_taken: actionsTaken,
+      ...(hasDangling && {
+        left_dangling: leftDangling,
+        warning: `Field ${field.id} is deleted but these references to it were not rewritten and will no longer resolve: ${Object.keys(leftDangling).join(', ')}. Fix them on the form.`
+      })
     };
   }
 
@@ -491,24 +512,35 @@ export class FieldManager {
   }
 
   /**
-   * Clean up dependencies when cascade deleting
+   * Clean up dependencies when cascade deleting.
+   * Only conditional logic rules are removed. Returns one line per change made.
    */
   cleanupDependencies(form, fieldId) {
-    // Remove from conditional logic rules
+    const actions = [];
+
     form.fields?.forEach(field => {
-      if (field.conditionalLogic?.rules) {
-        field.conditionalLogic.rules = field.conditionalLogic.rules.filter(
-          rule => rule.fieldId != fieldId
-        );
-        
-        // Disable conditional logic if no rules remain
-        if (field.conditionalLogic.rules.length === 0) {
-          field.conditionalLogic.enabled = false;
-        }
+      const rules = field.conditionalLogic?.rules;
+      if (!Array.isArray(rules)) return;
+
+      const remaining = rules.filter(rule => rule.fieldId != fieldId);
+      const removed = rules.length - remaining.length;
+      if (removed === 0) return;
+
+      const name = `field ${field.id} ("${field.label || ''}")`;
+      if (remaining.length === 0) {
+        // GF's server-side visibility check ignores `enabled` and evaluates any
+        // non-empty logic object, so zero rules + "hide" would hide the field
+        // forever. Empty is what GF itself treats as "no conditional logic".
+        field.conditionalLogic = '';
+        actions.push(`Removed ${removed} conditional logic rule(s) referencing field ${fieldId} from ${name}; no rules were left, so its conditional logic was removed`);
+      } else {
+        field.conditionalLogic.rules = remaining;
+        actions.push(`Removed ${removed} conditional logic rule(s) referencing field ${fieldId} from ${name}`);
       }
     });
-    
-    // Note: Calculations and merge tags would need manual review
-    // as they use string-based formulas that are harder to clean automatically
+
+    // Calculations and merge tags are not rewritten: stripping a token changes
+    // what a formula computes, so deleteField reports them instead.
+    return actions;
   }
 }

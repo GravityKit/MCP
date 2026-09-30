@@ -511,28 +511,112 @@ test('FieldManager - deleteField', async (t) => {
     assert.strictEqual(result.deleted_field.id, 2);
   });
 
-  await t.test('cleans up dependencies with cascade', async () => {
-    const apiClient = createMockApiClient();
-    const registry = createMockRegistry();
-    const validator = createMockValidator();
-    const manager = new FieldManager(apiClient, registry, validator);
-    
-    let cleanupCalled = false;
-    manager.dependencyTracker = {
-      scanFormDependencies: () => ({
-        conditionalLogic: [{ field_id: 1 }]
-      }),
-      hasBreakingDependencies: () => true
+  // The cascade tests below use the REAL DependencyTracker and the real
+  // cleanupDependencies. The old test stubbed cleanup out and passed force:true,
+  // so it was green while cascade alone was refused.
+  const cascadeForm = () => ({
+    id: 164,
+    title: 'Cascade',
+    fields: [
+      { id: 1, type: 'text', label: 'Trigger' },
+      { id: 2, type: 'text', label: 'Shown', conditionalLogic: {
+        enabled: true, actionType: 'show', logicType: 'all',
+        rules: [{ fieldId: '1', operator: 'is', value: 'x' }]
+      } },
+      { id: 3, type: 'text', label: 'Keeps one', conditionalLogic: {
+        enabled: true, actionType: 'show', logicType: 'all',
+        rules: [{ fieldId: '1', operator: 'is', value: 'y' }, { fieldId: '2', operator: 'is', value: 'z' }]
+      } },
+      { id: 4, type: 'number', label: 'Price' },
+      { id: 5, type: 'number', label: 'Double', enableCalculation: true, calculationFormula: '{Price:4} * 2' }
+    ],
+    confirmations: { c1: { id: 'c1', name: 'Default', type: 'message', message: 'Got {Trigger:1} and {Price:4}' } }
+  });
+  const cascadeManager = (form, saved) => {
+    const api = {
+      getForm: async () => ({ form }),
+      replaceForm: async (id, f) => { saved.form = f; return { form: f }; },
+      allowDelete: true
     };
-    
-    // Override cleanupDependencies to track if called
-    manager.cleanupDependencies = () => { cleanupCalled = true; };
+    const manager = new FieldManager(api, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = new DependencyTracker();
+    return manager;
+  };
 
-    const result = await manager.deleteField(1, 2, { cascade: true, force: true });
-    
+  await t.test('cascade alone deletes the field and cleans conditional logic (no force needed)', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 1, { cascade: true });
+
+    assert.strictEqual(result.success, true, 'cascade=true must not be refused with advice to use cascade=true');
+    assert.ok(!saved.form.fields.some((f) => f.id == 1), 'field 1 must be gone from the saved form');
+    const field3 = saved.form.fields.find((f) => f.id == 3);
+    assert.deepStrictEqual(field3.conditionalLogic.rules.map((r) => r.fieldId), ['2'], 'only the rule on the deleted field is removed');
+    assert.ok(result.actions_taken.some((a) => /field 2/.test(a) && /Shown/.test(a)), 'actions_taken names the field it changed');
+  });
+
+  await t.test('cascade drops conditional logic that loses its last rule, in the shape GF reads as "no logic"', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    await manager.deleteField(164, 1, { cascade: true });
+
+    const field2 = saved.form.fields.find((f) => f.id == 2);
+    // GF's server-side get_field_display() ignores `enabled` and evaluates any
+    // non-empty logic object: zero rules + actionType "hide" would hide the field
+    // forever. Empty conditionalLogic is what GF itself treats as "no logic".
+    assert.strictEqual(field2.conditionalLogic, '');
+  });
+
+  await t.test('cascade does not rewrite calculations or merge tags, and says they are left dangling', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 4, { cascade: true });
+
     assert.strictEqual(result.success, true);
-    assert.strictEqual(cleanupCalled, true);
-    assert.ok(result.actions_taken.includes('Dependencies cleaned up'));
+    const calc = saved.form.fields.find((f) => f.id == 5);
+    assert.strictEqual(calc.calculationFormula, '{Price:4} * 2', 'formula text is left alone');
+    assert.strictEqual(saved.form.confirmations.c1.message, 'Got {Trigger:1} and {Price:4}');
+    assert.deepStrictEqual(result.actions_taken, [], 'nothing was cleaned, so nothing is claimed');
+    assert.strictEqual(result.left_dangling.calculations[0].field_id, 5);
+    assert.deepStrictEqual(result.left_dangling.calculations[0].matches, ['{Price:4}']);
+    assert.strictEqual(result.left_dangling.mergeTags[0].location, 'confirmation');
+    assert.match(result.warning, /not rewritten/);
+  });
+
+  await t.test('force without cascade reports every dependency it left behind, conditional logic included', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 1, { force: true });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.actions_taken, []);
+    assert.deepStrictEqual(result.left_dangling.conditionalLogic.map((d) => d.field_id), [2, 3]);
+    assert.strictEqual(saved.form.fields.find((f) => f.id == 2).conditionalLogic.rules.length, 1, 'force leaves the rule in place');
+  });
+
+  await t.test('a delete with no dependencies reports no dangling references', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 5, { cascade: true });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual('left_dangling' in result, false);
+    assert.strictEqual('warning' in result, false);
+  });
+
+  await t.test('neither flag still refuses, and the refusal names both options', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 1, {});
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved.form, undefined, 'nothing is saved on a refusal');
   });
 });
 test('FieldManager - normalizeLayoutProperties', async (t) => {
