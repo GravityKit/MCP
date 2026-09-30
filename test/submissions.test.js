@@ -176,7 +176,7 @@ suite.test('Validate Submission / Validate Form: still accept a submission with 
 suite.test('Submit Form: a field_values JSON string is refused before the empty-submission check', async () => {
   await TestAssert.throwsAsync(
     () => client.submitFormData({ form_id: 1, field_values: '{"1": "Ada"}' }),
-    'field_values must be a query string',
+    'field_values',
     'the field_values mistake must be named, not the missing input_N keys'
   );
 });

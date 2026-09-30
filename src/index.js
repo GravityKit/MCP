@@ -356,10 +356,11 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Form ID' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
@@ -391,7 +392,8 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Form ID' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         title: { type: 'string', description: 'Form title' },
         description: { type: 'string', description: 'Form description' },
         fields: {
@@ -404,7 +406,7 @@ const GF_TOOL_DEFINITIONS = [
         notifications: { type: 'object', description: 'Notification settings' },
         is_active: { type: 'boolean', description: 'Form active state' }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
@@ -414,10 +416,11 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Form ID' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
@@ -427,11 +430,12 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' },
+        form_id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
       additionalProperties: true,
-      required: ['form_id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
 
@@ -583,11 +587,12 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' },
+        form_id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         field_values: { type: ['string', 'array'], description: 'GF dynamic-population values, as an array. NOT submission values; pass those as input_N keys. GF ignores a string here, so one populates nothing; a JSON object or JSON string is rejected outright.' }
       },
       additionalProperties: true,
-      required: ['form_id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
@@ -597,10 +602,11 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' }
+        form_id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' }
       },
       additionalProperties: true,
-      required: ['form_id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
 

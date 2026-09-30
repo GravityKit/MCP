@@ -15,14 +15,14 @@ This release stops `gf_submit_form_data` silently discarding submitted values, a
 
 ### 🐛 Fixed
 
-- **`gf_submit_form_data` no longer discards values it was given.** Several shapes of submitted value were lost without any error:
-  - a multiselect or list array was joined into one comma-separated string, so a value containing a comma ("Atlanta, GA") could no longer be told from the separator;
+- **`gf_submit_form_data` no longer discards values it was given.** Three kinds of value were lost with no error, and each now arrives intact:
+  - a multiselect or list array was joined into one comma-separated string, which lost any value containing a comma, such as "Atlanta, GA";
   - a `formatted` phone value arrived as the text `"[object Object]"`, and is now sent as the JSON string Gravity Forms reads;
   - `null` arrived as the text `"null"`, and now arrives empty.
-- **A submission that cannot store anything is now refused rather than reported as successful.** Three cases: `field_values` passed as a JSON object or string, which Gravity Forms ignores on this path; a call with no `input_N` value at all; and the same sub-input sent under both `input_5.3` and `input_5_3` with different values, where Gravity Forms kept whichever it saw last.
+- **A submission that cannot store anything is now refused rather than reported as successful.** Three cases: `field_values` passed as a JSON object or a JSON string, which Gravity Forms ignores on this path; a call with no `input_N` value at all; and the same sub-input sent under both `input_5.3` and `input_5_3` with different values, where Gravity Forms kept whichever it saw last.
 - **Every form tool now accepts the form id as either `id` or `form_id`.** `gf_get_form`, `gf_delete_form`, `gf_update_form`, `gf_submit_form_data` and the submission-validation tools each previously named only one of the two.
 
-Checkbox values are the exception to the first entry: Gravity Forms reads each choice from its own sub-input, so pass `input_5_1` and `input_5_2` rather than an array under `input_5`.
+Checkbox fields are the one exception: Gravity Forms reads each choice from its own sub-input, so pass `input_5_1` and `input_5_2` rather than an array under `input_5`.
 
 ## [2.5.0] - 2026-09-17
 

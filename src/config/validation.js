@@ -641,7 +641,7 @@ export class ValidationFactory {
             /^\s*[{[]/.test(input.field_values);
 
           if (fieldValuesIsWrongType || fieldValuesIsSerializedObject) {
-            throw new Error('field_values must be a query string (e.g. "p1=a&p2=b") or array — it is GF dynamic-population data, not submission values; pass field values as top-level input_N keys (e.g. input_1)');
+            throw new Error('field_values must be an array — it is GF dynamic-population data, and GF ignores a string one on this path; pass field values as top-level input_N keys (e.g. input_1)');
           }
 
           // GF answers an empty submission by naming whichever field is
