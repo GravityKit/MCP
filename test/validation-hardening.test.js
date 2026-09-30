@@ -10,7 +10,7 @@
  * Contract sources in Gravity Forms:
  *  - sorting.is_numeric / paging.offset: parse_entry_search_params (class-gf-rest-controller.php) feeds GF_Query (class-gf-query.php).
  *  - NOTIN alias: GF_Query's filter-operator switch (case 'NOTIN').
- *  - /forms: get_items (class-controller-forms.php) reads only `include`; status/active/exclude are no-ops.
+ *  - /forms: get_items (class-controller-forms.php) reads only `include`; status/active/exclude are refused, not dropped.
  */
 
 import test from 'node:test';
@@ -204,19 +204,18 @@ test('negative / non-integer offset is rejected', () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// top-level page/per_page must not reach the wire for gf_list_entries
-// (GF /entries uses paging[...] only)
+// top-level page/per_page/offset are refused for gf_list_entries (GF /entries
+// reads paging only from the `paging` object). Silently dropping them returned
+// an un-offset page 1 to a caller who believed they had paginated.
 // ---------------------------------------------------------------------------
 
-test('validateListEntriesParams does not emit page/per_page', () => {
-  const out = validate('gf_list_entries', { page: 2, per_page: 25 });
-  assert.ok(!('page' in out), 'page must not be emitted');
-  assert.ok(!('per_page' in out), 'per_page must not be emitted');
+test('validateListEntriesParams refuses top-level page/per_page/offset', () => {
+  assert.throws(() => validate('gf_list_entries', { page: 2, per_page: 25 }), /page.*per_page|per_page.*page/);
+  assert.throws(() => validate('gf_list_entries', { offset: 100 }), /paging: \{ page_size, current_page \}/);
 });
 
-test('buildEntriesQuery never puts page/per_page on the wire', () => {
-  const validated = validate('gf_list_entries', { page: 3, per_page: 10, paging: { page_size: 10, current_page: 3 } });
+test('buildEntriesQuery carries paging only as the paging object', () => {
+  const validated = validate('gf_list_entries', { paging: { page_size: 10, current_page: 3 } });
   const query = buildEntriesQuery(validated);
   assert.ok(!('page' in query), 'page must not be on the wire');
   assert.ok(!('per_page' in query), 'per_page must not be on the wire');
@@ -327,8 +326,7 @@ test('current_page:1 is accepted', () => {
   assert.equal(out.paging.current_page, 1);
 });
 
-// ---------------------------------------------------------------------------
-// gf_list_forms drops status/active/exclude (GF only reads include)
+// gf_list_forms refuses status/active/exclude (GF only reads include)
 // ---------------------------------------------------------------------------
 
 test('gf_list_forms keeps include only', () => {
@@ -336,16 +334,11 @@ test('gf_list_forms keeps include only', () => {
   assert.deepEqual(out.include, [1, 2]);
 });
 
-test('gf_list_forms does not forward status/active/exclude', () => {
-  const out = validate('gf_list_forms', {
-    include: [1],
-    status: 'active',
-    active: true,
-    exclude: [9],
-  });
-  assert.ok(!('status' in out), 'status is a GF no-op and must be dropped');
-  assert.ok(!('active' in out), 'active is a GF no-op and must be dropped');
-  assert.ok(!('exclude' in out), 'exclude is a GF no-op and must be dropped');
+test('gf_list_forms refuses status/active/exclude instead of ignoring them', () => {
+  assert.throws(
+    () => validate('gf_list_forms', { include: [1], status: 'active', active: true, exclude: [9] }),
+    /status, active, exclude/
+  );
 });
 
 test('gf_list_forms still validates include ids', () => {

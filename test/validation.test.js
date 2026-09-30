@@ -207,9 +207,12 @@ suite.test('Type Validation: Booleans', async () => {
   );
 
   // `active` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
-  // `include` server-side. It is dropped, not validated — so it must not throw.
-  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
-  await client.listForms({ active: 'true' });
+  // `include` server-side, so it is refused rather than silently ignored.
+  await TestAssert.throwsAsync(
+    () => client.listForms({ active: 'true' }),
+    'not read by Gravity Forms',
+    'active must be refused, not ignored'
+  );
 });
 
 suite.test('Type Validation: Arrays', async () => {
@@ -221,9 +224,12 @@ suite.test('Type Validation: Arrays', async () => {
   );
 
   // `exclude` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
-  // `include` server-side. It is dropped, not validated — so it must not throw.
-  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
-  await client.listForms({ exclude: '4,5,6' });
+  // `include` server-side, so it is refused rather than silently ignored.
+  await TestAssert.throwsAsync(
+    () => client.listForms({ exclude: '4,5,6' }),
+    'not read by Gravity Forms',
+    'exclude must be refused, not ignored'
+  );
 
   // Form fields should be array
   await TestAssert.throwsAsync(
@@ -259,11 +265,18 @@ suite.test('Type Validation: Objects', async () => {
 
 suite.test('Enum Validation: Status values', async () => {
   // `status` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
-  // `include` server-side. It is dropped, not validated — even an invalid value
-  // must not throw, because the param never reaches GF.
-  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
-  await client.listForms({ status: 'invalid-status' });
-  await client.listForms({ status: 'active' });
+  // `include` server-side, so any value is refused, valid or not, rather than
+  // returning every active form to a caller who asked for a status.
+  await TestAssert.throwsAsync(
+    () => client.listForms({ status: 'invalid-status' }),
+    'not read by Gravity Forms',
+    'status must be refused'
+  );
+  await TestAssert.throwsAsync(
+    () => client.listForms({ status: 'inactive' }),
+    'not read by Gravity Forms',
+    'status must be refused'
+  );
 });
 
 suite.test('Enum Validation: Search operators', async () => {

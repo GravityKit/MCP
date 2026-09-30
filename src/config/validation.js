@@ -122,6 +122,11 @@ export class BaseValidator {
     );
   }
 
+  /** A value the caller actually passed: an unset or null key says nothing. */
+  static isGiven(value) {
+    return value !== undefined && value !== null;
+  }
+
   static validatePagination(params) {
     const validated = {};
 
@@ -434,11 +439,16 @@ export class EntriesValidator extends BaseValidator {
   static validateListEntriesParams(params) {
     const validated = {};
 
-    // NOTE: GF's /entries endpoint paginates ONLY via the `paging` object
-    // (paging[page_size], paging[offset], paging[current_page]) — it has no
-    // top-level page/per_page params (class-gf-rest-controller.php parse_entry_search_params).
-    // Emitting page/per_page here leaked them to the wire as no-op params, so
-    // they are intentionally NOT merged in. Entry paging is the `paging` block below.
+    // GF's /entries endpoint reads paging only from the `paging` object
+    // (page_size, current_page, offset; parse_entry_search_params in
+    // class-gf-rest-controller.php). A top-level page/per_page/offset is never
+    // read, so a caller who passed offset:100 got page 1 and believed they had
+    // paginated. They are refused rather than mapped: mapping would have to
+    // guess what `page` means and which side wins when `paging` is also given.
+    const topLevelPaging = ['per_page', 'page', 'offset'].filter(key => this.isGiven(params[key]));
+    if (topLevelPaging.length > 0) {
+      throw new Error(`${topLevelPaging.join(', ')} ${topLevelPaging.length === 1 ? 'was' : 'were'} given at the top level, where Gravity Forms does not read ${topLevelPaging.length === 1 ? 'it' : 'them'} and returns the first 10 entries: pass paging: { page_size, current_page } instead (or paging: { page_size, offset } to start at an entry offset)`);
+    }
 
     // GF reads the form filter on /entries as an ARRAY (form_ids[0]=…) and has no
     // singular form_id there, so one that reaches the wire is ignored and the
@@ -730,10 +740,16 @@ export class ValidationFactory {
       switch (toolName) {
         case 'gf_list_forms':
           // GF's /forms endpoint honors ONLY `include` server-side
-          // (class-controller-forms.php get_items reads $request['include'];
-          // get_collection_params declares only page/per_page/search). `status`,
-          // `active`, and `exclude` are NOT read by GF — forwarding them was a
-          // no-op that misleadingly advertised support, so drop them here.
+          // (class-controller-forms.php get_items reads $request['include'] and
+          // nothing else; get_forms(true) lists active forms). The rest were
+          // dropped, which returned every active form to a caller who had asked
+          // for a page or for inactive ones. They are refused so the caller
+          // learns the filter did nothing.
+          const unreadFormsParams = ['per_page', 'page', 'status', 'active', 'exclude', 'search']
+            .filter(key => BaseValidator.isGiven(input[key]));
+          if (unreadFormsParams.length > 0) {
+            throw new Error(`${unreadFormsParams.join(', ')} ${unreadFormsParams.length === 1 ? 'is' : 'are'} not read by Gravity Forms on /forms, which returns every active form at once: narrow the result with include (form ids, which also fetches inactive and trashed forms) or filter what comes back`);
+          }
           const validated = {};
           if (input.include !== undefined) {
             validated.include = BaseValidator.validateArray(input.include, 'include');

@@ -342,7 +342,7 @@ const GF_TOOL_DEFINITIONS = [
   // Forms Management (6 tools)
   {
     name: 'gf_list_forms',
-    description: 'List this site\'s active forms, by title. Trashed and inactive forms are left out unless their ids are named in `include`, which fetches those forms whatever their state. Gravity Forms returns every matching form at once: this endpoint has no search and no paging, so narrow the result with `include` or filter what comes back.',
+    description: 'List this site\'s active forms, by title. Trashed and inactive forms are left out unless their ids are named in `include`, which fetches those forms whatever their state. Gravity Forms returns every matching form at once: this endpoint has no search and no paging, so narrow the result with `include` or filter what comes back. per_page, page, status, active, exclude and search are refused.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -449,7 +449,7 @@ const GF_TOOL_DEFINITIONS = [
   // Entries Management (5 tools)
   {
     name: 'gf_list_entries',
-    description: 'List/search entries with filtering, sorting, and pagination.',
+    description: 'List/search entries with filtering, sorting, and pagination. Paging goes inside `paging` (page_size, plus current_page or offset); a top-level page, per_page or offset is refused. Returns 10 entries unless page_size says otherwise.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
