@@ -683,6 +683,7 @@ export class GravityFormsClient {
   async validateForm(params) {
     return this.validateAndCall('gf_validate_form', params, async (validated) => {
       const { form_id, ...submissionData } = validated;
+      await this._assertInputKeysNameFields(form_id, submissionData, 'nothing would be validated for it');
 
       // Dedicated validation route — validate WITHOUT creating an entry. POSTing
       // {validation_only:true} to /submissions does NOT validate: GF ignores the
@@ -901,6 +902,42 @@ export class GravityFormsClient {
   }
 
   /**
+   * Refuses a submission body whose `input_N` keys name no field on the form.
+   *
+   * GF merges the body into $_POST and reads the keys it knows (api.php
+   * hydrate_post), so an `input_99` on a form with no field 99 is read by nothing
+   * and the value is lost while the call reports success. Only keys shaped like a
+   * field input are checked: `input_3_other` is not a field input, and the
+   * non-`input_` keys (`gform_save`, `state_N`, …) are real controls that must
+   * pass through. The form is fetched once, and only when there is a key to check.
+   * A form that returns no `fields` array cannot be checked, so the call goes on.
+   *
+   * @param {number} formId     The form being submitted to.
+   * @param {object} submission The body to send.
+   * @param {string} consequence What GF does with an unread key, ending the message.
+   * @throws When an `input_N` key names no field or input on the form.
+   */
+  async _assertInputKeysNameFields(formId, submission, consequence) {
+    const fieldInputKeys = Object.keys(submission).filter(key => /^input_\d+(?:_\d+)?$/.test(key));
+    if (fieldInputKeys.length === 0) {
+      return;
+    }
+
+    const formResponse = await this.httpClient.get(`/forms/${formId}`);
+    const fields = formResponse.data?.fields;
+    if (!Array.isArray(fields)) {
+      return;
+    }
+
+    // Entries spell a sub-input 5.3 and submissions input_5_3; one check serves both.
+    const asEntryKeys = {};
+    fieldInputKeys.forEach(key => {
+      asEntryKeys[key.slice('input_'.length).replace('_', '.')] = submission[key];
+    });
+    EntriesValidator.assertKeysResolve(asEntryKeys, fields, formId, consequence);
+  }
+
+  /**
    * Create new entry with validation.
    *
    * GF answers POST /entries with the request body plus an id, so its response
@@ -1000,6 +1037,7 @@ export class GravityFormsClient {
   async submitFormData(params) {
     return this.validateAndCall('gf_submit_form_data', params, async (validated) => {
       const { form_id, ...submissionData } = validated;
+      await this._assertInputKeysNameFields(form_id, submissionData, 'nothing would be stored for it');
 
       // GF returns HTTP 400 {is_valid:false, validation_messages, …} on a
       // REJECTED submission. That is a normal "didn't pass validation" result,
@@ -1033,6 +1071,7 @@ export class GravityFormsClient {
   async validateSubmission(params) {
     return this.validateAndCall('gf_validate_submission', params, async (validated) => {
       const { form_id, ...submissionData } = validated;
+      await this._assertInputKeysNameFields(form_id, submissionData, 'nothing would be validated for it');
 
       // Dedicated validation route: GF validates WITHOUT creating an entry or
       // firing notifications/feeds. A validation_only flag on /submissions is

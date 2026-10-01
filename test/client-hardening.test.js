@@ -69,6 +69,11 @@ function gfError(status, data) {
   return err;
 }
 
+// Submissions now read the form to check their input_N keys, so a fake client
+// that answers submissions must answer GET /forms/{id} too.
+const FORM_WITH_FIELDS = { data: { fields: [1, 2, 3].map((id) => ({ id, type: 'text' })) } };
+const getForm = async () => FORM_WITH_FIELDS;
+
 // =====================================================================
 // FIX 1 — validateSubmission must RETURN on a GF 400 {is_valid:false}
 // =====================================================================
@@ -76,6 +81,7 @@ function gfError(status, data) {
 test('validateSubmission: GF 400 {is_valid:false} is RETURNED, not thrown', async () => {
   const client = makeClient();
   client.httpClient = {
+    get: getForm,
     post: async () => {
       throw gfError(400, {
         is_valid: false,
@@ -119,6 +125,7 @@ test('validateSubmission: a 500 (no is_valid body) still throws', async () => {
 test('validateSubmission: 200 valid body still returns valid:true', async () => {
   const client = makeClient();
   client.httpClient = {
+    get: getForm,
     post: async () => ({ data: { is_valid: true, validation_messages: {}, page_number: 0 } }),
   };
   const result = await client.validateSubmission({ form_id: 1, input_1: 'ok' });
@@ -142,6 +149,7 @@ test('validateSubmission: a 400 WITHOUT is_valid body still throws (not a valida
 test('submitFormData: GF 400 {is_valid:false} returns success:false with messages', async () => {
   const client = makeClient();
   client.httpClient = {
+    get: getForm,
     post: async () => {
       throw gfError(400, {
         is_valid: false,
@@ -158,6 +166,7 @@ test('submitFormData: GF 400 {is_valid:false} returns success:false with message
 test('submitFormData: a real 404 (no is_valid body) still throws', async () => {
   const client = makeClient();
   client.httpClient = {
+    get: getForm,
     post: async () => { throw gfError(404, { message: 'Form not found' }); },
   };
   await assert.rejects(() => client.submitFormData({ form_id: 999, input_1: 'x' }), /not found/i);
@@ -166,6 +175,7 @@ test('submitFormData: a real 404 (no is_valid body) still throws', async () => {
 test('submitFormData: a 500 (no is_valid body) still throws', async () => {
   const client = makeClient();
   client.httpClient = {
+    get: getForm,
     post: async () => { throw gfError(500, { message: 'db down' }); },
   };
   await assert.rejects(() => client.submitFormData({ form_id: 1, input_1: 'x' }), /Server error|db down/);
@@ -174,6 +184,7 @@ test('submitFormData: a 500 (no is_valid body) still throws', async () => {
 test('submitFormData: 200 success body returns success:true + entry_id', async () => {
   const client = makeClient();
   client.httpClient = {
+    get: getForm,
     post: async () => ({ data: { is_valid: true, entry_id: 42, confirmation_message: 'ok' } }),
   };
   const result = await client.submitFormData({ form_id: 1, input_1: 'x' });

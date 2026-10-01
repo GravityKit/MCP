@@ -715,13 +715,19 @@ export class EntriesValidator extends BaseValidator {
    * field that lists none (some post fields) accepts any sub-input, since refusing
    * would block a legitimate write.
    *
+   * Fields nested inside another (a Repeater's children) count as fields of the
+   * form: GF resolves them by id at any depth, and a submission names them
+   * `input_<child id>`.
+   *
    * @param {object} data   Entry data, sub-input keys already normalized.
-   * @param {Array} fields  The form's `fields`.
+   * @param {Array} formFields The form's `fields`.
    * @param {number} formId The form id, for the message.
+   * @param {string} [consequence] What GF does with a key like this, ending the message.
    * @throws When a key resolves to nothing.
    */
-  static assertKeysResolve(data, fields, formId) {
+  static assertKeysResolve(data, formFields, formId, consequence = 'nothing would be stored for it') {
     const problems = [];
+    const fields = this.flattenFields(formFields);
 
     Object.keys(data).filter(key => this.isFieldKey(key)).forEach(key => {
       const [fieldPart, inputPart] = key.split('.');
@@ -744,8 +750,24 @@ export class EntriesValidator extends BaseValidator {
     });
 
     if (problems.length > 0) {
-      throw new Error(`${problems.join('; ')}. Gravity Forms ignores a key like this, so nothing would be stored for it`);
+      throw new Error(`${problems.join('; ')}. Gravity Forms ignores a key like this, so ${consequence}`);
     }
+  }
+
+  /**
+   * A form's fields with every nested field (Repeater children) listed beside them.
+   *
+   * @param {Array} fields The form's `fields`.
+   * @returns {Array} Every field at any depth.
+   */
+  static flattenFields(fields) {
+    const flat = [];
+    const walk = list => (Array.isArray(list) ? list : []).forEach(field => {
+      flat.push(field);
+      walk(field?.fields);
+    });
+    walk(fields);
+    return flat;
   }
 
   static validateEntryData(entryData, isUpdate = false) {

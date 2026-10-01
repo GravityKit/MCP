@@ -314,6 +314,123 @@ suite.test('Submit Form: id alias, dot notation and an array value in one call',
   TestAssert.deepEqual(req.config.data.input_3, ['Atlanta, GA', 'Austin, TX']);
 });
 
+// --- input_N keys must name a field on the form ---
+//
+// GF merges the body into $_POST and reads the keys it knows (api.php hydrate_post),
+// so an input_99 on a form with no field 99 is read by nothing: the submission
+// validates and the value is gone. Non-input_ keys (gform_save, state_N, …) are real
+// controls and pass through; input_3_other is not a field input and is not checked.
+
+const INPUT_FORM = {
+  id: 1,
+  fields: [
+    { id: 1, type: 'text' },
+    { id: 3, type: 'text' },
+    {
+      id: 5,
+      type: 'checkbox',
+      choices: [{ text: 'A', value: 'A' }, { text: 'B', value: 'B' }],
+      inputs: [{ id: '5.1', label: 'A' }, { id: '5.2', label: 'B' }]
+    },
+    { id: 9, type: 'repeater', fields: [{ id: 10, type: 'text' }] }
+  ]
+};
+
+const formFetches = () => mockHttpClient.getRequests().filter(r => r.method === 'GET' && r.path === '/forms/1');
+const submissionPosts = () => mockHttpClient.getRequests().filter(r => r.method === 'POST');
+
+function mockInputForm() {
+  mockHttpClient.setMockResponse('GET', '/forms/1', new MockResponse(INPUT_FORM));
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({ is_valid: true, entry_id: 70 }));
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions/validation', new MockResponse({ is_valid: true }));
+}
+
+suite.test('Input keys: input_99 on a form with no field 99 is refused by all three tools, and nothing is POSTed', async () => {
+  for (const method of ['submitFormData', 'validateSubmission', 'validateForm']) {
+    mockHttpClient.clearRequests();
+    mockInputForm();
+    await TestAssert.throwsAsync(
+      () => client[method]({ form_id: 1, input_1: 'Ada', input_99: 'ghost' }),
+      'field 99 does not exist on form 1',
+      `${method} must refuse a value for a field the form does not have`
+    );
+    TestAssert.equal(submissionPosts().length, 0, `${method} must not POST after a refusal`);
+  }
+});
+
+suite.test('Input keys: the refusal says what Gravity Forms does with the key, per tool', async () => {
+  mockInputForm();
+  await TestAssert.throwsAsync(
+    () => client.submitFormData({ form_id: 1, input_1: 'x', input_99: 'x' }),
+    'nothing would be stored for it'
+  );
+  await TestAssert.throwsAsync(
+    () => client.validateSubmission({ form_id: 1, input_1: 'x', input_99: 'x' }),
+    'nothing would be validated for it'
+  );
+  await TestAssert.throwsAsync(
+    () => client.validateForm({ form_id: 1, input_1: 'x', input_99: 'x' }),
+    'nothing would be validated for it'
+  );
+});
+
+suite.test('Input keys: a sub-input the field does not list is refused, in either spelling', async () => {
+  for (const key of ['input_5_9', 'input_5.9']) {
+    mockInputForm();
+    await TestAssert.throwsAsync(
+      () => client.submitFormData({ form_id: 1, [key]: 'A' }),
+      'input 5.9 does not exist on field 5',
+      `${key} names no input of the checkbox`
+    );
+  }
+});
+
+suite.test('Input keys: input_1 and input_5_1 (a listed checkbox input) are accepted and sent', async () => {
+  mockInputForm();
+  await client.submitFormData({ form_id: 1, input_1: 'Ada', input_5_1: 'A', 'input_5.2': 'B' });
+  const sent = submissionPosts()[0].config.data;
+  TestAssert.equal(sent.input_1, 'Ada');
+  TestAssert.equal(sent.input_5_1, 'A');
+  TestAssert.equal(sent.input_5_2, 'B');
+});
+
+suite.test('Input keys: a field nested in a repeater counts as a field of the form', async () => {
+  mockInputForm();
+  await client.submitFormData({ form_id: 1, input_10: ['x'] });
+  TestAssert.equal(submissionPosts().length, 1, 'a repeater child is a real field and must not be refused');
+});
+
+suite.test('Input keys: input_3_other alone triggers no form fetch and is not refused', async () => {
+  mockInputForm();
+  await client.submitFormData({ form_id: 1, input_3_other: 'Something else' });
+  TestAssert.equal(formFetches().length, 0, 'a key that is not a field input needs no form');
+  TestAssert.equal(submissionPosts()[0].config.data.input_3_other, 'Something else');
+});
+
+suite.test('Input keys: input_3_other beside a checked key passes through untouched', async () => {
+  mockInputForm();
+  await client.submitFormData({ form_id: 1, input_1: 'Ada', input_3_other: 'x', gform_save: true });
+  const sent = submissionPosts()[0].config.data;
+  TestAssert.equal(sent.input_3_other, 'x');
+  TestAssert.equal(sent.gform_save, true, 'non-input_ controls are not restricted');
+});
+
+suite.test('Input keys: the form is fetched at most once per call, however many keys', async () => {
+  for (const method of ['submitFormData', 'validateSubmission', 'validateForm']) {
+    mockHttpClient.clearRequests();
+    mockInputForm();
+    await client[method]({ form_id: 1, input_1: 'a', input_3: 'b', input_5_1: 'A', input_5_2: 'B' });
+    TestAssert.equal(formFetches().length, 1, `${method} must read the form once`);
+  }
+});
+
+suite.test('Input keys: a form that returns no fields cannot be checked, so the call goes through', async () => {
+  mockHttpClient.setMockResponse('GET', '/forms/1', new MockResponse({ id: 1 }));
+  mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({ is_valid: true, entry_id: 71 }));
+  const result = await client.submitFormData({ form_id: 1, input_99: 'x' });
+  TestAssert.equal(result.entry_id, 71);
+});
+
 suite.test('Submit Form: Should handle multi-page form submission', async () => {
   mockHttpClient.setMockResponse('POST', '/forms/1/submissions', new MockResponse({
     is_valid: true,

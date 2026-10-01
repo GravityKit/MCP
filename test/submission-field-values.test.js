@@ -73,7 +73,10 @@ test('field_values is not in any submission tool schema', () => {
 });
 
 test('a submission without field_values is unaffected', async () => {
-  const { client, requests } = makeClient({ 'POST /forms/1/submissions': { is_valid: true, entry_id: 5 } });
+  const { client, requests } = makeClient({
+    'GET /forms/1': { id: 1, fields: [{ id: 1, type: 'text' }] },
+    'POST /forms/1/submissions': { is_valid: true, entry_id: 5 }
+  });
   await client.submitFormData({ form_id: 1, input_1: 'Ada' });
-  assert.deepEqual(requests[0].body, { input_1: 'Ada' });
+  assert.deepEqual(requests.find((r) => r.method === 'POST').body, { input_1: 'Ada' });
 });
