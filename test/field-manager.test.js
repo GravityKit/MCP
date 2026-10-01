@@ -1097,3 +1097,51 @@ test('FieldManager - addField unknown-type warning names a case-insensitive matc
     assert.ok(!result.warnings.some((w) => /did you mean/i.test(w)));
   });
 });
+
+// Logic created through the API has no `enabled` key: GFAPI::add_form and this
+// server never write it, only the form editor does. GF still applies that logic
+// (GFFormsModel::get_field_display() ignores `enabled`), so the delete guard has
+// to see it. The fixture carries NO merge tag on the deleted field: a tag would
+// make the guard fire on mergeTags and hide this bug, as it did on the live probe.
+test('FieldManager.deleteField guards conditional logic that has no `enabled` key', async (t) => {
+  const apiForm = () => ({
+    id: 191,
+    title: 'API-created logic',
+    fields: [
+      { id: 1, type: 'text', label: 'Trigger' },
+      { id: 5, type: 'text', label: 'Follower', conditionalLogic: {
+        actionType: 'show', logicType: 'all',
+        rules: [{ fieldId: '1', operator: 'is', value: 'y' }]
+      } }
+    ]
+  });
+  const build = (form, saved) => {
+    const api = {
+      getForm: async () => ({ form }),
+      replaceForm: async (id, f) => { saved.form = f; return { form: f }; },
+      allowDelete: true
+    };
+    const manager = new FieldManager(api, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = new DependencyTracker();
+    return manager;
+  };
+
+  await t.test('delete without force or cascade is refused and names the dependent field', async () => {
+    const saved = {};
+    const result = await build(apiForm(), saved).deleteField(191, 1, {});
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.dependencies.mergeTags.length, 0, 'fixture must not reach the guard through a merge tag');
+    assert.strictEqual(result.dependencies.conditionalLogic.length, 1);
+    assert.strictEqual(result.dependencies.conditionalLogic[0].field_id, 5);
+    assert.strictEqual(saved.form, undefined, 'nothing is saved when the delete is refused');
+  });
+
+  await t.test('cascade removes that logic', async () => {
+    const saved = {};
+    const result = await build(apiForm(), saved).deleteField(191, 1, { cascade: true });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(saved.form.fields.find((f) => f.id == 5).conditionalLogic, '');
+  });
+});
