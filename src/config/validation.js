@@ -808,10 +808,21 @@ export class EntriesValidator extends BaseValidator {
   static acceptedValueShapes(field) {
     const inputType = field.inputType || field.type;
 
-    // The client expands a checkbox-style field's array to its inputs, and joins or
-    // takes the first of a choice field's: both are handled values.
+    // A field with choices holds several values only when it is a checkbox (the client
+    // expands the array to its inputs) or a multiselect. A radio or dropdown keeps
+    // one: given an array, the old client took the first element and dropped the
+    // rest, and a submission had GF read it as repeater rows (2_0, 2_1). The registry
+    // already says which types hold one value, so ask it rather than listing them.
     const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
     if (hasChoices) {
+      const choiceDefinition = getFieldDefinition(inputType);
+      const holdsOneChoice = Boolean(choiceDefinition?.hasChoices)
+        && choiceDefinition.storage?.type === 'string'
+        && choiceDefinition.storage?.format === 'single';
+      if (holdsOneChoice) {
+        return { list: false, object: false };
+      }
+
       const isCheckboxStyle = Array.isArray(field.inputs) && field.inputs.length > 0;
       return { list: true, object: !isCheckboxStyle && field.type === 'chainedselect' };
     }
@@ -848,6 +859,7 @@ export class EntriesValidator extends BaseValidator {
    */
   static assertValueShapes(data, fields) {
     const problems = [];
+    const checkboxProblems = [];
 
     Object.keys(data).filter(key => this.isFieldKey(key)).forEach(key => {
       const value = data[key];
@@ -865,15 +877,38 @@ export class EntriesValidator extends BaseValidator {
 
       const accepted = inputPart !== undefined ? { list: false, object: false } : this.acceptedValueShapes(field);
       const isAccepted = isList ? accepted.list : accepted.object;
-      if (!isAccepted) {
+      const needsInputs = isList && inputPart === undefined && this.isCheckboxWithoutInputs(field);
+      if (needsInputs) {
+        checkboxProblems.push(`field ${key} (${field.inputType || field.type}) lists choices but no inputs, and Gravity Forms reads a checkbox from its inputs (${key}.1, ${key}.2, ...), so a value for it has nowhere to be stored. Add the inputs to the field first (send it through gf_update_form with an \`inputs\` list)`);
+      } else if (!isAccepted) {
         const subject = inputPart !== undefined ? `input ${key} of field ${fieldPart}` : `field ${key} (${field.inputType || field.type})`;
         problems.push(`${subject} takes a single value, but ${isList ? 'an array' : 'an object'} was given`);
       }
     });
 
+    const messages = [...checkboxProblems];
     if (problems.length > 0) {
-      throw new Error(`${problems.join('; ')}. Gravity Forms stores nothing for a value like this: pass one value, or "" to leave it empty`);
+      messages.push(`${problems.join('; ')}. Gravity Forms stores nothing for a value like this: pass one value, or "" to leave it empty`);
     }
+    if (messages.length > 0) {
+      throw new Error(messages.join('. '));
+    }
+  }
+
+  /**
+   * Whether a field is a checkbox whose inputs are missing.
+   *
+   * A checkbox created through the API keeps its choices and gets no inputs (the
+   * form editor builds them in JavaScript), and GF stores each choice under its own
+   * input, so there is nowhere to put a value.
+   *
+   * @param {object} field A form field.
+   * @returns {boolean} True for a checkbox with an empty or absent `inputs`.
+   */
+  static isCheckboxWithoutInputs(field) {
+    const isCheckbox = (field.inputType || field.type) === 'checkbox';
+    const hasInputs = Array.isArray(field.inputs) && field.inputs.length > 0;
+    return isCheckbox && !hasInputs;
   }
 
   /**
@@ -1023,8 +1058,9 @@ export class ValidationFactory {
             }
             // Joined, a comma inside an array value ("Atlanta, GA") cannot be
             // told from a separator. A GF 3.0 "formatted" phone decodes only from
-            // a JSON string. A checkbox reads each choice from its own sub-input
-            // and ignores an array under input_5.
+            // a JSON string. A checkbox reads each choice from its own sub-input and
+            // ignores an array under input_5, so the client expands it
+            // (_prepareSubmission) once it has the form.
             const value = input[key];
             if (Array.isArray(value)) {
               subValidated[targetKey] = value.map(entry =>

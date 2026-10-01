@@ -199,6 +199,29 @@ export function assignSettingIds(members, reserved = []) {
   return { members: keyed, assigned };
 }
 
+/**
+ * Field types whose array the REST API handles itself: a list is serialized by GF
+ * (maybe_serialize_list_fields), and a chained select is a tree, not flat choices.
+ */
+const PASSTHROUGH_ARRAY_TYPES = new Set(['list', 'chainedselect']);
+
+/** Choice fields that hold one value. */
+const SINGLE_VALUE_TYPES = new Set(['radio', 'select']);
+
+/**
+ * Whether a field stores each choice under its own input (checkbox, and the option,
+ * quiz, poll and survey fields set to checkbox): it lists both inputs and choices.
+ *
+ * @param {object} field A form field.
+ * @returns {boolean} True when an array should be expanded to the field's inputs.
+ */
+function isCheckboxStyleField(field) {
+  if (PASSTHROUGH_ARRAY_TYPES.has(field.type)) return false;
+  const hasInputs = Array.isArray(field.inputs) && field.inputs.length > 0;
+  const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
+  return hasInputs && hasChoices;
+}
+
 export class GravityFormsClient {
   constructor(config) {
     this.config = testConfig.resolveEnv(config);
@@ -682,8 +705,8 @@ export class GravityFormsClient {
    */
   async validateForm(params) {
     return this.validateAndCall('gf_validate_form', params, async (validated) => {
-      const { form_id, ...submissionData } = validated;
-      await this._assertInputKeysNameFields(form_id, submissionData, 'nothing would be validated for it');
+      const { form_id, ...rawSubmission } = validated;
+      const submissionData = await this._prepareSubmission(form_id, rawSubmission, 'nothing would be validated for it');
 
       // Dedicated validation route — validate WITHOUT creating an entry. POSTing
       // {validation_only:true} to /submissions does NOT validate: GF ignores the
@@ -771,16 +794,17 @@ export class GravityFormsClient {
    *
    * Different field types store multi-value data differently:
    *   - Checkbox (incl. image choice checkbox): dot-notation sub-inputs ("5.1": "val")
-   *   - Multiselect: JSON-encoded string ("[\"a\",\"b\"]")
-   *   - Radio, dropdown, image choice radio/dropdown: single value (no arrays)
+   *   - Multiselect: sent as an ARRAY. GF's REST layer runs the field's own
+   *     to_string() on it (class-gf-rest-controller.php:299), which json-encodes it
+   *     for a json storageType and comma-joins it otherwise. A string we joined
+   *     ourselves was json-encoded again as one quoted string, then split on its
+   *     commas when read, so ["m","n"] came back as ["\"m", "n\""].
+   *   - Radio, dropdown, image choice radio/dropdown: one value. An array is refused
+   *     by EntriesValidator.assertValueShapes before it reaches this method.
    *   - Consent: special sub-inputs (not choice-based, left untouched)
    *
    * When entry data contains array values, this method fetches the form to
    * identify the field type and applies the correct storage format.
-   *
-   * For checkbox fields, values are matched against choice.value first, then
-   * choice.text as fallback. This ensures the correct sub-input ID is used even
-   * when IDs have gaps from deleted choices.
    *
    * @param {object} entryData - Entry data, possibly containing array values.
    * @param {number} formId - The form ID to fetch field definitions from.
@@ -800,15 +824,6 @@ export class GravityFormsClient {
 
     const expanded = { ...entryData };
 
-    // Single-value field types: radio/dropdown take first element from arrays
-    const singleValueTypes = new Set(['radio', 'select']);
-
-    // Field types where arrays should not be normalized:
-    // - list: REST API handles array serialization natively
-    // - chainedselect: has inputs+choices but is compound (each sub-input = one dropdown),
-    //   not multi-select. Nested choices are a tree, not flat checkbox choices.
-    const passthroughTypes = new Set(['list', 'chainedselect']);
-
     for (const key of arrayKeys) {
       const fieldId = parseInt(key, 10);
       if (isNaN(fieldId)) continue;
@@ -816,57 +831,93 @@ export class GravityFormsClient {
       const field = fields.find(f => f.id === fieldId);
       if (!field) continue;
 
-      const fieldType = field.inputType || field.type;
+      // GF_Fields::create() instantiates by inputType, so this is the class GF uses.
+      const resolvedType = field.inputType || field.type;
 
       // List and other passthrough types: REST API handles arrays natively
-      if (passthroughTypes.has(field.type)) continue;
+      if (PASSTHROUGH_ARRAY_TYPES.has(field.type)) continue;
 
-      // Checkbox-type fields: expand to dot-notation sub-inputs
-      // Detection: has both inputs[] and choices[] (works for checkbox, quiz,
-      // poll, survey, option, post_category, post_custom_field with inputType=checkbox)
-      if (field.inputs && field.choices) {
-        const values = expanded[key];
-        delete expanded[key];
-
-        // Clear all visible sub-inputs for this field
-        for (const input of field.inputs) {
-          if (input.isHidden) continue;
-          expanded[String(input.id)] = '';
-        }
-
-        // Build visible-input list (hidden inputs like "Select All" shift indices)
-        const visibleInputs = field.inputs.filter(input => !input.isHidden);
-
-        // Match each value to a choice and assign to the correct sub-input.
-        // GF HTML-encodes choice text (& → &amp;, etc.), so also compare
-        // against decoded text for natural-language input from AI agents.
-        const decodeHtml = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
-        for (const val of values) {
-          const choiceIndex = field.choices.findIndex(
-            c => c.value === val || c.text === val || decodeHtml(c.text) === val
-          );
-
-          if (choiceIndex !== -1 && visibleInputs[choiceIndex]) {
-            expanded[String(visibleInputs[choiceIndex].id)] = field.choices[choiceIndex].value;
-          }
-        }
+      if (resolvedType === 'multiselect') {
+        // Empty stays empty: GF skips an empty value before json-encoding it, so an
+        // empty array would be stored as given.
+        if (expanded[key].length === 0) expanded[key] = '';
         continue;
       }
 
-      // Fields with choices but no inputs: either single-value or multi-value
+      // Checkbox-type fields: expand to dot-notation sub-inputs. Every visible input
+      // is written, '' for an unchecked one, so an update clears stale values.
+      if (isCheckboxStyleField(field)) {
+        const values = expanded[key];
+        delete expanded[key];
+        Object.assign(expanded, this._expandCheckboxValues(field, values));
+        continue;
+      }
+
+      // Radio and dropdown take one value; assertValueShapes has refused an array.
+      if (SINGLE_VALUE_TYPES.has(resolvedType)) continue;
+
+      // Any other choice field that holds several values and has no inputs
+      // (post_category with inputType checkbox but no stored choices, ...):
+      // REST API v2 accepts comma-separated strings.
       if (field.choices) {
-        if (singleValueTypes.has(fieldType)) {
-          // Radio/dropdown: take first element
-          expanded[key] = expanded[key][0] || '';
-        } else {
-          // Multiselect, entry_tags, or any other multi-value field:
-          // REST API v2 accepts comma-separated strings for multi-value fields
-          expanded[key] = expanded[key].join(',');
-        }
+        expanded[key] = expanded[key].join(',');
       }
     }
 
     return expanded;
+  }
+
+  /**
+   * Map a checkbox field's chosen values to the inputs GF stores them under.
+   *
+   * Values are matched against choice.value first, then choice.text (also with GF's
+   * HTML entities decoded, since AI callers write "&"), so the right input is used
+   * even when ids have gaps from deleted choices. Hidden inputs ("Select All") shift
+   * indices and are skipped. A value that matches no choice is refused rather than
+   * dropped: the call would otherwise report success for a box that was never ticked.
+   *
+   * @param {object} field  A checkbox-style field with `inputs` and `choices`.
+   * @param {Array} values  The values the caller sent.
+   * @returns {object} Input id ("7.1") to the choice value, '' for an unchecked input.
+   * @throws When a value matches no choice, or its choice has no input.
+   */
+  _expandCheckboxValues(field, values) {
+    const visibleInputs = field.inputs.filter(input => !input.isHidden);
+    const result = {};
+    visibleInputs.forEach(input => { result[String(input.id)] = ''; });
+
+    const decodeHtml = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+    const unmatched = [];
+    const withoutInput = [];
+
+    for (const val of values) {
+      if (val === '' || val === null || val === undefined) continue;
+
+      const choiceIndex = field.choices.findIndex(
+        c => c.value === val || c.text === val || decodeHtml(String(c.text)) === val
+      );
+      if (choiceIndex === -1) {
+        unmatched.push(val);
+      } else if (!visibleInputs[choiceIndex]) {
+        withoutInput.push(val);
+      } else {
+        result[String(visibleInputs[choiceIndex].id)] = field.choices[choiceIndex].value;
+      }
+    }
+
+    const problems = [];
+    if (unmatched.length > 0) {
+      const choiceValues = field.choices.map(c => JSON.stringify(c.value)).join(', ');
+      problems.push(`${unmatched.map(v => JSON.stringify(v)).join(', ')} ${unmatched.length > 1 ? 'match' : 'matches'} no choice of field ${field.id} (choices: ${choiceValues})`);
+    }
+    if (withoutInput.length > 0) {
+      problems.push(`${withoutInput.map(v => JSON.stringify(v)).join(', ')} ${withoutInput.length > 1 ? 'have' : 'has'} no input on field ${field.id} to be stored in`);
+    }
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('; ')}. Nothing was written`);
+    }
+
+    return result;
   }
 
   /**
@@ -904,7 +955,7 @@ export class GravityFormsClient {
   }
 
   /**
-   * Refuses a submission body whose `input_N` keys name no field on the form.
+   * Checks a submission body against the form and returns the body to send.
    *
    * GF merges the body into $_POST and reads the keys it knows (api.php
    * hydrate_post), so an `input_99` on a form with no field 99 is read by nothing
@@ -914,21 +965,29 @@ export class GravityFormsClient {
    * pass through. The form is fetched once, and only when there is a key to check.
    * A form that returns no `fields` array cannot be checked, so the call goes on.
    *
+   * The value must also fit the field. An array under a single-value input is read
+   * by GF as repeater rows (save_input -> queue_save_input_value, forms_model.php:5555)
+   * and stored under item-indexed keys, so a radio sent ["a","b"] was left empty with
+   * junk `2_0` and `2_1` meta; it is refused, as the entry tools refuse it. A
+   * checkbox array is expanded to the `input_N_M` keys GF reads for it.
+   *
    * @param {number} formId     The form being submitted to.
    * @param {object} submission The body to send.
    * @param {string} consequence What GF does with an unread key, ending the message.
-   * @throws When an `input_N` key names no field or input on the form.
+   * @returns {Promise<object>} The body to send.
+   * @throws When a key names no field or input, a value cannot be stored by its
+   *   field, or a checkbox array cannot be expanded.
    */
-  async _assertInputKeysNameFields(formId, submission, consequence) {
+  async _prepareSubmission(formId, submission, consequence) {
     const fieldInputKeys = Object.keys(submission).filter(key => /^input_\d+(?:_\d+)?$/.test(key));
     if (fieldInputKeys.length === 0) {
-      return;
+      return submission;
     }
 
     const formResponse = await this.httpClient.get(`/forms/${formId}`);
     const fields = formResponse.data?.fields;
     if (!Array.isArray(fields)) {
-      return;
+      return submission;
     }
 
     // Entries spell a sub-input 5.3 and submissions input_5_3; one check serves both.
@@ -937,6 +996,30 @@ export class GravityFormsClient {
       asEntryKeys[key.slice('input_'.length).replace('_', '.')] = submission[key];
     });
     EntriesValidator.assertKeysResolve(asEntryKeys, fields, formId, consequence);
+    EntriesValidator.assertValueShapes(asEntryKeys, fields);
+
+    const body = { ...submission };
+    for (const key of fieldInputKeys) {
+      const isWholeFieldArray = Array.isArray(submission[key]) && !key.slice('input_'.length).includes('_');
+      if (!isWholeFieldArray) continue;
+
+      const field = fields.find(candidate => Number(candidate?.id) === Number(key.slice('input_'.length)));
+      if (!field || !isCheckboxStyleField(field)) continue;
+
+      const ownInputKeys = Object.keys(submission).filter(other => other.startsWith(`${key}_`));
+      if (ownInputKeys.length > 0) {
+        throw new Error(`${key} is an array and ${ownInputKeys.join(', ')} is given as well: both name the inputs of checkbox field ${field.id}. Pass one`);
+      }
+
+      delete body[key];
+      const expanded = this._expandCheckboxValues(field, submission[key]);
+      Object.entries(expanded).forEach(([inputId, value]) => {
+        // An unchecked box is simply absent from a submission.
+        if (value !== '') body[`input_${inputId.replace('.', '_')}`] = value;
+      });
+    }
+
+    return body;
   }
 
   /**
@@ -1063,8 +1146,8 @@ export class GravityFormsClient {
    */
   async submitFormData(params) {
     return this.validateAndCall('gf_submit_form_data', params, async (validated) => {
-      const { form_id, ...submissionData } = validated;
-      await this._assertInputKeysNameFields(form_id, submissionData, 'nothing would be stored for it');
+      const { form_id, ...rawSubmission } = validated;
+      const submissionData = await this._prepareSubmission(form_id, rawSubmission, 'nothing would be stored for it');
 
       // GF returns HTTP 400 {is_valid:false, validation_messages, …} on a
       // REJECTED submission. That is a normal "didn't pass validation" result,
@@ -1097,8 +1180,8 @@ export class GravityFormsClient {
    */
   async validateSubmission(params) {
     return this.validateAndCall('gf_validate_submission', params, async (validated) => {
-      const { form_id, ...submissionData } = validated;
-      await this._assertInputKeysNameFields(form_id, submissionData, 'nothing would be validated for it');
+      const { form_id, ...rawSubmission } = validated;
+      const submissionData = await this._prepareSubmission(form_id, rawSubmission, 'nothing would be validated for it');
 
       // Dedicated validation route: GF validates WITHOUT creating an entry or
       // firing notifications/feeds. A validation_only flag on /submissions is

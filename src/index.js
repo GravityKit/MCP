@@ -541,7 +541,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_create_entry',
-    description: 'Create an entry. Put field values at the top level beside form_id ("1": "Ada", "6.3": "Oslo"), never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. Returns the entry as stored. Checkbox/multiselect arrays auto-normalized.',
+    description: 'Create an entry. Put field values at the top level beside form_id ("1": "Ada", "6.3": "Oslo"), never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. Returns the entry as stored. A checkbox array is expanded to the field\'s inputs (refused when the field has none, or a value matches no choice); a multiselect array is sent as an array.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -562,7 +562,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_entry',
-    description: 'Update an entry. Put field values at the top level beside id, never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
+    description: 'Update an entry. Put field values at the top level beside id, never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. A checkbox array is expanded to the field\'s inputs (refused when the field has none, or a value matches no choice); a multiselect array is sent as an array; unmentioned fields preserved.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -599,7 +599,7 @@ const GF_TOOL_DEFINITIONS = [
   // Form Submissions (2 tools)
   {
     name: 'gf_submit_form_data',
-    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Field values go as top-level input_N keys (e.g. input_1: "Ada", input_2; sub-inputs input_1_3) — a call with none is rejected. `field_values` is refused: it does nothing on this path.',
+    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Field values go as top-level input_N keys (e.g. input_1: "Ada", input_2; sub-inputs input_1_3) — a call with none is rejected. `field_values` is refused: it does nothing on this path. A checkbox array under input_N is expanded to input_N_M; an array for a field that holds one value (radio, dropdown, text) is refused.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

@@ -460,7 +460,6 @@ test('create accepts an array where the field holds several values', async () =>
     '3': ['A', 'B'],               // multiselect
     '4': [['a', 'b'], ['c', 'd']], // list: rows
     '5': ['one.pdf', 'two.pdf'],   // fileupload
-    '6': ['A'],                    // radio: the first value is taken
     '7': ['B'],                    // checkbox: expanded to its inputs
     '9': [{ 10: 'x' }],            // repeater: JSON rows
     '12': ['x', 'y']               // multiselect: the registry says it stores several
@@ -468,7 +467,19 @@ test('create accepts an array where the field holds several values', async () =>
 
   const post = requests.find((r) => r.method === 'POST');
   assert.equal(post.body['7.2'], 'B', 'checkbox expansion still ran');
+  assert.deepEqual(post.body['3'], ['A', 'B'], 'a multiselect array reaches GF as an array');
   assert.deepEqual(post.body['4'], [['a', 'b'], ['c', 'd']], 'list rows reach GF as given');
+});
+
+test('create refuses an array on a radio: it holds one value, and the first used to be taken', async () => {
+  for (const value of [['A', 'B'], ['A']]) {
+    const { client, requests } = makeShapeClient();
+    await assert.rejects(
+      () => client.createEntry({ form_id: 162, '6': value }),
+      /field 6 \(radio\) takes a single value, but an array was given/
+    );
+    assert.equal(writes(requests).length, 0, 'nothing may be POSTed');
+  }
 });
 
 test('create refuses an array on a compound field\'s own id and on a single input', async () => {

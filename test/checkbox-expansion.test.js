@@ -3,14 +3,15 @@
  * Tests that array values in entry data are correctly normalized
  * to match Gravity Forms storage patterns per field type:
  *   - Checkbox (any parent type): dot-notation sub-inputs
- *   - Multiselect: comma-separated string (REST API v2 format)
- *   - Radio/Dropdown: single value (first element)
+ *   - Multiselect: sent as an array (GF's REST layer encodes it by storageType)
+ *   - Radio/Dropdown: one value; an array is refused by assertValueShapes
  *
  * Covers: createEntry, updateEntry, value matching, edge cases,
  * option/quiz/survey/poll checkbox variants, multiselect, radio fallback.
  */
 
 import GravityFormsClient from '../src/gravity-forms-client.js';
+import { EntriesValidator } from '../src/config/validation.js';
 import {
   TestRunner,
   TestAssert,
@@ -185,17 +186,17 @@ suite.test('Expand: prefers value match over text match', async () => {
   TestAssert.equal(result['1.3'], '', 'Enterprise should be cleared');
 });
 
-suite.test('Expand: skips unmatched values', async () => {
+suite.test('Expand: refuses an unmatched value instead of dropping it', async () => {
   mockHttpClient.setMockResponse('GET', '/forms/1', new MockResponse(CHECKBOX_FORM));
 
-  const result = await client._normalizeArrayValues(
-    { form_id: 1, '2': ['red', 'nonexistent', 'blue'] },
-    1
-  );
+  let message = '';
+  try {
+    await client._normalizeArrayValues({ form_id: 1, '2': ['red', 'nonexistent', 'blue'] }, 1);
+  } catch (error) {
+    message = error.message;
+  }
 
-  TestAssert.equal(result['2.1'], 'red', 'Red should map');
-  TestAssert.equal(result['2.2'], '', 'Green cleared');
-  TestAssert.equal(result['2.3'], 'blue', 'Blue should map');
+  TestAssert.isTrue(message.includes('"nonexistent"'), 'names the value that matched nothing');
 });
 
 suite.test('Expand: clears all sub-inputs when empty array provided', async () => {
@@ -480,17 +481,17 @@ suite.test('Expand: duplicate values in array only set once', async () => {
   TestAssert.equal(result['2.3'], '');
 });
 
-suite.test('Expand: all values unmatched leaves field cleared', async () => {
+suite.test('Expand: all values unmatched is refused, not stored as a cleared field', async () => {
   mockHttpClient.setMockResponse('GET', '/forms/1', new MockResponse(CHECKBOX_FORM));
 
-  const result = await client._normalizeArrayValues(
-    { form_id: 1, '2': ['purple', 'orange'] },
-    1
-  );
+  let message = '';
+  try {
+    await client._normalizeArrayValues({ form_id: 1, '2': ['purple', 'orange'] }, 1);
+  } catch (error) {
+    message = error.message;
+  }
 
-  TestAssert.equal(result['2.1'], '', 'All cleared when nothing matches');
-  TestAssert.equal(result['2.2'], '');
-  TestAssert.equal(result['2.3'], '');
+  TestAssert.isTrue(message.includes('"purple", "orange"'), 'names every value that matched nothing');
 });
 
 // =================================
@@ -514,7 +515,7 @@ const MULTISELECT_FORM = {
   ]
 };
 
-suite.test('Multiselect: array becomes comma-separated', async () => {
+suite.test('Multiselect: array stays an array for GF to encode', async () => {
   mockHttpClient.setMockResponse('GET', '/forms/10', new MockResponse(MULTISELECT_FORM));
 
   const result = await client._normalizeArrayValues(
@@ -522,8 +523,9 @@ suite.test('Multiselect: array becomes comma-separated', async () => {
     10
   );
 
-  TestAssert.equal(result['1'], 'tag1,tag3', 'Should be comma-separated');
-  TestAssert.equal(typeof result['1'], 'string', 'Should be a string, not array');
+  // A comma-joined string was json-encoded again by GF's to_string() and split on
+  // its commas when read: ["m","n"] came back as ["\"m", "n\""].
+  TestAssert.equal(JSON.stringify(result['1']), JSON.stringify(['tag1', 'tag3']), 'Should stay an array');
 });
 
 suite.test('Multiselect: empty array becomes empty string', async () => {
@@ -537,7 +539,7 @@ suite.test('Multiselect: empty array becomes empty string', async () => {
   TestAssert.equal(result['1'], '', 'Empty array should be empty string');
 });
 
-suite.test('Multiselect: single value array becomes single value string', async () => {
+suite.test('Multiselect: single value array stays an array', async () => {
   mockHttpClient.setMockResponse('GET', '/forms/10', new MockResponse(MULTISELECT_FORM));
 
   const result = await client._normalizeArrayValues(
@@ -545,7 +547,7 @@ suite.test('Multiselect: single value array becomes single value string', async 
     10
   );
 
-  TestAssert.equal(result['1'], 'tag2');
+  TestAssert.equal(JSON.stringify(result['1']), JSON.stringify(['tag2']));
 });
 
 // =================================
@@ -583,7 +585,32 @@ const DROPDOWN_FORM = {
   ]
 };
 
-suite.test('Radio: array takes first element', async () => {
+// The old behavior took the first element and dropped the rest. A radio and a
+// dropdown hold one value, so an array is refused before normalization runs.
+
+suite.test('Radio: an array is refused, not cut to its first element', async () => {
+  let message = '';
+  try {
+    EntriesValidator.assertValueShapes({ '1': ['red', 'blue'] }, RADIO_FORM.fields);
+  } catch (error) {
+    message = error.message;
+  }
+
+  TestAssert.isTrue(message.includes('field 1 (radio) takes a single value'), 'refuses the array');
+});
+
+suite.test('Dropdown: an array is refused, not cut to its first element', async () => {
+  let message = '';
+  try {
+    EntriesValidator.assertValueShapes({ '1': ['lg', 'sm'] }, DROPDOWN_FORM.fields);
+  } catch (error) {
+    message = error.message;
+  }
+
+  TestAssert.isTrue(message.includes('field 1 (select) takes a single value'), 'refuses the array');
+});
+
+suite.test('Radio: normalization leaves an array alone for the guard to refuse', async () => {
   mockHttpClient.setMockResponse('GET', '/forms/11', new MockResponse(RADIO_FORM));
 
   const result = await client._normalizeArrayValues(
@@ -591,30 +618,7 @@ suite.test('Radio: array takes first element', async () => {
     11
   );
 
-  TestAssert.equal(result['1'], 'red', 'Should take first element');
-  TestAssert.equal(typeof result['1'], 'string');
-});
-
-suite.test('Dropdown: array takes first element', async () => {
-  mockHttpClient.setMockResponse('GET', '/forms/12', new MockResponse(DROPDOWN_FORM));
-
-  const result = await client._normalizeArrayValues(
-    { form_id: 12, '1': ['lg', 'sm'] },
-    12
-  );
-
-  TestAssert.equal(result['1'], 'lg', 'Should take first element');
-});
-
-suite.test('Radio: empty array becomes empty string', async () => {
-  mockHttpClient.setMockResponse('GET', '/forms/11', new MockResponse(RADIO_FORM));
-
-  const result = await client._normalizeArrayValues(
-    { form_id: 11, '1': [] },
-    11
-  );
-
-  TestAssert.equal(result['1'], '', 'Empty array should become empty string');
+  TestAssert.equal(JSON.stringify(result['1']), JSON.stringify(['red', 'blue']), 'not reshaped into a value');
 });
 
 // =================================
@@ -689,7 +693,7 @@ const POST_CAT_MULTISELECT_FORM = {
   ]
 };
 
-suite.test('Post Category(multiselect): array becomes comma-separated', async () => {
+suite.test('Post Category(multiselect): array stays an array (GF builds a multiselect from inputType)', async () => {
   mockHttpClient.setMockResponse('GET', '/forms/14', new MockResponse(POST_CAT_MULTISELECT_FORM));
 
   const result = await client._normalizeArrayValues(
@@ -697,7 +701,7 @@ suite.test('Post Category(multiselect): array becomes comma-separated', async ()
     14
   );
 
-  TestAssert.equal(result['1'], 'News:5,Tech:12');
+  TestAssert.equal(JSON.stringify(result['1']), JSON.stringify(['News:5', 'Tech:12']));
 });
 
 // =================================
@@ -936,7 +940,7 @@ suite.test('Mixed form: each field type normalized correctly', async () => {
   mockHttpClient.setMockResponse('GET', '/forms/20', new MockResponse(MIXED_FORM));
 
   const result = await client._normalizeArrayValues(
-    { form_id: 20, '1': 'John', '2': ['red'], '3': ['a', 'b'], '4': ['x'] },
+    { form_id: 20, '1': 'John', '2': ['red'], '3': ['a', 'b'], '4': 'x' },
     20
   );
 
@@ -944,8 +948,8 @@ suite.test('Mixed form: each field type normalized correctly', async () => {
   TestAssert.equal(result['2.1'], 'red', 'Checkbox expanded');
   TestAssert.equal(result['2.2'], '', 'Checkbox cleared');
   TestAssert.equal(result['2'], undefined, 'Checkbox key removed');
-  TestAssert.equal(result['3'], 'a,b', 'Multiselect comma-separated');
-  TestAssert.equal(result['4'], 'x', 'Radio takes first');
+  TestAssert.equal(JSON.stringify(result['3']), JSON.stringify(['a', 'b']), 'Multiselect stays an array');
+  TestAssert.equal(result['4'], 'x', 'Radio scalar untouched');
 });
 
 // =================================
