@@ -1,6 +1,6 @@
 {
   "comment": "Production dependencies with known advisories that this server does not execute. Anything NOT listed here fails the Security workflow, and so does a NEW advisory id against a listed package -- the `advisories` array is what somebody actually reviewed, so a fresh one has to be looked at rather than inheriting the exemption. Review the reasons whenever the SDK is upgraded: an entry stops being true the moment src/ imports an HTTP transport. A package this server DOES execute belongs in `overrides` at a fixed version, never here: axios and fast-uri are both live, so they are pinned past their advisories instead of waived.",
-  "reviewed": "2026-09-30",
+  "reviewed": "2026-10-01",
   "allowed": {
     "hono": {
       "reason": "Reached only through @modelcontextprotocol/sdk's HTTP transport. src/index.js imports server/stdio.js and never server/streamableHttp.js, so this code is installed but never loaded.",
@@ -22,6 +22,7 @@
         "GHSA-gqvv-2mrq-wpjv",
         "GHSA-hm8q-7f3q-5f36",
         "GHSA-hvrm-45r6-mjfj",
+        "GHSA-hxh3-vqpv-xpqv",
         "GHSA-j6c9-x7qj-28xf",
         "GHSA-p77w-8qqv-26rm",
         "GHSA-qp7p-654g-cw7p",
