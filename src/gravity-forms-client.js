@@ -959,6 +959,8 @@ export class GravityFormsClient {
     if (fieldsAreReadable) {
       EntriesValidator.assertKeysResolve(entryData, fields, formId);
       EntriesValidator.assertValueShapes(entryData, fields);
+      // Entry tools only: a submission is masked by GF, the entries API is not.
+      EntriesValidator.assertSensitiveValues(entryData, fields);
     }
 
     return this._normalizeArrayValues(entryData, formId, fieldsAreReadable ? fields : undefined);

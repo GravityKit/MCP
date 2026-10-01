@@ -622,7 +622,9 @@ export const fieldRegistry = {
       // GF persists ONLY two sub-inputs to the entry: .1 = the card number
       // MASKED to last-4 (e.g. "XXXXXXXXXXXX1111") and .4 = the card TYPE name
       // (e.g. "Visa"). The expiration (.2), security code (.3) and cardholder
-      // name (.5) are NEVER stored — the security code is never persisted.
+      // name (.5) are NEVER stored by a submission. The entries API stores them
+      // as given (and does not mask .1), so the entry tools refuse them
+      // (EntriesValidator.assertSensitiveValues).
       // (class-gf-field-creditcard.php get_entry_inputs + get_value_save_entry.)
       subInputs: {
         '1': 'card_number_masked',

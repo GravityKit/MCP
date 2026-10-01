@@ -922,6 +922,83 @@ export class EntriesValidator extends BaseValidator {
   }
 
   /**
+   * Whether a card number input's value is already masked.
+   *
+   * A whitelist, so nothing can pass by looking masked: only mask characters (X, x, *,
+   * a bullet) with spaces or hyphens between them, then at most four ASCII digits at
+   * the end. GF's own mask is X padded to the number's length with the last four kept
+   * (GF_Field_CreditCard::get_value_save_input), which this accepts. A digit anywhere
+   * but the last four places, a non-ASCII digit, or a letter that is not the mask
+   * fails, so a real number cannot get through as one with a few characters changed.
+   *
+   * @param {*} value What was sent under the card number input.
+   * @returns {boolean} True when the value is empty or masked.
+   */
+  static isMaskedCardNumber(value) {
+    if (value === null || value === undefined || value === '') {
+      return true;
+    }
+    return /^[Xx*\u2022\u25CF\s-]*\d{0,4}$/.test(String(value));
+  }
+
+  /**
+   * Refuses entry values that Gravity Forms sanitizes only when a form is submitted.
+   *
+   * GF masks a card number to its last four digits and drops a password inside
+   * GF_Field::get_value_save_input(), reached from a submission (save_lead ->
+   * save_input) and nowhere in the entries API: GFAPI::add_entry and update_entry
+   * pass $entry[$input_id] to GFFormsModel::queue_batch_field_operation unchanged. A
+   * creditcard is also written from every input it lists (.1, .2, .3, .4, .5), not
+   * the .1 and .4 a submission keeps, so a security code would be stored as well.
+   * One call would leave that in the entry for the site owner to deal with, and an
+   * agent cannot see it. A masked or empty value passes. Only the entry tools call
+   * this: a submission goes through GF's own masking, so refusing there would block
+   * the one path that is safe. `.4` (card type) is not refused: a submission stores
+   * a plain type name there, and the API stores the string as given with no secret in it.
+   *
+   * @param {object} data   Entry data, sub-input keys already normalized.
+   * @param {Array} fields  The form's `fields`.
+   * @throws When a value would be stored that a submission would not store.
+   */
+  static assertSensitiveValues(data, fields) {
+    const problems = [];
+
+    Object.keys(data).forEach(key => {
+      const match = /^(\d+)(?:\.(\d+)(?:_\w+)?)?$/.exec(key);
+      if (!match) {
+        return;
+      }
+      const field = fields.find(candidate => Number(candidate?.id) === Number(match[1]));
+      if (!field) {
+        return;
+      }
+
+      const value = data[key];
+      const isEmpty = value === '' || value === null || value === undefined;
+      const isScalar = !Array.isArray(value) && (value === null || typeof value !== 'object');
+      if (isEmpty || !isScalar) {
+        return;
+      }
+
+      const fieldType = field.inputType || field.type;
+      const inputNumber = match[2];
+
+      if (fieldType === 'creditcard' && inputNumber === '1' && !this.isMaskedCardNumber(value)) {
+        problems.push(`input ${key} is a credit card number, and it would be stored unmasked`);
+      } else if (fieldType === 'creditcard' && inputNumber !== undefined && inputNumber !== '1' && inputNumber !== '4') {
+        const part = { 2: 'expiration date', 3: 'security code', 5: 'cardholder name' }[inputNumber] || 'input';
+        problems.push(`input ${key} is a credit card ${part}, which Gravity Forms never stores from a submission but the entries API would`);
+      } else if (fieldType === 'password' && inputNumber === undefined) {
+        problems.push(`field ${key} (password) would be stored in plain text`);
+      }
+    });
+
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('; ')}. Gravity Forms only masks a card number to its last four digits, and only discards a password, when a form is submitted. The entries API does neither, so nothing here would protect the value. To store a card number, send it already masked (the last four digits behind X characters). To record a real card number, use gf_submit_form_data, which goes through the form and masks it. A password, security code, expiration date and cardholder name are not kept on an entry by a submission, so leave them out`);
+    }
+  }
+
+  /**
    * Whether a field is compound by the registry, other than a checkbox.
    *
    * Checkbox is excluded because an array of choice values is a real input for it
