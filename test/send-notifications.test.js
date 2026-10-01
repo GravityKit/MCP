@@ -198,3 +198,54 @@ test('the tool description says what notifications_sent does and does not promis
   const tool = getToolDefinitions().find((t) => t.name === 'gf_send_notifications');
   assert.match(tool.description, /inactive|conditional/i, 'names the notifications GF skips silently');
 });
+
+// --- to, from and reply_to do nothing on this route ---
+//
+// GF_REST_Entry_Notifications_Controller::create_item reads the entry id, `_notifications`
+// and `_event` and nothing else, then hands the form's own notification to
+// GFAPI::send_notification, which sends to the addresses stored on it. The tool
+// validated all three (email format included) and discarded them, so a caller who
+// set `to` got the notification sent to whoever the notification said.
+
+const ADDRESS_PARAMS = ['to', 'from', 'reply_to'];
+
+test('the tool schema does not list to, from or reply_to', () => {
+  const definition = getToolDefinitions().find((tool) => tool.name === 'gf_send_notifications');
+  for (const name of ADDRESS_PARAMS) {
+    assert.ok(!(name in definition.inputSchema.properties), `${name} must not be offered`);
+  }
+});
+
+test('each of to, from and reply_to is refused, with a valid or an invalid value, and nothing is sent', async () => {
+  for (const name of ADDRESS_PARAMS) {
+    for (const value of ['a@example.com', 'not-an-email']) {
+      const { client, requests } = makeClient({ 'POST /entries/101707/notifications': ['n1'] });
+      await assert.rejects(
+        () => client.sendNotifications({ entry_id: 101707, [name]: value }),
+        (error) => {
+          assert.match(error.message, new RegExp(`${name} does nothing`), 'names the parameter');
+          assert.match(error.message, /notification's own settings/, 'says where the addresses come from');
+          assert.match(error.message, /gf_update_form/, 'says how to change them');
+          return true;
+        },
+        `${name}=${value}`
+      );
+      assert.equal(requests.length, 0, `${name}=${value}: nothing may be sent`);
+    }
+  }
+});
+
+test('every address parameter given is named in one refusal', () => {
+  assert.throws(
+    () => ValidationFactory.validateToolInput('gf_send_notifications', { entry_id: 1, to: 'a@example.com', reply_to: 'b@example.com' }),
+    /to, reply_to do nothing/
+  );
+});
+
+test('a null address parameter is not given, so it is not refused; an empty string is, as with field_values', async () => {
+  const { client } = makeClient({ 'POST /entries/101707/notifications': ['n1'] });
+  const result = await client.sendNotifications({ entry_id: 101707, to: null, from: undefined });
+  assert.equal(result.sent, true);
+
+  await assert.rejects(() => client.sendNotifications({ entry_id: 101707, to: '' }), /to does nothing/);
+});

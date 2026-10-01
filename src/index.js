@@ -629,7 +629,7 @@ const GF_TOOL_DEFINITIONS = [
   // Notifications (1 tool)
   {
     name: 'gf_send_notifications',
-    description: 'Send notifications for an entry. sent is false when Gravity Forms sent none, with a reason (usually: no notification on the form has the requested event). notifications_sent lists what Gravity Forms handed to its sender; it skips an inactive notification, or one whose conditional logic is not met, without reporting it.',
+    description: 'Send notifications for an entry. sent is false when Gravity Forms sent none, with a reason (usually: no notification on the form has the requested event). notifications_sent lists what Gravity Forms handed to its sender; it skips an inactive notification, or one whose conditional logic is not met, without reporting it. Recipients, sender and reply-to come from the notification\'s own settings; to, from and reply_to are refused.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

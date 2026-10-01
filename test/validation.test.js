@@ -386,27 +386,9 @@ suite.test('Range Validation: String lengths', async () => {
 // FORMAT VALIDATION
 // =================================
 
-suite.test('Format Validation: Email addresses', async () => {
-  // Invalid email format in notification
-  await TestAssert.throwsAsync(
-    () => client.sendNotifications({
-      entry_id: 1,
-      to: 'not-an-email'
-    }),
-    'valid email',
-    'Should validate email format'
-  );
-
-  // Valid email should work
-  mockHttpClient.setMockResponse('POST', '/entries/1/notifications',
-    new MockResponse({ notifications_sent: [] })
-  );
-
-  await client.sendNotifications({
-    entry_id: 1,
-    to: 'test@example.com'
-  });
-});
+// Email format used to be exercised through gf_send_notifications' `to`, which the
+// route never read. `to`, `from` and `reply_to` are now refused outright; see
+// send-notifications.test.js.
 
 suite.test('Format Validation: URLs', async () => {
   // Invalid URL format

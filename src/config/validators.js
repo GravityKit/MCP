@@ -414,15 +414,6 @@ export class NotificationsValidator {
       )
       .field('event', validate('event')
         .string()
-      )
-      .field('to', validate('to')
-        .email()
-      )
-      .field('from', validate('from')
-        .email()
-      )
-      .field('reply_to', validate('reply_to')
-        .email()
       );
     
     return schema;

@@ -1159,6 +1159,14 @@ export class ValidationFactory {
           if (!input || input.entry_id === undefined || input.entry_id === null) {
             throw new Error('entry_id is required');
           }
+          // The route reads the entry, `_notifications` and `_event` only
+          // (class-controller-entry-notifications.php create_item) and sends to the
+          // addresses stored on the notification. These were once validated and then
+          // dropped, so a caller who set `to` got the notification sent elsewhere.
+          const unreadAddressParams = ['to', 'from', 'reply_to'].filter(key => BaseValidator.isGiven(input[key]));
+          if (unreadAddressParams.length > 0) {
+            throw new Error(`${unreadAddressParams.join(', ')} ${unreadAddressParams.length === 1 ? 'does' : 'do'} nothing on gf_send_notifications: Gravity Forms sends each notification to the addresses in that notification's own settings (To, From, Reply To), and this route reads only the entry, the notification ids and the event. Change the addresses on the notification with gf_update_form`);
+          }
           return ChainNotificationsValidator.validateSendNotificationsParams(input);
 
         case 'gf_get_field_filters':
