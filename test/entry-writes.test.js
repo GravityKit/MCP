@@ -374,3 +374,144 @@ test('every key GF ignored is listed, once, in the warning', async () => {
   assert.deepEqual(result.ignored_keys, ['banana', 'cherry']);
   assert.match(result.warning, /for: banana, cherry\./);
 });
+
+// --- value shape must match what the field stores ---
+//
+// assertKeysResolve checks that a key NAMES a field, not that the value fits it.
+// _normalizeArrayValues expands an array only for fields with choices; on a field
+// that holds one value the array went to GF, which stored nothing, and the call
+// answered with an entry id. Measured live on staging (form 165, field 1 a text):
+// ["a","b"], [["a","b"]], {"x":"y"} and [] each returned an id with no value stored.
+
+const SHAPE_FORM = {
+  id: 162,
+  fields: [
+    { id: 1, type: 'text', label: 'Name' },
+    { id: 2, type: 'email', label: 'Email' },
+    { id: 3, type: 'multiselect', label: 'Tags', choices: [{ text: 'A', value: 'A' }, { text: 'B', value: 'B' }] },
+    { id: 4, type: 'list', label: 'Rows' },
+    { id: 5, type: 'fileupload', label: 'Files', multipleFiles: true },
+    { id: 6, type: 'radio', label: 'Pick', choices: [{ text: 'A', value: 'A' }, { text: 'B', value: 'B' }] },
+    {
+      id: 7,
+      type: 'checkbox',
+      label: 'Topics',
+      choices: [{ text: 'A', value: 'A' }, { text: 'B', value: 'B' }],
+      inputs: [{ id: '7.1', label: 'A' }, { id: '7.2', label: 'B' }]
+    },
+    {
+      id: 8,
+      type: 'name',
+      label: 'Full name',
+      inputs: [{ id: '8.3', label: 'First' }, { id: '8.6', label: 'Last' }]
+    },
+    { id: 9, type: 'repeater', label: 'Rows', fields: [{ id: 10, type: 'text', label: 'Cell' }] },
+    { id: 11, type: 'acme_custom', label: 'Add-on field' },
+    { id: 12, type: 'multiselect', label: 'Choices not listed' }
+  ]
+};
+
+function makeShapeClient() {
+  return makeClient({
+    'GET /forms/162': SHAPE_FORM,
+    'POST /entries': (b) => ({ ...b, id: 9 }),
+    'GET /entries/9': { id: 9, form_id: 162 },
+    'GET /entries/50': { id: 50, form_id: 162 },
+    'PUT /entries/50': { id: 50, form_id: 162 }
+  });
+}
+
+test('create refuses an array or object on a single-value field, and writes nothing', async () => {
+  for (const [label, value, given] of [
+    ['an array', ['a', 'b'], 'an array'],
+    ['a nested array', [['a', 'b']], 'an array'],
+    ['an empty array', [], 'an array'],
+    ['an object', { x: 'y' }, 'an object']
+  ]) {
+    const { client, requests } = makeShapeClient();
+    await assert.rejects(
+      () => client.createEntry({ form_id: 162, '1': value }),
+      (error) => {
+        assert.match(error.message, /field 1 \(text\) takes a single value/, `${label}: names the field and its type`);
+        assert.match(error.message, new RegExp(`${given} was given`), `${label}: says what was given`);
+        assert.match(error.message, /stores nothing/);
+        return true;
+      },
+      `${label} must be refused`
+    );
+    assert.equal(writes(requests).length, 0, `${label}: nothing may be POSTed`);
+  }
+});
+
+test('create still accepts null and an empty string for a single-value field', async () => {
+  const { client, requests } = makeShapeClient();
+
+  await client.createEntry({ form_id: 162, '1': null, '2': 'keep@example.com' });
+  await client.createEntry({ form_id: 162, '1': '' });
+
+  assert.equal(writes(requests).length, 2);
+});
+
+test('create accepts an array where the field holds several values', async () => {
+  const { client, requests } = makeShapeClient();
+
+  await client.createEntry({
+    form_id: 162,
+    '3': ['A', 'B'],               // multiselect
+    '4': [['a', 'b'], ['c', 'd']], // list: rows
+    '5': ['one.pdf', 'two.pdf'],   // fileupload
+    '6': ['A'],                    // radio: the first value is taken
+    '7': ['B'],                    // checkbox: expanded to its inputs
+    '9': [{ 10: 'x' }],            // repeater: JSON rows
+    '12': ['x', 'y']               // multiselect: the registry says it stores several
+  });
+
+  const post = requests.find((r) => r.method === 'POST');
+  assert.equal(post.body['7.2'], 'B', 'checkbox expansion still ran');
+  assert.deepEqual(post.body['4'], [['a', 'b'], ['c', 'd']], 'list rows reach GF as given');
+});
+
+test('create refuses an array on a compound field\'s own id and on a single input', async () => {
+  for (const key of ['8', '8.3', '7.1']) {
+    const { client, requests } = makeShapeClient();
+    await assert.rejects(
+      () => client.createEntry({ form_id: 162, [key]: ['Ada'] }),
+      new RegExp(`${key.replace('.', '\\.')}.*takes a single value`),
+      `${key} holds one value`
+    );
+    assert.equal(writes(requests).length, 0);
+  }
+});
+
+test('create refuses a plain object on a checkbox, which the expansion never handled', async () => {
+  const { client, requests } = makeShapeClient();
+  await assert.rejects(() => client.createEntry({ form_id: 162, '7': { A: true } }), /field 7 \(checkbox\).*an object was given/);
+  assert.equal(writes(requests).length, 0);
+});
+
+test('a field type the registry does not know is not refused: its shape cannot be judged', async () => {
+  const { client, requests } = makeShapeClient();
+  await client.createEntry({ form_id: 162, '11': ['x'] });
+  assert.equal(writes(requests).length, 1);
+});
+
+test('every offending key is named in one refusal', async () => {
+  const { client } = makeShapeClient();
+  await assert.rejects(
+    () => client.createEntry({ form_id: 162, '1': ['a'], '2': { x: 1 } }),
+    (error) => {
+      assert.match(error.message, /field 1 \(text\)/);
+      assert.match(error.message, /field 2 \(email\)/);
+      return true;
+    }
+  );
+});
+
+test('update refuses an array on a single-value field, and sends no PUT', async () => {
+  const { client, requests } = makeShapeClient();
+  await assert.rejects(
+    () => client.updateEntry({ id: 50, '1': ['a', 'b'] }),
+    /field 1 \(text\) takes a single value/
+  );
+  assert.equal(writes(requests).length, 0);
+});

@@ -541,7 +541,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_create_entry',
-    description: 'Create an entry. Put field values at the top level beside form_id ("1": "Ada", "6.3": "Oslo"), never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. Returns the entry as stored. Checkbox/multiselect arrays auto-normalized.',
+    description: 'Create an entry. Put field values at the top level beside form_id ("1": "Ada", "6.3": "Oslo"), never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. Returns the entry as stored. Checkbox/multiselect arrays auto-normalized.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -562,7 +562,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_entry',
-    description: 'Update an entry. Put field values at the top level beside id, never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
+    description: 'Update an entry. Put field values at the top level beside id, never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

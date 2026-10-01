@@ -5,6 +5,7 @@
 
 import { FieldAwareValidator } from './field-validation.js';
 import { CORE_ENTRY_KEYS } from '../utils/compact.js';
+import { getFieldDefinition } from '../field-definitions/field-registry.js';
 import { validate, ValidationSchema } from './validation-chain.js';
 import { VALIDATION_CONFIG, getEnumValues } from './validation-config.js';
 import {
@@ -766,6 +767,84 @@ export class EntriesValidator extends BaseValidator {
 
     if (problems.length > 0) {
       throw new Error(`${problems.join('; ')}. Gravity Forms ignores a key like this, so ${consequence}`);
+    }
+  }
+
+  /**
+   * What a field's registry storage says about the value shapes it can hold.
+   *
+   * @param {object} field A form field.
+   * @returns {{list: boolean, object: boolean}} Whether an array, and a plain
+   *   object, can be stored under the field's own id.
+   */
+  static acceptedValueShapes(field) {
+    const inputType = field.inputType || field.type;
+
+    // The client expands a checkbox-style field's array to its inputs, and joins or
+    // takes the first of a choice field's: both are handled values.
+    const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
+    if (hasChoices) {
+      const isCheckboxStyle = Array.isArray(field.inputs) && field.inputs.length > 0;
+      return { list: true, object: !isCheckboxStyle && field.type === 'chainedselect' };
+    }
+
+    const definition = getFieldDefinition(inputType) || getFieldDefinition(field.type);
+    if (!definition || !definition.storage) {
+      // A type from an add-on: its shape cannot be judged, so nothing is refused.
+      return { list: true, object: true };
+    }
+
+    const { type, format } = definition.storage;
+    const storesStructure = ['commaSeparated', 'serialized', 'json', 'conditional'].includes(format) || type === 'varies';
+    const isPassthrough = field.type === 'list' || field.type === 'chainedselect';
+
+    return {
+      list: storesStructure || isPassthrough,
+      object: ['serialized', 'json', 'conditional'].includes(format) || type === 'varies' || isPassthrough
+    };
+  }
+
+  /**
+   * Refuses an array or object for a field that holds one value.
+   *
+   * assertKeysResolve checks a key names a field, not that the value fits it. An
+   * array sent to a text field is not joined or expanded: GF stores nothing and the
+   * call still answers with an entry id. An empty array is refused too: on a create
+   * it stores nothing, and on an update GF leaves the stored value untouched, so it
+   * cannot mean "clear" anywhere; "" and null say that, and are not refused.
+   * Fields nested in a Repeater are not judged (the parent holds their rows).
+   *
+   * @param {object} data   Entry data, sub-input keys already normalized.
+   * @param {Array} fields  The form's `fields`.
+   * @throws When a value's shape cannot be stored by its field.
+   */
+  static assertValueShapes(data, fields) {
+    const problems = [];
+
+    Object.keys(data).filter(key => this.isFieldKey(key)).forEach(key => {
+      const value = data[key];
+      const isList = Array.isArray(value);
+      const isObject = value !== null && typeof value === 'object' && !isList;
+      if (!isList && !isObject) {
+        return;
+      }
+
+      const [fieldPart, inputPart] = key.split('.');
+      const field = fields.find(candidate => Number(candidate?.id) === Number(fieldPart));
+      if (!field) {
+        return;
+      }
+
+      const accepted = inputPart !== undefined ? { list: false, object: false } : this.acceptedValueShapes(field);
+      const isAccepted = isList ? accepted.list : accepted.object;
+      if (!isAccepted) {
+        const subject = inputPart !== undefined ? `input ${key} of field ${fieldPart}` : `field ${key} (${field.inputType || field.type})`;
+        problems.push(`${subject} takes a single value, but ${isList ? 'an array' : 'an object'} was given`);
+      }
+    });
+
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('; ')}. Gravity Forms stores nothing for a value like this: pass one value, or "" to leave it empty`);
     }
   }
 

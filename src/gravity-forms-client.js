@@ -874,7 +874,8 @@ export class GravityFormsClient {
    *
    * GF drops a key that is not a field on the form and still answers with the body
    * it was sent, so an unchecked write reports values it never stored. The form is
-   * fetched once for both this check and array normalization. A write with no
+   * fetched once for both this check, the value-shape check (an array for a field
+   * that holds one value) and array normalization. A write with no
    * field key (a status change) needs no form. A form that returns no `fields`
    * array cannot be checked, so the write goes through and the stored-entry
    * read-back on create is what shows the result.
@@ -896,6 +897,7 @@ export class GravityFormsClient {
 
     if (fieldsAreReadable) {
       EntriesValidator.assertKeysResolve(entryData, fields, formId);
+      EntriesValidator.assertValueShapes(entryData, fields);
     }
 
     return this._normalizeArrayValues(entryData, formId, fieldsAreReadable ? fields : undefined);
