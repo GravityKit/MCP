@@ -938,6 +938,29 @@ export class GravityFormsClient {
   }
 
   /**
+   * The `ignored_keys` and `warning` to add to an entry write's result, or nothing.
+   *
+   * Create and update pass non-field keys through, because registered entry meta
+   * is per-site. GF drops the ones its form does not register, so the stored entry
+   * it answered with is compared to what was sent.
+   *
+   * @param {object} sent   The entry keys sent.
+   * @param {object} stored The entry GF answered with.
+   * @returns {object} `{ ignored_keys, warning }`, or `{}` when everything was stored.
+   */
+  _ignoredKeysReport(sent, stored) {
+    const ignored = EntriesValidator.findIgnoredKeys(sent, stored);
+    if (ignored.length === 0) {
+      return {};
+    }
+
+    return {
+      ignored_keys: ignored,
+      warning: `Gravity Forms stored no value for: ${ignored.join(', ')}. It saves a non-field key only when the form registers it as entry meta; check the key name.`
+    };
+  }
+
+  /**
    * Create new entry with validation.
    *
    * GF answers POST /entries with the request body plus an id, so its response
@@ -954,7 +977,7 @@ export class GravityFormsClient {
       // trap createFeed guards against).
       try {
         const stored = await this.httpClient.get(`/entries/${entryId}`);
-        return { entry: stored.data };
+        return { entry: stored.data, ...this._ignoredKeysReport(expanded, stored.data) };
       } catch (error) {
         return {
           entry: { id: entryId, form_id: validated.form_id },
@@ -994,8 +1017,10 @@ export class GravityFormsClient {
 
         const response = await this.httpClient.put(`/entries/${id}`, updatedEntryData);
 
+        // GF answers a PUT with GFAPI::get_entry, the stored entry.
         return {
-          entry: response.data
+          entry: response.data,
+          ...this._ignoredKeysReport(expandedUpdates, response.data)
         };
       });
     });

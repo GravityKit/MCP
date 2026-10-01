@@ -39,10 +39,11 @@ export function stripEmpty(obj, seen = new WeakSet()) {
 }
 
 /**
- * Core entry properties returned by the GF REST API.
- * Everything else is plugin-added entry meta (stripped by default).
+ * Core entry properties returned by the GF REST API: the columns of the entry
+ * table (GFAPI::add_entry writes all of them). Everything else is plugin-added
+ * entry meta (stripped by default). Entry validation reads this same list.
  */
-const CORE_ENTRY_KEYS = new Set([
+export const CORE_ENTRY_KEYS = new Set([
   'id', 'form_id', 'post_id', 'date_created', 'date_updated',
   'is_starred', 'is_read', 'ip', 'source_url', 'user_agent',
   'currency', 'payment_status', 'payment_date', 'payment_amount',

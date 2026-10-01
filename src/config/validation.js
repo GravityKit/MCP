@@ -4,6 +4,7 @@
  */
 
 import { FieldAwareValidator } from './field-validation.js';
+import { CORE_ENTRY_KEYS } from '../utils/compact.js';
 import { validate, ValidationSchema } from './validation-chain.js';
 import { VALIDATION_CONFIG, getEnumValues } from './validation-config.js';
 import {
@@ -622,15 +623,29 @@ export class EntriesValidator extends BaseValidator {
   }
 
   /**
-   * Entry properties GF writes that are not form fields. A key in this list is
-   * never checked against the form.
+   * Keys GF would not have stored, given what it answered with.
+   *
+   * A key that is not a field, not an entry column and not entry meta is dropped
+   * by GFAPI::add_entry/update_entry, and the response gives no sign of it. The
+   * stored entry always lists every registered meta key (false when unset), so a
+   * candidate missing from it was never registered. A sent null or '' is left out:
+   * it clears meta, or says nothing about a key that is not there.
+   *
+   * @param {object} sent   The keys that were sent.
+   * @param {object} stored The entry GF answered with.
+   * @returns {string[]} The sent keys GF did not store.
    */
-  static ENTRY_PROPERTY_KEYS = new Set([
-    'id', 'form_id', 'status', 'created_by', 'date_created', 'date_updated',
-    'is_starred', 'is_read', 'ip', 'source_url', 'user_agent', 'currency',
-    'payment_status', 'payment_date', 'payment_amount', 'payment_method',
-    'transaction_id', 'transaction_type', 'is_fulfilled', 'post_id'
-  ]);
+  static findIgnoredKeys(sent, stored) {
+    const storedEntry = stored && typeof stored === 'object' ? stored : {};
+
+    return Object.keys(sent).filter(key => {
+      const isKnownKind = this.isFieldKey(key) || CORE_ENTRY_KEYS.has(key);
+      const isEmptyValue = sent[key] === null || sent[key] === '';
+      const isStored = Object.prototype.hasOwnProperty.call(storedEntry, key);
+
+      return !isKnownKind && !isEmptyValue && !isStored;
+    });
+  }
 
   /**
    * A field id ("6") or a sub-input id ("6.3", or "6_3" as submissions spell it).
@@ -693,7 +708,7 @@ export class EntriesValidator extends BaseValidator {
 
     Object.keys(data).forEach(key => {
       const value = data[key];
-      const isNamedProperty = this.isFieldKey(key) || this.ENTRY_PROPERTY_KEYS.has(key);
+      const isNamedProperty = this.isFieldKey(key) || CORE_ENTRY_KEYS.has(key);
       const isPlainObject = value !== null && typeof value === 'object' && !Array.isArray(value);
 
       if (!isNamedProperty && isPlainObject) {

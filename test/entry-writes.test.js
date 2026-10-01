@@ -258,3 +258,119 @@ test('assertKeysResolve passes a field whose form lists no inputs for a dotted k
   const fields = [{ id: 3, type: 'post_image' }];
   EntriesValidator.assertKeysResolve({ '3.1': 'Title' }, fields, 161);
 });
+
+// --- keys Gravity Forms did not store ---
+//
+// create and update keep passing non-field keys through, because registered entry
+// meta is per-site (GravityView's is_approved). GF saves such a key only when a
+// gform_entry_meta filter registers it (GFAPI::add_entry, api.php:1319-1324) and
+// drops the rest. The stored entry GF answers with always lists every registered
+// meta key, as false when unset (class-gf-query.php get_entries), so a key missing
+// from it was not registered.
+
+const IGNORED_WARNING = 'Gravity Forms stored no value for: banana. It saves a non-field key only when the form registers it as entry meta; check the key name.';
+
+test('create reports a non-field key that is absent from the stored entry', async () => {
+  const { client } = makeClient({
+    'GET /forms/161': FORM,
+    'POST /entries': (b) => ({ ...b, id: 9 }),
+    'GET /entries/9': { id: 9, form_id: 161, '1': 'Ada' }
+  });
+
+  const result = await client.createEntry({ form_id: 161, '1': 'Ada', banana: 'x' });
+
+  assert.deepEqual(result.ignored_keys, ['banana']);
+  assert.equal(result.warning, IGNORED_WARNING);
+});
+
+test('update reports a non-field key that is absent from the stored entry', async () => {
+  const { client } = makeClient({
+    'GET /entries/101696': EXISTING,
+    'GET /forms/161': FORM,
+    // GF answers a PUT with GFAPI::get_entry: banana was not stored.
+    'PUT /entries/101696': { id: 101696, form_id: 161, '1': 'Ada', status: 'active' }
+  });
+
+  const result = await client.updateEntry({ id: 101696, '1': 'Ada', banana: 'x' });
+
+  assert.deepEqual(result.ignored_keys, ['banana']);
+  assert.equal(result.warning, IGNORED_WARNING);
+});
+
+test('registered entry meta present in the stored entry is not reported, on create or update', async () => {
+  const create = makeClient({
+    'GET /forms/161': FORM,
+    'POST /entries': (b) => ({ ...b, id: 9 }),
+    'GET /entries/9': { id: 9, form_id: 161, '1': 'Ada', is_approved: '1' }
+  });
+  const created = await create.client.createEntry({ form_id: 161, '1': 'Ada', is_approved: '1' });
+  assert.ok(!('ignored_keys' in created), 'no ignored_keys when everything was stored');
+  assert.ok(!('warning' in created));
+
+  const update = makeClient({
+    'GET /entries/101696': EXISTING,
+    'GET /forms/161': FORM,
+    'PUT /entries/101696': { ...EXISTING, is_approved: '1' }
+  });
+  const updated = await update.client.updateEntry({ id: 101696, is_approved: '1' });
+  assert.ok(!('ignored_keys' in updated));
+  assert.ok(!('warning' in updated));
+});
+
+test('registered meta stored as false (GF lists unset meta that way) is present, not ignored', async () => {
+  const { client } = makeClient({
+    'GET /forms/161': FORM,
+    'POST /entries': (b) => ({ ...b, id: 9 }),
+    'GET /entries/9': { id: 9, form_id: 161, '1': 'Ada', is_approved: false }
+  });
+
+  const result = await client.createEntry({ form_id: 161, '1': 'Ada', is_approved: '0' });
+
+  assert.ok(!('ignored_keys' in result));
+});
+
+test('a sent null or empty value for an absent key is not reported', async () => {
+  const create = makeClient({
+    'GET /forms/161': FORM,
+    'POST /entries': (b) => ({ ...b, id: 9 }),
+    'GET /entries/9': { id: 9, form_id: 161, '1': 'Ada' }
+  });
+  const created = await create.client.createEntry({ form_id: 161, '1': 'Ada', banana: null, cherry: '' });
+  assert.ok(!('ignored_keys' in created), 'clearing meta that is not there says nothing');
+
+  const update = makeClient({
+    'GET /entries/101696': EXISTING,
+    'GET /forms/161': FORM,
+    'PUT /entries/101696': EXISTING
+  });
+  const updated = await update.client.updateEntry({ id: 101696, banana: null, cherry: '' });
+  assert.ok(!('ignored_keys' in updated));
+});
+
+test('entry columns, including source_id and date_updated, are never reported', async () => {
+  const { client } = makeClient({
+    'GET /forms/161': FORM,
+    'POST /entries': (b) => ({ ...b, id: 9 }),
+    // The stored entry does not echo them back here; they are columns, not meta.
+    'GET /entries/9': { id: 9, form_id: 161, '1': 'Ada' }
+  });
+
+  const result = await client.createEntry({
+    form_id: 161, '1': 'Ada', source_id: 4, date_updated: '2026-01-01 00:00:00', is_starred: 1, status: 'active'
+  });
+
+  assert.ok(!('ignored_keys' in result));
+});
+
+test('every key GF ignored is listed, once, in the warning', async () => {
+  const { client } = makeClient({
+    'GET /forms/161': FORM,
+    'POST /entries': (b) => ({ ...b, id: 9 }),
+    'GET /entries/9': { id: 9, form_id: 161, '1': 'Ada' }
+  });
+
+  const result = await client.createEntry({ form_id: 161, '1': 'Ada', banana: 'x', cherry: 'y' });
+
+  assert.deepEqual(result.ignored_keys, ['banana', 'cherry']);
+  assert.match(result.warning, /for: banana, cherry\./);
+});
