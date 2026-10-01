@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive } from '../src/server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive, abilitiesStatusNote } from '../src/server-runtime.js';
 
 test('buildToolList: omits a missing gkReloadDef instead of emitting undefined', () => {
   const list = buildToolList({ gfReady: false });
@@ -151,4 +151,27 @@ test('parseAllowDestructive: stray and trailing commas do not become empty entri
 test('parseAllowDestructive: a non-string is not a configuration', () => {
   assert.deepEqual(parseAllowDestructive(null), []);
   assert.deepEqual(parseAllowDestructive(42), []);
+});
+
+// --- abilitiesStatusNote (empty catalog vs no catalog) ---
+
+test('abilitiesStatusNote: a catalog that answered with nothing does not read as unreachable', () => {
+  // The two states need opposite fixes: activate a product, versus go and look at
+  // the cert, the credentials and the WP log. Reported as one, the operator
+  // debugs a connection that is working.
+  const empty = abilitiesStatusNote([]);
+
+  assert.ok(!/unreachable/i.test(empty), `an empty catalog answered, got: ${empty}`);
+  assert.match(empty, /gk_reload_abilities/, 'the note must name what to do after activating a product');
+});
+
+test('abilitiesStatusNote: no catalog at all says so, and points at the connection', () => {
+  const none = abilitiesStatusNote(null);
+
+  assert.match(none, /credentials/i);
+  assert.notStrictEqual(none, abilitiesStatusNote([]), 'the two states must be distinguishable');
+});
+
+test('abilitiesStatusNote: a loaded catalog reports the refresh', () => {
+  assert.match(abilitiesStatusNote([{ name: 'gv_views_list' }]), /refreshed/i);
 });

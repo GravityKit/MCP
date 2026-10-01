@@ -42,7 +42,13 @@ export class DependencyTracker {
    */
   scanConditionalLogic(form, fieldId, dependencies) {
     form.fields?.forEach(field => {
-      if (field.conditionalLogic?.enabled && field.conditionalLogic?.rules) {
+      // Do not require `enabled`. The form editor writes it; GFAPI::add_form and this
+      // server do not, so API-built logic has none. GF applies logic by its rules:
+      // GFFormsModel::get_field_display() ignores `enabled` (it evaluates any
+      // non-empty logic on submit), and the front end treats only an explicit false
+      // as off. Requiring it made the delete guard blind to logic GF runs. Checking
+      // rules alone also matches cleanupDependencies, which strips them regardless.
+      if (Array.isArray(field.conditionalLogic?.rules)) {
         const affectedRules = field.conditionalLogic.rules.filter(
           rule => rule.fieldId == fieldId
         );

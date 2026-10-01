@@ -39,10 +39,11 @@ export function stripEmpty(obj, seen = new WeakSet()) {
 }
 
 /**
- * Core entry properties returned by the GF REST API.
- * Everything else is plugin-added entry meta (stripped by default).
+ * Core entry properties returned by the GF REST API: the columns of the entry
+ * table (GFAPI::add_entry writes all of them). Everything else is plugin-added
+ * entry meta (stripped by default). Entry validation reads this same list.
  */
-const CORE_ENTRY_KEYS = new Set([
+export const CORE_ENTRY_KEYS = new Set([
   'id', 'form_id', 'post_id', 'date_created', 'date_updated',
   'is_starred', 'is_read', 'ip', 'source_url', 'user_agent',
   'currency', 'payment_status', 'payment_date', 'payment_amount',
@@ -51,10 +52,15 @@ const CORE_ENTRY_KEYS = new Set([
 ]);
 
 /**
- * Test if a key is a field value (numeric or dot-notation like "5.1").
+ * Test if a key is a field value: a field id ("6"), a sub-input ("6.3", or "6_3" as
+ * submissions spell it), or a sub-input GF names with a word suffix ("7.2_month",
+ * "7.2_year": a credit card's expiration, the only type that does).
+ *
+ * The one definition of "field key": entry validation imports it, so what a write
+ * is checked as and what a response keeps cannot drift apart.
  */
-function isFieldKey(key) {
-  return /^\d+(\.\d+)?$/.test(key);
+export function isFieldKey(key) {
+  return /^\d+(?:\.\d+(?:_\w+)?|_\d+)?$/.test(key);
 }
 
 /**

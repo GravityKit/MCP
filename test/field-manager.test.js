@@ -52,6 +52,11 @@ const createMockRegistry = () => ({
     category: 'standard',
     hasChoices: true
   },
+  multiselect: {
+    label: 'Multi Select',
+    category: 'choice',
+    hasChoices: true
+  },
   date: {
     label: 'Date',
     category: 'advanced'
@@ -212,6 +217,7 @@ test('FieldManager - addField', async (t) => {
     
     // Mock position engine
     manager.positionEngine = {
+      validatePositionConfig: () => ({ valid: true, errors: [], warnings: [] }),
       calculatePosition: () => 3
     };
 
@@ -505,28 +511,112 @@ test('FieldManager - deleteField', async (t) => {
     assert.strictEqual(result.deleted_field.id, 2);
   });
 
-  await t.test('cleans up dependencies with cascade', async () => {
-    const apiClient = createMockApiClient();
-    const registry = createMockRegistry();
-    const validator = createMockValidator();
-    const manager = new FieldManager(apiClient, registry, validator);
-    
-    let cleanupCalled = false;
-    manager.dependencyTracker = {
-      scanFormDependencies: () => ({
-        conditionalLogic: [{ field_id: 1 }]
-      }),
-      hasBreakingDependencies: () => true
+  // The cascade tests below use the REAL DependencyTracker and the real
+  // cleanupDependencies. The old test stubbed cleanup out and passed force:true,
+  // so it was green while cascade alone was refused.
+  const cascadeForm = () => ({
+    id: 164,
+    title: 'Cascade',
+    fields: [
+      { id: 1, type: 'text', label: 'Trigger' },
+      { id: 2, type: 'text', label: 'Shown', conditionalLogic: {
+        enabled: true, actionType: 'show', logicType: 'all',
+        rules: [{ fieldId: '1', operator: 'is', value: 'x' }]
+      } },
+      { id: 3, type: 'text', label: 'Keeps one', conditionalLogic: {
+        enabled: true, actionType: 'show', logicType: 'all',
+        rules: [{ fieldId: '1', operator: 'is', value: 'y' }, { fieldId: '2', operator: 'is', value: 'z' }]
+      } },
+      { id: 4, type: 'number', label: 'Price' },
+      { id: 5, type: 'number', label: 'Double', enableCalculation: true, calculationFormula: '{Price:4} * 2' }
+    ],
+    confirmations: { c1: { id: 'c1', name: 'Default', type: 'message', message: 'Got {Trigger:1} and {Price:4}' } }
+  });
+  const cascadeManager = (form, saved) => {
+    const api = {
+      getForm: async () => ({ form }),
+      replaceForm: async (id, f) => { saved.form = f; return { form: f }; },
+      allowDelete: true
     };
-    
-    // Override cleanupDependencies to track if called
-    manager.cleanupDependencies = () => { cleanupCalled = true; };
+    const manager = new FieldManager(api, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = new DependencyTracker();
+    return manager;
+  };
 
-    const result = await manager.deleteField(1, 2, { cascade: true, force: true });
-    
+  await t.test('cascade alone deletes the field and cleans conditional logic (no force needed)', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 1, { cascade: true });
+
+    assert.strictEqual(result.success, true, 'cascade=true must not be refused with advice to use cascade=true');
+    assert.ok(!saved.form.fields.some((f) => f.id == 1), 'field 1 must be gone from the saved form');
+    const field3 = saved.form.fields.find((f) => f.id == 3);
+    assert.deepStrictEqual(field3.conditionalLogic.rules.map((r) => r.fieldId), ['2'], 'only the rule on the deleted field is removed');
+    assert.ok(result.actions_taken.some((a) => /field 2/.test(a) && /Shown/.test(a)), 'actions_taken names the field it changed');
+  });
+
+  await t.test('cascade drops conditional logic that loses its last rule, in the shape GF reads as "no logic"', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    await manager.deleteField(164, 1, { cascade: true });
+
+    const field2 = saved.form.fields.find((f) => f.id == 2);
+    // GF's server-side get_field_display() ignores `enabled` and evaluates any
+    // non-empty logic object: zero rules + actionType "hide" would hide the field
+    // forever. Empty conditionalLogic is what GF itself treats as "no logic".
+    assert.strictEqual(field2.conditionalLogic, '');
+  });
+
+  await t.test('cascade does not rewrite calculations or merge tags, and says they are left dangling', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 4, { cascade: true });
+
     assert.strictEqual(result.success, true);
-    assert.strictEqual(cleanupCalled, true);
-    assert.ok(result.actions_taken.includes('Dependencies cleaned up'));
+    const calc = saved.form.fields.find((f) => f.id == 5);
+    assert.strictEqual(calc.calculationFormula, '{Price:4} * 2', 'formula text is left alone');
+    assert.strictEqual(saved.form.confirmations.c1.message, 'Got {Trigger:1} and {Price:4}');
+    assert.deepStrictEqual(result.actions_taken, [], 'nothing was cleaned, so nothing is claimed');
+    assert.strictEqual(result.left_dangling.calculations[0].field_id, 5);
+    assert.deepStrictEqual(result.left_dangling.calculations[0].matches, ['{Price:4}']);
+    assert.strictEqual(result.left_dangling.mergeTags[0].location, 'confirmation');
+    assert.match(result.warning, /not rewritten/);
+  });
+
+  await t.test('force without cascade reports every dependency it left behind, conditional logic included', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 1, { force: true });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.actions_taken, []);
+    assert.deepStrictEqual(result.left_dangling.conditionalLogic.map((d) => d.field_id), [2, 3]);
+    assert.strictEqual(saved.form.fields.find((f) => f.id == 2).conditionalLogic.rules.length, 1, 'force leaves the rule in place');
+  });
+
+  await t.test('a delete with no dependencies reports no dangling references', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 5, { cascade: true });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual('left_dangling' in result, false);
+    assert.strictEqual('warning' in result, false);
+  });
+
+  await t.test('neither flag still refuses, and the refusal names both options', async () => {
+    const saved = {};
+    const manager = cascadeManager(cascadeForm(), saved);
+
+    const result = await manager.deleteField(164, 1, {});
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(saved.form, undefined, 'nothing is saved on a refusal');
   });
 });
 test('FieldManager - normalizeLayoutProperties', async (t) => {
@@ -822,4 +912,236 @@ test('deleteField still works when deletes are permitted', async () => {
 
   const result = await manager.deleteField(1, 2);
   assert.ok(result, 'a permitted delete still returns a result');
+});
+
+// --- multiselect storage mode ---
+//
+// A multiselect created with no storageType stores its values comma-joined, and
+// GF_Field_MultiSelect::to_array() splits on every comma
+// (class-gf-field-multiselect.php:417), so "Atlanta, GA" is read back as two
+// values. The form editor writes 'json' on every multiselect (js.php:818).
+
+test('addField gives a new multiselect json storage', async () => {
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'multiselect', {
+    label: 'Cities',
+    choices: [{ text: 'Atlanta, GA', value: 'Atlanta, GA' }]
+  });
+
+  assert.strictEqual(result.field.storageType, 'json');
+});
+
+test('addField keeps an explicit legacy storageType on a multiselect', async () => {
+  // '' is how a caller matches a field whose stored values are already comma-joined.
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'multiselect', { label: 'Cities', storageType: '' });
+
+  assert.strictEqual(result.field.storageType, '');
+});
+
+test('addField reads inputType, not just type, for the storage mode', async () => {
+  // GF_Fields::create() instantiates by inputType, so a post_category field set to
+  // multiselect is a GF_Field_MultiSelect.
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'post_category', { label: 'Category', inputType: 'multiselect' });
+
+  assert.strictEqual(result.field.storageType, 'json');
+});
+
+test('addField leaves storageType off a field type that does not need it', async () => {
+  // The control: setting it unconditionally would pass the three tests above.
+  const api = createMockApiClient();
+  const manager = new FieldManager(api, createMockRegistry(), new FieldAwareValidator());
+
+  const result = await manager.addField(1, 'select', { label: 'Pick one' });
+
+  assert.strictEqual(result.field.storageType, undefined);
+});
+
+
+// A position the server cannot honor must not be reported as a plain success.
+// Before, a reference to a missing field and an unknown mode both appended the
+// field and returned `warnings: []`; the only trace was a stderr log line no
+// MCP client sees.
+test('FieldManager - addField reports positions it could not honor', async (t) => {
+  const mk = (formExtra = {}) => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({
+        form: {
+          id: 1,
+          title: 'Test Form',
+          fields: [
+            { id: 1, type: 'text', label: 'A' },
+            { id: 2, type: 'text', label: 'B' },
+            { id: 3, type: 'text', label: 'C' }
+          ],
+          ...formExtra
+        }
+      }),
+      replaceForm: async (formId, form) => {
+        puts.push(form);
+        return { form };
+      }
+    };
+    const manager = new FieldManager(apiClient, createMockRegistry(), createMockValidator());
+    manager.positionEngine = new PositionEngine();
+    return { manager, puts };
+  };
+
+  await t.test('after a nonexistent field: appends and says so', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'after', reference: 99999 });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.position.index, 3);
+    assert.ok(result.warnings.some((w) => /99999/.test(w) && /not found/.test(w)), result.warnings.join('|'));
+    assert.deepStrictEqual(puts[0].fields.map((f) => f.label), ['A', 'B', 'C', 'NEW']);
+  });
+
+  await t.test('before a nonexistent field: places it and says so', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'before', reference: 99999 });
+    assert.ok(result.warnings.some((w) => /99999/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('an unknown mode throws and does not save the form', async () => {
+    const { manager, puts } = mk();
+    await assert.rejects(
+      () => manager.addField(1, 'text', { label: 'NEW' }, { mode: 'sideways', reference: 1 }),
+      /Invalid position mode: sideways.*append, prepend, after, before, index/
+    );
+    assert.strictEqual(puts.length, 0, 'the form must not be written');
+  });
+
+  await t.test('an invalid page number throws and does not save the form', async () => {
+    const { manager, puts } = mk();
+    await assert.rejects(
+      () => manager.addField(1, 'text', { label: 'NEW' }, { page: -1 }),
+      /Invalid page number/
+    );
+    assert.strictEqual(puts.length, 0);
+  });
+
+  await t.test('an out-of-range index is clamped and reported', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'index', reference: 50 });
+    assert.strictEqual(result.position.index, 3);
+    assert.ok(result.warnings.some((w) => /index 50/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('a page past the last page is reported', async () => {
+    const { manager } = mk({ pagination: { type: 'percentage' } });
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { page: 9 });
+    assert.ok(result.warnings.some((w) => /Page 9/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('position.page reports the page the field landed on', async () => {
+    const { manager } = mk({
+      fields: [
+        { id: 1, type: 'text', label: 'A' },
+        { id: 2, type: 'page', label: 'Break' },
+        { id: 3, type: 'text', label: 'C' }
+      ],
+      pagination: { type: 'percentage' }
+    });
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'after', reference: 3 });
+    assert.strictEqual(result.position.page, 2);
+  });
+
+  await t.test('a valid position adds no warnings', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'text', { label: 'NEW' }, { mode: 'after', reference: 1 });
+    assert.strictEqual(result.position.index, 1);
+    assert.deepStrictEqual(result.warnings, []);
+  });
+
+  await t.test('position warnings sit beside the field-shape warnings', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'customtype', { label: 'NEW' }, { mode: 'after', reference: 99999 });
+    assert.ok(result.warnings.some((w) => /not in the known field registry/.test(w)));
+    assert.ok(result.warnings.some((w) => /99999/.test(w)));
+  });
+});
+
+
+// `Text` is not a Gravity Forms field type. The type is stored as given (a site
+// may register a custom type, and rewriting the caller's input is its own bug),
+// but the existing unknown-type warning must point at the lowercase match.
+test('FieldManager - addField unknown-type warning names a case-insensitive match', async (t) => {
+  const mk = () => {
+    const puts = [];
+    const apiClient = {
+      getForm: async () => ({ form: { id: 1, title: 'T', fields: [] } }),
+      replaceForm: async (formId, form) => { puts.push(form); return { form }; }
+    };
+    return { manager: new FieldManager(apiClient, createMockRegistry(), createMockValidator()), puts };
+  };
+
+  await t.test('suggests the registry type that differs only by case, and stores the type as given', async () => {
+    const { manager, puts } = mk();
+    const result = await manager.addField(1, 'Text', { label: 'X' });
+    assert.ok(result.warnings.some((w) => /not in the known field registry/.test(w) && /did you mean 'text'/i.test(w)), result.warnings.join('|'));
+    assert.strictEqual(puts[0].fields[0].type, 'Text');
+  });
+
+  await t.test('no suggestion when nothing matches', async () => {
+    const { manager } = mk();
+    const result = await manager.addField(1, 'zzz-custom', { label: 'X' });
+    assert.ok(result.warnings.some((w) => /not in the known field registry/.test(w)));
+    assert.ok(!result.warnings.some((w) => /did you mean/i.test(w)));
+  });
+});
+
+// Logic created through the API has no `enabled` key: GFAPI::add_form and this
+// server never write it, only the form editor does. GF still applies that logic
+// (GFFormsModel::get_field_display() ignores `enabled`), so the delete guard has
+// to see it. The fixture carries NO merge tag on the deleted field: a tag would
+// make the guard fire on mergeTags and hide this bug, as it did on the live probe.
+test('FieldManager.deleteField guards conditional logic that has no `enabled` key', async (t) => {
+  const apiForm = () => ({
+    id: 191,
+    title: 'API-created logic',
+    fields: [
+      { id: 1, type: 'text', label: 'Trigger' },
+      { id: 5, type: 'text', label: 'Follower', conditionalLogic: {
+        actionType: 'show', logicType: 'all',
+        rules: [{ fieldId: '1', operator: 'is', value: 'y' }]
+      } }
+    ]
+  });
+  const build = (form, saved) => {
+    const api = {
+      getForm: async () => ({ form }),
+      replaceForm: async (id, f) => { saved.form = f; return { form: f }; },
+      allowDelete: true
+    };
+    const manager = new FieldManager(api, createMockRegistry(), createMockValidator());
+    manager.dependencyTracker = new DependencyTracker();
+    return manager;
+  };
+
+  await t.test('delete without force or cascade is refused and names the dependent field', async () => {
+    const saved = {};
+    const result = await build(apiForm(), saved).deleteField(191, 1, {});
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.dependencies.mergeTags.length, 0, 'fixture must not reach the guard through a merge tag');
+    assert.strictEqual(result.dependencies.conditionalLogic.length, 1);
+    assert.strictEqual(result.dependencies.conditionalLogic[0].field_id, 5);
+    assert.strictEqual(saved.form, undefined, 'nothing is saved when the delete is refused');
+  });
+
+  await t.test('cascade removes that logic', async () => {
+    const saved = {};
+    const result = await build(apiForm(), saved).deleteField(191, 1, { cascade: true });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(saved.form.fields.find((f) => f.id == 5).conditionalLogic, '');
+  });
 });

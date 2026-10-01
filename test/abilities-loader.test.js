@@ -1546,6 +1546,72 @@ suite.test('the WP-core fallback is built with the same options as the Foundatio
   );
 });
 
+/**
+ * Stub whose every catalog request fails at the transport — no Foundation
+ * route, no WP core route. The genuine unreachable case.
+ */
+function buildUnreachableStub(status = 500) {
+  return {
+    baseUrl: 'https://test.invalid',
+    httpClient: {
+      request: async () => {
+        const err = new Error(`Request failed with status code ${status}`);
+        err.response = { status };
+        throw err;
+      },
+    },
+  };
+}
+
+suite.test('a catalog that answers with no abilities loads as empty, not as unreachable', async () => {
+  // A site with Foundation active and no ability-registering product answers
+  // HTTP 200 with []. Reported as unreachable, that sends the operator after a
+  // cert, a credential or a WP log, none of which is wrong.
+  const stub = buildCatalogStubGvClient([[]]);
+
+  const { definitions, count, source } = await loadAbilitiesAsTools(stub);
+
+  TestAssert.equal(count, 0, 'an empty catalog carries no tools');
+  TestAssert.equal(definitions.length, 0);
+  TestAssert.equal(source, 'foundation-catalog', 'the catalog that answered must be named');
+});
+
+suite.test('a catalog nobody can reach still fails', async () => {
+  // The control: reporting every empty result as a successful empty read would
+  // pass the test above and would call a dead site healthy.
+  const stub = buildUnreachableStub(500);
+
+  let threw = null;
+  try {
+    await loadAbilitiesAsTools(stub, { retryDelayMs: 0, maxRetries: 0 });
+  } catch (error) {
+    threw = error;
+  }
+
+  TestAssert.isNotNull(threw, 'neither catalog answered, so nothing is known about this site');
+});
+
+suite.test('an empty Foundation catalog still lets the WP-core catalog answer', async () => {
+  // Foundation's catalog gates on manage_options where core's gates on read, so
+  // an empty Foundation answer and a populated core one is a permissions case,
+  // not an empty site.
+  const core = annotatedFoundationCatalog().map((item) => ({
+    name:         item.name,
+    description:  item.description,
+    input_schema: item.input_schema,
+    meta:         {
+      gk_registered_by: 'gravitykit',
+      mcp_tool_name:    item.mcp_tool_name,
+      annotations:      item.annotations,
+    },
+  }));
+
+  const { count, source } = await loadAbilitiesAsTools(buildCatalogStubGvClient([[]], { coreCatalog: core }));
+
+  TestAssert.equal(source, 'wp-core');
+  TestAssert.isTrue(count > 0, 'the core catalog\'s abilities must still become tools');
+});
+
 // Standalone runner
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {

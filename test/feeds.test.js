@@ -81,6 +81,50 @@ suite.test('List Feeds: Should filter by form_id', async () => {
   });
 });
 
+suite.test('List Feeds: form_id keeps only that form\'s feeds out of a whole-site response', async () => {
+  // GF's /feeds hands back every form's feeds no matter which form was asked for
+  // (class-controller-feeds.php:87 passes null for $form_id), and reports form_id
+  // as a string.
+  const everyFeedOnTheSite = [
+    { ...generateMockFeed(5, 'gravityformsmailchimp'), form_id: '5' },
+    { ...generateMockFeed(12, 'gravityformsstripe'), form_id: '12' },
+    { ...generateMockFeed(5, 'gravityformszapier'), form_id: '5' },
+    { ...generateMockFeed(159, 'gravityformspaypal'), form_id: '159' }
+  ];
+
+  mockHttpClient.setMockResponse('GET', '/feeds', new MockResponse(everyFeedOnTheSite));
+
+  const result = await client.listFeeds({ form_id: 5 });
+
+  TestAssert.lengthOf(result.feeds, 2);
+  result.feeds.forEach(feed => {
+    TestAssert.equal(String(feed.form_id), '5', 'only form 5 feeds may survive');
+  });
+});
+
+suite.test('List Feeds: a form with no feeds returns none of the site\'s other feeds', async () => {
+  const everyFeedOnTheSite = [
+    { ...generateMockFeed(1, 'gravityformsmailchimp'), form_id: '1' },
+    { ...generateMockFeed(12, 'gravityformsstripe'), form_id: '12' }
+  ];
+
+  mockHttpClient.setMockResponse('GET', '/feeds', new MockResponse(everyFeedOnTheSite));
+
+  const result = await client.listFeeds({ form_id: 159 });
+
+  TestAssert.lengthOf(result.feeds, 0);
+});
+
+suite.test('List Feeds: addon stays a server-side query param', async () => {
+  mockHttpClient.setMockResponse('GET', '/feeds', new MockResponse([]));
+
+  await client.listFeeds({ addon: 'gravityformsstripe', form_id: 5 });
+
+  const feedRequests = mockHttpClient.getRequests().filter(req => req.path === '/feeds');
+  TestAssert.lengthOf(feedRequests, 1);
+  TestAssert.equal(feedRequests[0].config.params.addon, 'gravityformsstripe');
+});
+
 suite.test('List Feeds: Should validate addon slug format', async () => {
   await TestAssert.throwsAsync(
     () => client.listFeeds({ addon: 'Invalid Addon!' }),

@@ -104,3 +104,28 @@ export function parseAllowDestructive(raw) {
     .map((entry) => entry.trim())
     .filter(Boolean);
 }
+
+/**
+ * The one-line status `gk_reload_abilities` reports for the abilities plane.
+ *
+ * Three states, not two. A catalog that answers HTTP 200 with no GravityKit
+ * abilities is reachable, and the fix is to activate or enable a product that
+ * registers them. No catalog answering at all is a connection, cert or
+ * credential problem. Collapsed into one "unreachable" note, the first state
+ * sends an operator to debug a connection that is working.
+ *
+ * @param {object[]|null} definitions The loaded ability tool definitions, or
+ *                                    null when no catalog answered.
+ * @returns {string}
+ */
+export function abilitiesStatusNote(definitions) {
+  if (!definitions) {
+    return 'No abilities catalog answered — check WP connectivity / cert / credentials. Will retry on the next product tool call.';
+  }
+
+  if (definitions.length === 0) {
+    return 'The abilities catalog answered and carries no GravityKit abilities for this site. Activate a product that registers them (and check its enable toggles in the GravityKit settings), then call gk_reload_abilities.';
+  }
+
+  return 'Catalog refreshed. Clients receive `notifications/tools/list_changed` automatically.';
+}

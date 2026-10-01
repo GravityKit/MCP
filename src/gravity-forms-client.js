@@ -7,12 +7,14 @@
 import axios from 'axios';
 import https from 'https';
 import { AuthManager, validateRestApiAccess, flattenParams, rfc3986Encode } from './config/auth.js';
-import { ValidationFactory } from './config/validation.js';
+import { ValidationFactory, EntriesValidator } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
-import { generateCompoundInputs, assignFieldIds } from './field-definitions/field-registry.js';
+import { generateCompoundInputs, assignFieldIds, applyNewFieldDefaults, reconcileCheckboxInputs } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
+import { guardMerge } from './utils/merge-guard.js';
+import { randomBytes } from 'node:crypto';
 import { USER_AGENT } from './version.js';
 
 /**
@@ -83,6 +85,141 @@ export function buildEntriesQuery(validated) {
   }
 
   return query;
+}
+
+/**
+ * Fill in the event a NEW notification needs to ever fire.
+ *
+ * GFAPI::send_notifications skips every notification whose `event` differs from
+ * the one requested (api.php:2566), and an absent event is '' — never
+ * 'form_submission'. The form editor writes 'form_submission' on each
+ * notification it creates (class-gf-form-crud-handler.php:403); add_form and
+ * update_form write nothing, so an API-created notification with a recipient,
+ * subject and message was silently inert.
+ *
+ * Only an absent (undefined/null) event is filled; any value the caller set is
+ * kept as given. Returns a new object and leaves the caller's untouched.
+ *
+ * @param {object} notifications Notifications keyed by id.
+ * @param {(key: string, notification: object) => boolean} [isNew] Limits the default
+ *   to notifications for which it returns true. Omit to default every one.
+ * @returns {object} The notifications, with the default filled in where it applies.
+ */
+export function applyNotificationEventDefault(notifications, isNew = () => true) {
+  if (!notifications || typeof notifications !== 'object' || Array.isArray(notifications)) {
+    return notifications;
+  }
+
+  const defaulted = {};
+
+  for (const [key, notification] of Object.entries(notifications)) {
+    const isObject = notification && typeof notification === 'object' && !Array.isArray(notification);
+    const lacksEvent = isObject && (notification.event === undefined || notification.event === null);
+
+    defaulted[key] = lacksEvent && isNew(key, notification)
+      ? { ...notification, event: 'form_submission' }
+      : notification;
+  }
+
+  return defaulted;
+}
+
+/**
+ * Give every confirmation or notification an id, and key the result by it.
+ *
+ * GFAPI::set_property_as_key files each member under $item['id'] (api.php:548) and
+ * neither add_form nor update_form generates one, so a member with no id lands
+ * under the "" key and two of them overwrite each other. The same call discards
+ * the key the caller chose, so the members are re-keyed here the way GF will.
+ *
+ * Mirrors assignFieldIds: an id the caller supplied is kept (the first holder of
+ * it), and only a missing, invalid or duplicate one is replaced. A replacement is
+ * the key the member was sent under when that key is free, else a 13-character
+ * hex id, the form GF's own editor writes (uniqid).
+ *
+ * @param {object} members Confirmations or notifications, keyed by anything.
+ * @param {Iterable<string>} [reserved] Ids already stored, which a generated id must avoid.
+ * @returns {{members: object, assigned: string[]}} The members keyed by id, and
+ *   the ids that were generated (not the ones taken from a key).
+ */
+export function assignSettingIds(members, reserved = []) {
+  const isKeyed = members && typeof members === 'object' && !Array.isArray(members);
+  if (!isKeyed) {
+    return { members, assigned: [] };
+  }
+
+  const ownId = (member) => {
+    const id = member && typeof member === 'object' ? member.id : undefined;
+    const isUsableString = typeof id === 'string' && id !== '';
+    const isUsableNumber = typeof id === 'number' && Number.isSafeInteger(id);
+    return isUsableString || isUsableNumber ? String(id) : undefined;
+  };
+
+  // Pass one claims every explicit id, so a replacement can never take an id a
+  // later member holds on purpose.
+  const claimed = new Set();
+  const keeps = new Set();
+  const entries = Object.entries(members);
+  for (const [key, member] of entries) {
+    const id = ownId(member);
+    if (id !== undefined && !claimed.has(id)) {
+      claimed.add(id);
+      keeps.add(key);
+    }
+  }
+
+  const avoid = new Set([...claimed, ...Array.from(reserved, String)]);
+  const assigned = [];
+  const keyed = {};
+
+  for (const [key, member] of entries) {
+    const isObject = member && typeof member === 'object' && !Array.isArray(member);
+    if (!isObject) {
+      keyed[key] = member;
+      continue;
+    }
+
+    let id;
+    if (keeps.has(key)) {
+      id = ownId(member);
+    } else if (key !== '' && !claimed.has(key)) {
+      id = key;
+      claimed.add(id);
+    } else {
+      do {
+        id = randomBytes(7).toString('hex').slice(0, 13);
+      } while (claimed.has(id) || avoid.has(id));
+      claimed.add(id);
+      assigned.push(id);
+    }
+
+    keyed[id] = member.id === id ? member : { ...member, id };
+  }
+
+  return { members: keyed, assigned };
+}
+
+/**
+ * Field types whose array the REST API handles itself: a list is serialized by GF
+ * (maybe_serialize_list_fields), and a chained select is a tree, not flat choices.
+ */
+const PASSTHROUGH_ARRAY_TYPES = new Set(['list', 'chainedselect']);
+
+/** Choice fields that hold one value. */
+const SINGLE_VALUE_TYPES = new Set(['radio', 'select']);
+
+/**
+ * Whether a field stores each choice under its own input (checkbox, and the option,
+ * quiz, poll and survey fields set to checkbox): it lists both inputs and choices.
+ *
+ * @param {object} field A form field.
+ * @returns {boolean} True when an array should be expanded to the field's inputs.
+ */
+function isCheckboxStyleField(field) {
+  if (PASSTHROUGH_ARRAY_TYPES.has(field.type)) return false;
+  const hasInputs = Array.isArray(field.inputs) && field.inputs.length > 0;
+  const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
+  return hasInputs && hasChoices;
 }
 
 export class GravityFormsClient {
@@ -378,7 +515,11 @@ export class GravityFormsClient {
     return this.validateAndCall('gf_create_form', params, async (validated) => {
       // Process fields to ensure compound types have proper inputs array.
       if (validated.fields && Array.isArray(validated.fields)) {
-        validated.fields = validated.fields.map(field => {
+        validated.fields = validated.fields.map(suppliedField => {
+          // Every field here is new, so the editor's defaults (storage mode, checkbox
+          // inputs) always apply.
+          const field = applyNewFieldDefaults(suppliedField);
+
           if (field.inputs && Array.isArray(field.inputs) && field.inputs.length > 0) {
             return field;
           }
@@ -394,11 +535,28 @@ export class GravityFormsClient {
         });
       }
 
+      // Ids first, so the members are keyed the way GF will key them.
+      const assignedIds = {};
+      for (const property of ['confirmations', 'notifications']) {
+        if (validated[property] !== undefined) {
+          const { members, assigned } = assignSettingIds(validated[property]);
+          validated[property] = members;
+          if (assigned.length > 0) assignedIds[property] = assigned;
+        }
+      }
+
+      // Every notification here is new, so the event default always applies.
+      if (validated.notifications !== undefined) {
+        validated.notifications = applyNotificationEventDefault(validated.notifications);
+      }
+
       const response = await this.httpClient.post('/forms', validated);
 
-      return {
-        form: response.data
-      };
+      const result = { form: response.data };
+      if (Object.keys(assignedIds).length > 0) {
+        result.assigned_ids = assignedIds;
+      }
+      return result;
     });
   }
 
@@ -407,15 +565,47 @@ export class GravityFormsClient {
    *
    * Acquires a per-form lock to prevent concurrent updates from
    * overwriting each other in the GET→merge→PUT pattern.
+   *
+   * The merge is shallow, so a nested object the caller sends (fields,
+   * confirmations, notifications, button, ...) replaces the stored one whole, and
+   * GF writes it whole. guardMerge refuses a call that would drop stored keys
+   * unless `replace` names the property.
    */
   async updateForm(params) {
     return this.validateAndCall('gf_update_form', params, async (validated) => {
-      const { id, ...updates } = validated;
+      const { id, replace = [], ...sentUpdates } = validated;
 
       return resourceMutex.withLock(`form:${id}`, async () => {
         // Fetch existing form to preserve all current data
         const existingFormResponse = await this.httpClient.get(`/forms/${id}`);
         const existingForm = existingFormResponse.data;
+
+        // Ids come BEFORE the guard. The guard matches stored members by id, and
+        // GF re-keys what it is sent by id (set_property_as_key), so an id-less
+        // member must have the id GF will file it under before it is compared, or
+        // an id-less resend of a stored member would read as that member dropped.
+        const updates = { ...sentUpdates };
+        const assignedIds = {};
+        for (const property of ['confirmations', 'notifications']) {
+          if (updates[property] === undefined) continue;
+
+          const stored = existingForm[property] && typeof existingForm[property] === 'object' ? existingForm[property] : {};
+          const reserved = [...Object.keys(stored), ...Object.values(stored).map((member) => member?.id).filter((storedId) => storedId !== undefined)];
+          const { members, assigned } = assignSettingIds(updates[property], reserved);
+          updates[property] = members;
+          if (assigned.length > 0) assignedIds[property] = assigned;
+        }
+
+        // The event default (below) touches only members the call adds, so it
+        // cannot hide a drop: a stored notification resent without its `event` is
+        // caught here, before anything is written.
+        const removedKeys = guardMerge({
+          tool: 'gf_update_form',
+          noun: 'form',
+          stored: existingForm,
+          updates,
+          replace
+        });
 
         // Merge updates with existing form data
         const updatedFormData = {
@@ -423,11 +613,50 @@ export class GravityFormsClient {
           ...updates
         };
 
+        // Editor defaults (storage mode, checkbox inputs) reach the fields this call
+        // ADDS. A stored field round-trips byte-for-byte: its storageType and inputs
+        // decide how GF reads values that are already saved under it.
+        // A stored checkbox whose choices changed is the exception: its inputs follow
+        // the choices (reconcileCheckboxInputs), or a new choice could never be stored.
+        const inputWarnings = [];
+        if (Array.isArray(updates.fields)) {
+          const storedFields = new Map((existingForm.fields || []).map((field) => [String(field?.id), field]));
+
+          updatedFormData.fields = updates.fields.map((field) => {
+            const stored = storedFields.get(String(field?.id));
+            if (stored === undefined) return applyNewFieldDefaults(field);
+
+            const { field: reconciled, warning } = reconcileCheckboxInputs(stored, field);
+            if (warning) inputWarnings.push(warning);
+            return reconciled;
+          });
+        }
+
+        // The same holds for notifications: one already on the form round-trips
+        // untouched, because changing its event changes when it fires on a live
+        // form. Only the notifications this call adds get the default.
+        if (updates.notifications !== undefined) {
+          const storedNotifications = existingForm.notifications && typeof existingForm.notifications === 'object'
+            ? existingForm.notifications
+            : {};
+          const storedNotificationIds = new Set(Object.keys(storedNotifications));
+          Object.values(storedNotifications).forEach((stored) => {
+            if (stored && stored.id !== undefined) storedNotificationIds.add(String(stored.id));
+          });
+
+          updatedFormData.notifications = applyNotificationEventDefault(
+            updates.notifications,
+            (key, notification) => !storedNotificationIds.has(key) && !storedNotificationIds.has(String(notification.id))
+          );
+        }
+
         const response = await this.httpClient.put(`/forms/${id}`, updatedFormData);
 
-        return {
-          form: response.data
-        };
+        const result = { form: response.data };
+        if (removedKeys.length > 0) result.removed_keys = removedKeys;
+        if (Object.keys(assignedIds).length > 0) result.assigned_ids = assignedIds;
+        if (inputWarnings.length > 0) result.warning = inputWarnings.join(' ');
+        return result;
       });
     });
   }
@@ -486,7 +715,8 @@ export class GravityFormsClient {
    */
   async validateForm(params) {
     return this.validateAndCall('gf_validate_form', params, async (validated) => {
-      const { form_id, ...submissionData } = validated;
+      const { form_id, ...rawSubmission } = validated;
+      const submissionData = await this._prepareSubmission(form_id, rawSubmission, 'nothing would be validated for it');
 
       // Dedicated validation route — validate WITHOUT creating an entry. POSTing
       // {validation_only:true} to /submissions does NOT validate: GF ignores the
@@ -574,38 +804,35 @@ export class GravityFormsClient {
    *
    * Different field types store multi-value data differently:
    *   - Checkbox (incl. image choice checkbox): dot-notation sub-inputs ("5.1": "val")
-   *   - Multiselect: JSON-encoded string ("[\"a\",\"b\"]")
-   *   - Radio, dropdown, image choice radio/dropdown: single value (no arrays)
+   *   - Multiselect: sent as an ARRAY. GF's REST layer runs the field's own
+   *     to_string() on it (class-gf-rest-controller.php:299), which json-encodes it
+   *     for a json storageType and comma-joins it otherwise. A string we joined
+   *     ourselves was json-encoded again as one quoted string, then split on its
+   *     commas when read, so ["m","n"] came back as ["\"m", "n\""].
+   *   - Radio, dropdown, image choice radio/dropdown: one value. An array is refused
+   *     by EntriesValidator.assertValueShapes before it reaches this method.
    *   - Consent: special sub-inputs (not choice-based, left untouched)
    *
    * When entry data contains array values, this method fetches the form to
    * identify the field type and applies the correct storage format.
    *
-   * For checkbox fields, values are matched against choice.value first, then
-   * choice.text as fallback. This ensures the correct sub-input ID is used even
-   * when IDs have gaps from deleted choices.
-   *
    * @param {object} entryData - Entry data, possibly containing array values.
    * @param {number} formId - The form ID to fetch field definitions from.
+   * @param {Array} [preloadedFields] - The form's fields when the caller already
+   *   fetched the form, which saves a second request for the same form.
    * @returns {Promise<object>} Entry data with arrays normalized per field type.
    */
-  async _normalizeArrayValues(entryData, formId) {
+  async _normalizeArrayValues(entryData, formId, preloadedFields) {
     const arrayKeys = Object.keys(entryData).filter(k => Array.isArray(entryData[k]));
     if (arrayKeys.length === 0) return entryData;
 
-    const formResponse = await this.httpClient.get(`/forms/${formId}`);
-    const fields = formResponse.data.fields || [];
+    let fields = preloadedFields;
+    if (!fields) {
+      const formResponse = await this.httpClient.get(`/forms/${formId}`);
+      fields = formResponse.data.fields || [];
+    }
 
     const expanded = { ...entryData };
-
-    // Single-value field types: radio/dropdown take first element from arrays
-    const singleValueTypes = new Set(['radio', 'select']);
-
-    // Field types where arrays should not be normalized:
-    // - list: REST API handles array serialization natively
-    // - chainedselect: has inputs+choices but is compound (each sub-input = one dropdown),
-    //   not multi-select. Nested choices are a tree, not flat checkbox choices.
-    const passthroughTypes = new Set(['list', 'chainedselect']);
 
     for (const key of arrayKeys) {
       const fieldId = parseInt(key, 10);
@@ -614,53 +841,36 @@ export class GravityFormsClient {
       const field = fields.find(f => f.id === fieldId);
       if (!field) continue;
 
-      const fieldType = field.inputType || field.type;
+      // GF_Fields::create() instantiates by inputType, so this is the class GF uses.
+      const resolvedType = field.inputType || field.type;
 
       // List and other passthrough types: REST API handles arrays natively
-      if (passthroughTypes.has(field.type)) continue;
+      if (PASSTHROUGH_ARRAY_TYPES.has(field.type)) continue;
 
-      // Checkbox-type fields: expand to dot-notation sub-inputs
-      // Detection: has both inputs[] and choices[] (works for checkbox, quiz,
-      // poll, survey, option, post_category, post_custom_field with inputType=checkbox)
-      if (field.inputs && field.choices) {
-        const values = expanded[key];
-        delete expanded[key];
-
-        // Clear all visible sub-inputs for this field
-        for (const input of field.inputs) {
-          if (input.isHidden) continue;
-          expanded[String(input.id)] = '';
-        }
-
-        // Build visible-input list (hidden inputs like "Select All" shift indices)
-        const visibleInputs = field.inputs.filter(input => !input.isHidden);
-
-        // Match each value to a choice and assign to the correct sub-input.
-        // GF HTML-encodes choice text (& → &amp;, etc.), so also compare
-        // against decoded text for natural-language input from AI agents.
-        const decodeHtml = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
-        for (const val of values) {
-          const choiceIndex = field.choices.findIndex(
-            c => c.value === val || c.text === val || decodeHtml(c.text) === val
-          );
-
-          if (choiceIndex !== -1 && visibleInputs[choiceIndex]) {
-            expanded[String(visibleInputs[choiceIndex].id)] = field.choices[choiceIndex].value;
-          }
-        }
+      if (resolvedType === 'multiselect') {
+        // Empty stays empty: GF skips an empty value before json-encoding it, so an
+        // empty array would be stored as given.
+        if (expanded[key].length === 0) expanded[key] = '';
         continue;
       }
 
-      // Fields with choices but no inputs: either single-value or multi-value
+      // Checkbox-type fields: expand to dot-notation sub-inputs. Every visible input
+      // is written, '' for an unchecked one, so an update clears stale values.
+      if (isCheckboxStyleField(field)) {
+        const values = expanded[key];
+        delete expanded[key];
+        Object.assign(expanded, this._expandCheckboxValues(field, values));
+        continue;
+      }
+
+      // Radio and dropdown take one value; assertValueShapes has refused an array.
+      if (SINGLE_VALUE_TYPES.has(resolvedType)) continue;
+
+      // Any other choice field that holds several values and has no inputs
+      // (post_category with inputType checkbox but no stored choices, ...):
+      // REST API v2 accepts comma-separated strings.
       if (field.choices) {
-        if (singleValueTypes.has(fieldType)) {
-          // Radio/dropdown: take first element
-          expanded[key] = expanded[key][0] || '';
-        } else {
-          // Multiselect, entry_tags, or any other multi-value field:
-          // REST API v2 accepts comma-separated strings for multi-value fields
-          expanded[key] = expanded[key].join(',');
-        }
+        expanded[key] = expanded[key].join(',');
       }
     }
 
@@ -668,16 +878,213 @@ export class GravityFormsClient {
   }
 
   /**
-   * Create new entry with validation
+   * Map a checkbox field's chosen values to the inputs GF stores them under.
+   *
+   * Values are matched against choice.value first, then choice.text (also with GF's
+   * HTML entities decoded, since AI callers write "&"), so the right input is used
+   * even when ids have gaps from deleted choices. Hidden inputs ("Select All") shift
+   * indices and are skipped. A value that matches no choice is refused rather than
+   * dropped: the call would otherwise report success for a box that was never ticked.
+   *
+   * @param {object} field  A checkbox-style field with `inputs` and `choices`.
+   * @param {Array} values  The values the caller sent.
+   * @returns {object} Input id ("7.1") to the choice value, '' for an unchecked input.
+   * @throws When a value matches no choice, or its choice has no input.
+   */
+  _expandCheckboxValues(field, values) {
+    const visibleInputs = field.inputs.filter(input => !input.isHidden);
+    const result = {};
+    visibleInputs.forEach(input => { result[String(input.id)] = ''; });
+
+    // One pass, so the "&" an entity decodes to is never read as the start of another entity.
+    // Decoding "&amp;" first and then "&lt;" turned the literal text "&lt;" (stored as "&amp;lt;")
+    // into "<" (CodeQL js/double-escaping). Do not split this into chained replaces.
+    const htmlEntities = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#039;': "'" };
+    const decodeHtml = (s) => s.replace(/&(?:amp|lt|gt|quot|#039);/g, entity => htmlEntities[entity]);
+    const unmatched = [];
+    const withoutInput = [];
+
+    for (const val of values) {
+      if (val === '' || val === null || val === undefined) continue;
+
+      const choiceIndex = field.choices.findIndex(
+        c => c.value === val || c.text === val || decodeHtml(String(c.text)) === val
+      );
+      if (choiceIndex === -1) {
+        unmatched.push(val);
+      } else if (!visibleInputs[choiceIndex]) {
+        withoutInput.push(val);
+      } else {
+        result[String(visibleInputs[choiceIndex].id)] = field.choices[choiceIndex].value;
+      }
+    }
+
+    const problems = [];
+    if (unmatched.length > 0) {
+      const choiceValues = field.choices.map(c => JSON.stringify(c.value)).join(', ');
+      problems.push(`${unmatched.map(v => JSON.stringify(v)).join(', ')} ${unmatched.length > 1 ? 'match' : 'matches'} no choice of field ${field.id} (choices: ${choiceValues})`);
+    }
+    if (withoutInput.length > 0) {
+      problems.push(`${withoutInput.map(v => JSON.stringify(v)).join(', ')} ${withoutInput.length > 1 ? 'have' : 'has'} no input on field ${field.id} to be stored in`);
+    }
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('; ')}. Nothing was written`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Checks an entry write's field keys against the form, then normalizes arrays.
+   *
+   * GF drops a key that is not a field on the form and still answers with the body
+   * it was sent, so an unchecked write reports values it never stored. The form is
+   * fetched once for both this check, the value-shape check (an array for a field
+   * that holds one value) and array normalization. A write with no
+   * field key (a status change) needs no form. A form that returns no `fields`
+   * array cannot be checked, so the write goes through and the stored-entry
+   * read-back on create is what shows the result.
+   *
+   * @param {object} entryData Validated entry data.
+   * @param {number} formId    The form the entry belongs to.
+   * @returns {Promise<object>} Entry data ready to send.
+   * @throws When a key names no field on the form.
+   */
+  async _prepareEntryValues(entryData, formId) {
+    const hasFieldKey = Object.keys(entryData).some(key => EntriesValidator.isFieldKey(key));
+    if (!hasFieldKey) {
+      return entryData;
+    }
+
+    const formResponse = await this.httpClient.get(`/forms/${formId}`);
+    const fields = formResponse.data?.fields;
+    const fieldsAreReadable = Array.isArray(fields);
+
+    if (fieldsAreReadable) {
+      EntriesValidator.assertKeysResolve(entryData, fields, formId);
+      EntriesValidator.assertValueShapes(entryData, fields);
+      // Entry tools only: a submission is masked by GF, the entries API is not.
+      EntriesValidator.assertSensitiveValues(entryData, fields);
+    }
+
+    return this._normalizeArrayValues(entryData, formId, fieldsAreReadable ? fields : undefined);
+  }
+
+  /**
+   * Checks a submission body against the form and returns the body to send.
+   *
+   * GF merges the body into $_POST and reads the keys it knows (api.php
+   * hydrate_post), so an `input_99` on a form with no field 99 is read by nothing
+   * and the value is lost while the call reports success. Only keys shaped like a
+   * field input are checked: `input_3_other` is not a field input, and the
+   * non-`input_` keys (`gform_save`, `state_N`, …) are real controls that must
+   * pass through. The form is fetched once, and only when there is a key to check.
+   * A form that returns no `fields` array cannot be checked, so the call goes on.
+   *
+   * The value must also fit the field. An array under a single-value input is read
+   * by GF as repeater rows (save_input -> queue_save_input_value, forms_model.php:5555)
+   * and stored under item-indexed keys, so a radio sent ["a","b"] was left empty with
+   * junk `2_0` and `2_1` meta; it is refused, as the entry tools refuse it. A
+   * checkbox array is expanded to the `input_N_M` keys GF reads for it.
+   *
+   * @param {number} formId     The form being submitted to.
+   * @param {object} submission The body to send.
+   * @param {string} consequence What GF does with an unread key, ending the message.
+   * @returns {Promise<object>} The body to send.
+   * @throws When a key names no field or input, a value cannot be stored by its
+   *   field, or a checkbox array cannot be expanded.
+   */
+  async _prepareSubmission(formId, submission, consequence) {
+    const fieldInputKeys = Object.keys(submission).filter(key => /^input_\d+(?:_\d+)?$/.test(key));
+    if (fieldInputKeys.length === 0) {
+      return submission;
+    }
+
+    const formResponse = await this.httpClient.get(`/forms/${formId}`);
+    const fields = formResponse.data?.fields;
+    if (!Array.isArray(fields)) {
+      return submission;
+    }
+
+    // Entries spell a sub-input 5.3 and submissions input_5_3; one check serves both.
+    const asEntryKeys = {};
+    fieldInputKeys.forEach(key => {
+      asEntryKeys[key.slice('input_'.length).replace('_', '.')] = submission[key];
+    });
+    EntriesValidator.assertKeysResolve(asEntryKeys, fields, formId, consequence);
+    EntriesValidator.assertValueShapes(asEntryKeys, fields);
+
+    const body = { ...submission };
+    for (const key of fieldInputKeys) {
+      const isWholeFieldArray = Array.isArray(submission[key]) && !key.slice('input_'.length).includes('_');
+      if (!isWholeFieldArray) continue;
+
+      const field = fields.find(candidate => Number(candidate?.id) === Number(key.slice('input_'.length)));
+      if (!field || !isCheckboxStyleField(field)) continue;
+
+      const ownInputKeys = Object.keys(submission).filter(other => other.startsWith(`${key}_`));
+      if (ownInputKeys.length > 0) {
+        throw new Error(`${key} is an array and ${ownInputKeys.join(', ')} is given as well: both name the inputs of checkbox field ${field.id}. Pass one`);
+      }
+
+      delete body[key];
+      const expanded = this._expandCheckboxValues(field, submission[key]);
+      Object.entries(expanded).forEach(([inputId, value]) => {
+        // An unchecked box is simply absent from a submission.
+        if (value !== '') body[`input_${inputId.replace('.', '_')}`] = value;
+      });
+    }
+
+    return body;
+  }
+
+  /**
+   * The `ignored_keys` and `warning` to add to an entry write's result, or nothing.
+   *
+   * Create and update pass non-field keys through, because registered entry meta
+   * is per-site. GF drops the ones its form does not register, so the stored entry
+   * it answered with is compared to what was sent.
+   *
+   * @param {object} sent   The entry keys sent.
+   * @param {object} stored The entry GF answered with.
+   * @returns {object} `{ ignored_keys, warning }`, or `{}` when everything was stored.
+   */
+  _ignoredKeysReport(sent, stored) {
+    const ignored = EntriesValidator.findIgnoredKeys(sent, stored);
+    if (ignored.length === 0) {
+      return {};
+    }
+
+    return {
+      ignored_keys: ignored,
+      warning: `Gravity Forms stored no value for: ${ignored.join(', ')}. It saves a non-field key only when the form registers it as entry meta; check the key name.`
+    };
+  }
+
+  /**
+   * Create new entry with validation.
+   *
+   * GF answers POST /entries with the request body plus an id, so its response
+   * cannot say what was stored. The entry is read back by id and that is returned.
    */
   async createEntry(params) {
     return this.validateAndCall('gf_create_entry', params, async (validated) => {
-      const expanded = await this._normalizeArrayValues(validated, validated.form_id);
+      const expanded = await this._prepareEntryValues(validated, validated.form_id);
       const response = await this.httpClient.post('/entries', expanded);
+      const entryId = response.data?.id;
 
-      return {
-        entry: response.data
-      };
+      // The entry exists by now. Throwing on a failed read-back would return an error
+      // carrying no id, and a caller that retries creates a second entry (the same
+      // trap createFeed guards against).
+      try {
+        const stored = await this.httpClient.get(`/entries/${entryId}`);
+        return { entry: stored.data, ...this._ignoredKeysReport(expanded, stored.data) };
+      } catch (error) {
+        return {
+          entry: { id: entryId, form_id: validated.form_id },
+          warning: `The entry was created (id ${entryId}) but could not be read back: ${error.message}. Its values are unverified. Check them with gf_get_entry rather than creating another.`
+        };
+      }
     });
   }
 
@@ -692,18 +1099,29 @@ export class GravityFormsClient {
         const existingEntryResponse = await this.httpClient.get(`/entries/${id}`);
         const existingEntry = existingEntryResponse.data;
 
-        // Expand checkbox arrays before merging so stale sub-inputs are cleared
-        const expandedUpdates = await this._normalizeArrayValues(updates, existingEntry.form_id);
+        // Check keys against the entry's own form, then expand checkbox arrays
+        // before merging so stale sub-inputs are cleared
+        const expandedUpdates = await this._prepareEntryValues(updates, existingEntry.form_id);
 
         const updatedEntryData = {
           ...existingEntry,
           ...expandedUpdates
         };
 
+        // GFAPI::update_entry stamps date_updated with the current time only when
+        // the value it receives is empty, so the stored stamp resent by the merge
+        // above would keep the entry looking untouched. A caller's own value wins.
+        const callerSetDateUpdated = Object.prototype.hasOwnProperty.call(expandedUpdates, 'date_updated');
+        if (!callerSetDateUpdated) {
+          delete updatedEntryData.date_updated;
+        }
+
         const response = await this.httpClient.put(`/entries/${id}`, updatedEntryData);
 
+        // GF answers a PUT with GFAPI::get_entry, the stored entry.
         return {
-          entry: response.data
+          entry: response.data,
+          ...this._ignoredKeysReport(expandedUpdates, response.data)
         };
       });
     });
@@ -744,7 +1162,8 @@ export class GravityFormsClient {
    */
   async submitFormData(params) {
     return this.validateAndCall('gf_submit_form_data', params, async (validated) => {
-      const { form_id, ...submissionData } = validated;
+      const { form_id, ...rawSubmission } = validated;
+      const submissionData = await this._prepareSubmission(form_id, rawSubmission, 'nothing would be stored for it');
 
       // GF returns HTTP 400 {is_valid:false, validation_messages, …} on a
       // REJECTED submission. That is a normal "didn't pass validation" result,
@@ -777,7 +1196,8 @@ export class GravityFormsClient {
    */
   async validateSubmission(params) {
     return this.validateAndCall('gf_validate_submission', params, async (validated) => {
-      const { form_id, ...submissionData } = validated;
+      const { form_id, ...rawSubmission } = validated;
+      const submissionData = await this._prepareSubmission(form_id, rawSubmission, 'nothing would be validated for it');
 
       // Dedicated validation route: GF validates WITHOUT creating an entry or
       // firing notifications/feeds. A validation_only flag on /submissions is
@@ -812,7 +1232,20 @@ export class GravityFormsClient {
    */
   async sendNotifications(params) {
     return this.validateAndCall('gf_send_notifications', params, async (validated) => {
-      const { entry_id, notification_ids, event } = validated;
+      const { entry_id, form_id, notification_ids, event } = validated;
+
+      // GF derives the form from the entry and ignores any form_id, so a wrong one
+      // was accepted and "sent". When the caller names a form it is checked here,
+      // before anything is sent. The entry is kept: the empty-answer path reuses it.
+      let entry;
+      if (form_id !== undefined) {
+        entry = (await this.httpClient.get(`/entries/${entry_id}`)).data;
+        const actualFormId = entry && entry.form_id;
+        const isSameForm = String(actualFormId) === String(form_id);
+        if (!isSameForm) {
+          throw new Error(`Entry ${entry_id} belongs to form ${actualFormId}, not form ${form_id}. Nothing was sent.`);
+        }
+      }
 
       // GF reads `_notifications` (comma-separated ids) and `_event` as query
       // params. An EMPTY _notifications string makes GF send ALL notifications
@@ -835,11 +1268,53 @@ export class GravityFormsClient {
 
       const response = await this.httpClient.post(`/entries/${entry_id}/notifications`, {}, { params: queryParams });
 
-      return {
-        sent: true,
-        notifications_sent: Array.isArray(response.data) ? response.data : []
-      };
+      // GF answers with the ids GFAPI::send_notifications returned, which is [] when
+      // no notification carries the requested event. `sent` follows that list.
+      const notificationsSent = Array.isArray(response.data) ? response.data : [];
+      const wasSent = notificationsSent.length > 0;
+
+      if (wasSent) {
+        return { sent: true, notifications_sent: notificationsSent };
+      }
+
+      // Naming the cause costs an entry read (skipped when form_id already fetched
+      // it) and a form read, paid only on this path so a send that worked stays one request.
+      const reason = await this._explainNoNotifications(entry_id, entry, event || 'form_submission');
+
+      return { sent: false, notifications_sent: [], reason };
     });
+  }
+
+  /**
+   * Say why GF sent no notifications for an entry. Never throws: the send already
+   * happened, and a failed read must not hide its result.
+   */
+  async _explainNoNotifications(entryId, knownEntry, event) {
+    try {
+      const entry = knownEntry || (await this.httpClient.get(`/entries/${entryId}`)).data;
+      const formId = entry.form_id;
+      const form = (await this.httpClient.get(`/forms/${formId}`)).data;
+      const notifications = Object.values(form.notifications && typeof form.notifications === 'object' ? form.notifications : {});
+
+      if (notifications.length === 0) {
+        return `Nothing was sent: form ${formId} has no notifications.`;
+      }
+
+      const matching = notifications.filter((notification) => notification && notification.event === event);
+      if (matching.length > 0) {
+        return `Nothing was sent: ${matching.length} notification(s) on form ${formId} carry the event '${event}', but Gravity Forms sent none (a gform_disable_notification filter can disable them).`;
+      }
+
+      const events = [...new Set(notifications.map((notification) => (notification && notification.event) || '(no event)'))];
+      const hasEventless = events.includes('(no event)');
+      const hint = hasEventless
+        ? " A notification with no event never fires; set event to 'form_submission' with gf_update_form."
+        : ' Pass event to send one of those.';
+
+      return `Nothing was sent: no notification on form ${formId} has the event '${event}'. Events on this form: ${events.join(', ')}.${hint}`;
+    } catch (error) {
+      return 'Nothing was sent: Gravity Forms returned an empty list, and the form could not be read to say why.';
+    }
   }
 
   // =================================
@@ -847,7 +1322,7 @@ export class GravityFormsClient {
   // =================================
 
   /**
-   * List all feeds or filter by addon
+   * List feeds, narrowed to one form and/or one addon
    */
   async listFeeds(params = {}) {
     return this.validateAndCall('gf_list_feeds', params, async (validated) => {
@@ -859,9 +1334,21 @@ export class GravityFormsClient {
       // get an array; real failures arrive as non-200 and throw before here.
       const data = response.data;
       const isEmptyWpError = data && !Array.isArray(data) && !!data.errors;
+      const feeds = isEmptyWpError ? [] : data;
+
+      // GF's /feeds controller passes null for GFAPI::get_feeds()'s $form_id
+      // (class-controller-feeds.php:87), so only `addon` and `include` narrow the
+      // query server-side and the response carries every form's feeds whatever was
+      // asked for. Scoping to one form happens here. The per-form route
+      // /forms/{id}/feeds does filter server-side, but answers HTTP 500 for a form
+      // with no feeds, where /feeds returns the not_found WP_Error inside a 200.
+      // form_id comes back from GF as a string ("1") and from callers as a number.
+      const scopeToForm = validated.form_id !== undefined && Array.isArray(feeds);
 
       return {
-        feeds: isEmptyWpError ? [] : data
+        feeds: scopeToForm
+          ? feeds.filter(feed => feed && String(feed.form_id) === String(validated.form_id))
+          : feeds
       };
     });
   }
@@ -931,15 +1418,29 @@ export class GravityFormsClient {
   }
 
   /**
-   * Update existing feed completely (fetch-then-merge, mutex-serialized).
+   * Update existing feed (fetch-then-merge, mutex-serialized).
+   *
+   * The merge is shallow: top-level keys (is_active, form_id) survive, but a
+   * submitted `meta` replaces the stored one whole. A caller changing one setting
+   * used to delete the rest (a webhook feed lost its URL and stayed active), so
+   * guardMerge refuses a `meta` that omits stored keys unless `replace: ["meta"]`
+   * says the removal is wanted. gf_patch_feed is the partial update.
    */
   async updateFeed(params) {
     return this.validateAndCall('gf_update_feed', params, async (validated) => {
-      const { id, ...updates } = validated;
+      const { id, replace = [], ...updates } = validated;
 
       return resourceMutex.withLock(`feed:${id}`, async () => {
         const existingFeedResponse = await this.httpClient.get(`/feeds/${id}`);
         const existingFeed = existingFeedResponse.data;
+
+        const removedKeys = guardMerge({
+          tool: 'gf_update_feed',
+          noun: 'feed',
+          stored: existingFeed,
+          updates,
+          replace
+        });
 
         const updatedFeedData = {
           ...existingFeed,
@@ -948,9 +1449,11 @@ export class GravityFormsClient {
 
         const response = await this.httpClient.put(`/feeds/${id}`, updatedFeedData);
 
-        return {
-          feed: response.data
-        };
+        const result = { feed: response.data };
+        if (removedKeys.length > 0) {
+          result.removed_keys = removedKeys;
+        }
+        return result;
       });
     });
   }
@@ -1020,8 +1523,37 @@ export class GravityFormsClient {
       const requestParams = normalized ? { search: normalized } : {};
       const response = await this.httpClient.get(`/forms/${form_id}/results`, { params: requestParams });
 
+      // GF's results controller hands whatever the results cache returned straight
+      // to prepare_item_for_response, which wraps it in an HTTP 200 unconditionally
+      // (class-controller-form-results.php), so a failure arrives as a serialized
+      // WP_Error inside a success. The cache returns exactly one — not_found, for a
+      // form id GFAPI::get_form cannot resolve (class-results-cache.php
+      // get_results) — and a form with no entries answers with an ordinary results
+      // payload of zero counts (timestamp/entry_count/field_data/status, never an
+      // `errors` key). So `errors` here always means the read failed, and reporting
+      // it as an empty result set would read as a successful count of nothing.
+      const data = response.data;
+      const isPlainObject = data && typeof data === 'object' && !Array.isArray(data);
+      const wpErrorCodes = isPlainObject && data.errors && typeof data.errors === 'object'
+        ? Object.keys(data.errors)
+        : [];
+
+      if (wpErrorCodes.length > 0) {
+        const code = wpErrorCodes[0];
+        const messages = data.errors[code];
+        const message = (Array.isArray(messages) ? messages[0] : messages) || code;
+        // A missing form is what GF's own /forms/{id} route answers 404 to, so the
+        // failure reads the same here as it does on the sibling field-filters call.
+        return this.handleApiError({
+          response: {
+            status: code === 'not_found' ? 404 : 500,
+            data: { code, message }
+          }
+        });
+      }
+
       return {
-        results: response.data
+        results: data
       };
     });
   }

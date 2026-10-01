@@ -366,6 +366,17 @@ export class FeedsValidator {
         )
         .field('is_active', validate('is_active')
           .boolean()
+        )
+        // Only gf_update_feed reads this (see updateFeed); gf_patch_feed refuses it
+        // before the schema runs.
+        .field('replace', validate('replace')
+          .array()
+          .custom((names) => {
+            if (names !== undefined && !names.every((name) => typeof name === 'string')) {
+              throw new Error('replace must be an array of strings');
+            }
+            return true;
+          })
         );
     }
     
@@ -395,20 +406,14 @@ export class NotificationsValidator {
         .required()
         .positiveInteger()
       )
+      .field('form_id', validate('form_id')
+        .positiveInteger()
+      )
       .field('notification_ids', validate('notification_ids')
         .array()
       )
       .field('event', validate('event')
         .string()
-      )
-      .field('to', validate('to')
-        .email()
-      )
-      .field('from', validate('from')
-        .email()
-      )
-      .field('reply_to', validate('reply_to')
-        .email()
       );
     
     return schema;

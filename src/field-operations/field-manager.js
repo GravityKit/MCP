@@ -4,7 +4,8 @@
  */
 
 import { createHash } from 'crypto';
-import { assignFieldIds } from '../field-definitions/field-registry.js';
+import { resourceMutex } from '../utils/mutex.js';
+import { assignFieldIds, applyNewFieldDefaults, generateCheckboxInputs, reconcileCheckboxInputs } from '../field-definitions/field-registry.js';
 
 /**
  * Field properties that dependents actually consume. Conditional-logic rules
@@ -42,6 +43,28 @@ export class FieldManager {
    * @returns {object} Field creation result with warnings
    */
   async addField(formId, fieldType, properties = {}, position = {}) {
+    return this.inFormTransaction(formId, () => this.addFieldUnlocked(formId, fieldType, properties, position));
+  }
+
+  /**
+   * Run a read-modify-write of one form while holding that form's lock.
+   *
+   * The lock has to span the GET, the change and the PUT. Held for the PUT alone
+   * (what replaceForm does), N callers all read the same stored form, each
+   * computes the same next field id, and the later PUTs overwrite the earlier
+   * ones while every caller is told it succeeded. replaceForm takes the same
+   * lock again inside this one; the mutex is reentrant for the holder.
+   *
+   * @param {number} formId
+   * @param {() => Promise<T>} work
+   * @returns {Promise<T>}
+   * @template T
+   */
+  async inFormTransaction(formId, work) {
+    return resourceMutex.withLock(`form:${formId}`, work);
+  }
+
+  async addFieldUnlocked(formId, fieldType, properties = {}, position = {}) {
     if (typeof fieldType !== 'string' || fieldType.trim() === '') {
       throw new Error('field_type is required and must be a non-empty string');
     }
@@ -78,7 +101,11 @@ export class FieldManager {
     // registry, keyed off the generated field id. Otherwise caller-supplied
     // `inputs` are kept, but their dotted sub-input ids are rebased onto the
     // generated field id so the parent reference matches (mirrors assignFieldIds).
-    const isCompoundType = fieldDef?.storage?.type === 'compound';
+    // A checkbox is registered as compound, but its inputs come from its choices
+    // (createField, via applyNewFieldDefaults), not from generateSubInputs, which
+    // would replace them with an empty list.
+    const isCheckboxStyle = generateCheckboxInputs(field) !== null;
+    const isCompoundType = fieldDef?.storage?.type === 'compound' && !isCheckboxStyle;
     if (isCompoundType) {
       field.inputs = this.generateSubInputs(field, fieldDef);
     } else if (Array.isArray(field.inputs)) {
@@ -88,6 +115,17 @@ export class FieldManager {
     // Normalize layout grid properties (layoutGroupId, layoutGridColumnSpan)
     this.normalizeLayoutProperties(field, formId);
     
+    // Refuse a position that is a caller mistake (unknown mode, bad page) before
+    // anything is written; placements that fall back (missing reference field,
+    // clamped index) are allowed but reported in `warnings` below, because the
+    // positioner's own logging goes to stderr, which an MCP client never sees.
+    const positionCheck = this.positionEngine
+      ? this.positionEngine.validatePositionConfig(position, form.fields || [])
+      : { valid: true, errors: [], warnings: [] };
+    if (!positionCheck.valid) {
+      throw new Error(`Invalid position: ${positionCheck.errors.join('; ')}`);
+    }
+
     // Calculate insertion position (page-aware). Never `||` this result:
     // 0 is a legitimate index (prepend / index:0 / before-the-first-field)
     // and a falsy fallback would silently append instead.
@@ -100,7 +138,17 @@ export class FieldManager {
     form.fields.splice(insertIndex, 0, field);
     
     // Replace form via direct PUT (no re-fetch; we already have the full state)
-    await this.api.replaceForm(formId, form);
+    const written = await this.api.replaceForm(formId, form);
+
+    // Report from what the PUT returned, not from what was computed before it:
+    // a field the stored form does not hold must not be reported as created.
+    const storedFields = written?.form?.fields;
+    const storedField = Array.isArray(storedFields)
+      ? storedFields.find((candidate) => String(candidate?.id) === String(fieldId))
+      : undefined;
+    if (Array.isArray(storedFields) && storedField === undefined) {
+      throw new Error(`Field ${fieldId} was sent to form ${formId} but is not in the form Gravity Forms returned. The field was not created; re-read the form and retry.`);
+    }
 
     // Surface field-shape warnings, plus a heads-up when the type is unrecognized.
     const warnings = this.validator.getWarnings(field);
@@ -110,10 +158,16 @@ export class FieldManager {
       );
     }
     if (!isKnownType) {
+      // Stored as given (a site may register a custom type); only point at the near match.
+      const lowerType = fieldType.toLowerCase();
+      const caseMatch = Object.keys(this.registry).find((name) => name.toLowerCase() === lowerType);
+      const hint = caseMatch ? ` Did you mean '${caseMatch}'? Field types are lowercase.` : '';
       warnings.unshift(
-        `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.`
+        `Field type '${fieldType}' is not in the known field registry; created without type-specific defaults or sub-inputs. Pass 'inputs'/'choices' explicitly if this type needs them.${hint}`
       );
     }
+
+    warnings.push(...positionCheck.warnings);
 
     return {
       success: true,
@@ -122,7 +176,7 @@ export class FieldManager {
       form_id: formId,
       position: { 
         index: insertIndex, 
-        page: field.pageNumber || 1 
+        page: this.positionEngine?.getFieldPage?.(field, form.fields) || 1
       }
     };
   }
@@ -131,6 +185,10 @@ export class FieldManager {
    * Update existing field with dependency checking
    */
   async updateField(formId, fieldId, updates = {}, options = {}) {
+    return this.inFormTransaction(formId, () => this.updateFieldUnlocked(formId, fieldId, updates, options));
+  }
+
+  async updateFieldUnlocked(formId, fieldId, updates = {}, options = {}) {
     const { force = false } = options;
 
     // Fetch form
@@ -165,11 +223,14 @@ export class FieldManager {
 
     // Apply updates
     const originalField = { ...form.fields[fieldIndex] };
-    form.fields[fieldIndex] = {
+    // A checkbox's inputs follow its choices: left stale, an added choice has nowhere
+    // to be stored. Removed or moved choices cannot be kept safe, so they are reported.
+    const { field: reconciled, warning: inputsWarning } = reconcileCheckboxInputs(originalField, {
       ...originalField,
       ...(updates || {}),
       id: originalField.id // Preserve ID
-    };
+    });
+    form.fields[fieldIndex] = reconciled;
     this.normalizeLayoutProperties(form.fields[fieldIndex], formId);
 
     // Replace form via direct PUT (no re-fetch; we already have the full state)
@@ -186,7 +247,8 @@ export class FieldManager {
         dependencies: hasBreakingDeps
           ? ['Field has dependents (conditional logic, calculations, or merge tags); value-shape changes (type/choices/inputs) require force']
           : [],
-        validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex])
+        validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex]),
+        inputs: inputsWarning ? [inputsWarning] : []
       }
     };
   }
@@ -195,6 +257,10 @@ export class FieldManager {
    * Delete field with comprehensive dependency analysis
    */
   async deleteField(formId, fieldId, options = {}) {
+    return this.inFormTransaction(formId, () => this.deleteFieldUnlocked(formId, fieldId, options));
+  }
+
+  async deleteFieldUnlocked(formId, fieldId, options = {}) {
     // Unlike a form or entry, a deleted field does not go to the Trash: the config
     // is gone and its entry data is orphaned. Gate it as the other deletes are.
     if (!this.api.allowDelete) {
@@ -216,8 +282,10 @@ export class FieldManager {
     const dependencies = this.dependencyTracker?.scanFormDependencies(form, fieldId) || {};
     const hasBreakingDeps = this.dependencyTracker?.hasBreakingDependencies(dependencies);
     
-    // Handle dependencies
-    if (hasBreakingDeps && !force) {
+    // cascade means "delete and clean up", so it proceeds like force. The refusal
+    // below recommends cascade=true, which is useless if cascade alone is refused.
+    const mayProceed = force || cascade;
+    if (hasBreakingDeps && !mayProceed) {
       return {
         success: false,
         error: 'Field has dependencies that would break',
@@ -227,7 +295,7 @@ export class FieldManager {
           label: field.label
         },
         dependencies,
-        suggestion: 'Use force=true to delete anyway, or cascade=true to clean up dependencies'
+        suggestion: 'Use cascade=true to delete and remove its conditional logic rules (calculations and merge tags are reported, not rewritten), or force=true to delete and leave everything as is'
       };
     }
     
@@ -235,9 +303,24 @@ export class FieldManager {
     form.fields = form.fields.filter(f => f.id != fieldId);
     
     // Clean up dependencies if cascade
+    let actionsTaken = [];
     if (cascade && hasBreakingDeps) {
-      this.cleanupDependencies(form, fieldId);
+      actionsTaken = this.cleanupDependencies(form, fieldId);
     }
+
+    // Report what is still pointing at the deleted field. Only conditional logic
+    // is cleaned (and only on cascade); the rest stays and the caller must fix it.
+    const leftDangling = {};
+    if (!cascade && dependencies.conditionalLogic?.length > 0) {
+      leftDangling.conditionalLogic = dependencies.conditionalLogic;
+    }
+    if (dependencies.calculations?.length > 0) {
+      leftDangling.calculations = dependencies.calculations;
+    }
+    if (dependencies.mergeTags?.length > 0) {
+      leftDangling.mergeTags = dependencies.mergeTags;
+    }
+    const hasDangling = Object.keys(leftDangling).length > 0;
     
     // Replace form via direct PUT (no re-fetch — we already have the full state)
     await this.api.replaceForm(formId, form);
@@ -250,7 +333,11 @@ export class FieldManager {
         label: field.label
       },
       dependencies,
-      actions_taken: cascade ? ['Dependencies cleaned up'] : []
+      actions_taken: actionsTaken,
+      ...(hasDangling && {
+        left_dangling: leftDangling,
+        warning: `Field ${field.id} is deleted but these references to it were not rewritten and will no longer resolve: ${Object.keys(leftDangling).join(', ')}. Fix them on the form.`
+      })
     };
   }
 
@@ -296,7 +383,10 @@ export class FieldManager {
     // the properties spread — a caller-supplied properties.id after the spread
     // was how duplicate field ids (form corruption) got in.
     const { id: _requestedId, type: _requestedType, ...safeProperties } = properties;
-    return {
+    // applyNewFieldDefaults runs LAST because it reads the assembled field: a
+    // caller-supplied storageType or inputs has to win, and the properties it keys
+    // off (`inputType`, `choices`) arrive with safeProperties.
+    return applyNewFieldDefaults({
       id,
       type,
       label: properties.label || fieldDef.label || 'Untitled',
@@ -308,7 +398,7 @@ export class FieldManager {
       cssClass: properties.cssClass || '',
       ...this.getTypeSpecificDefaults(type, fieldDef),
       ...safeProperties
-    };
+    });
   }
 
   /**
@@ -471,24 +561,35 @@ export class FieldManager {
   }
 
   /**
-   * Clean up dependencies when cascade deleting
+   * Clean up dependencies when cascade deleting.
+   * Only conditional logic rules are removed. Returns one line per change made.
    */
   cleanupDependencies(form, fieldId) {
-    // Remove from conditional logic rules
+    const actions = [];
+
     form.fields?.forEach(field => {
-      if (field.conditionalLogic?.rules) {
-        field.conditionalLogic.rules = field.conditionalLogic.rules.filter(
-          rule => rule.fieldId != fieldId
-        );
-        
-        // Disable conditional logic if no rules remain
-        if (field.conditionalLogic.rules.length === 0) {
-          field.conditionalLogic.enabled = false;
-        }
+      const rules = field.conditionalLogic?.rules;
+      if (!Array.isArray(rules)) return;
+
+      const remaining = rules.filter(rule => rule.fieldId != fieldId);
+      const removed = rules.length - remaining.length;
+      if (removed === 0) return;
+
+      const name = `field ${field.id} ("${field.label || ''}")`;
+      if (remaining.length === 0) {
+        // GF's server-side visibility check ignores `enabled` and evaluates any
+        // non-empty logic object, so zero rules + "hide" would hide the field
+        // forever. Empty is what GF itself treats as "no conditional logic".
+        field.conditionalLogic = '';
+        actions.push(`Removed ${removed} conditional logic rule(s) referencing field ${fieldId} from ${name}; no rules were left, so its conditional logic was removed`);
+      } else {
+        field.conditionalLogic.rules = remaining;
+        actions.push(`Removed ${removed} conditional logic rule(s) referencing field ${fieldId} from ${name}`);
       }
     });
-    
-    // Note: Calculations and merge tags would need manual review
-    // as they use string-based formulas that are harder to clean automatically
+
+    // Calculations and merge tags are not rewritten: stripping a token changes
+    // what a formula computes, so deleteField reports them instead.
+    return actions;
   }
 }

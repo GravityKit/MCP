@@ -286,3 +286,96 @@ test('ValidationFactory(gf_list_entries) → buildEntriesQuery preserves the GF 
   assert.equal(w.get('include[0]'), '1');
   assert.equal(w.get('include[1]'), '2');
 });
+
+// --- singular form_id alias ---
+//
+// gf_list_entries is the only tool on this surface that names the form in the
+// plural. GF /entries reads form_ids as an array and knows no singular form_id,
+// so an unaliased one filters nothing and the response is the whole site.
+
+test('singular form_id → the form_ids array GF reads (form_ids[0]=…)', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', { form_id: 159 });
+  assert.deepEqual(validated.form_ids, [159], 'form_id must resolve to a one-element form_ids');
+  const w = wire(buildEntriesQuery(validated));
+  assert.equal(w.get('form_ids[0]'), '159');
+  assert.ok(!w.has('form_id'), 'GF has no singular form_id on /entries — it must not reach the wire');
+});
+
+test('singular form_id survives alongside sorting, paging and search', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', {
+    form_id: 159,
+    sorting: { key: 'date_created', direction: 'DESC' },
+    paging: { page_size: 25, current_page: 2 },
+    status: 'active'
+  });
+  const w = wire(buildEntriesQuery(validated));
+  assert.equal(w.get('form_ids[0]'), '159', 'the form filter must not be lost when other criteria are present');
+  assert.equal(w.get('sorting[key]'), 'date_created');
+  assert.equal(w.get('paging[page_size]'), '25');
+  assert.equal(JSON.parse(w.get('search')).status, 'active');
+});
+
+test('a string form_id is coerced the same way a form_ids element is', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', { form_id: '159' });
+  assert.deepEqual(validated.form_ids, [159]);
+});
+
+test('form_id and form_ids naming the same single form agree', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', { form_id: 159, form_ids: [159] });
+  assert.deepEqual(validated.form_ids, [159]);
+});
+
+test('an empty form_ids does not contradict a singular form_id', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', { form_id: 159, form_ids: [] });
+  assert.deepEqual(validated.form_ids, [159]);
+});
+
+test('form_id and form_ids that disagree are rejected, naming both values', () => {
+  assert.throws(
+    () => ValidationFactory.validateToolInput('gf_list_entries', { form_id: 159, form_ids: [70] }),
+    /form_id and form_ids were both given and disagree \(159 vs \[70\]\); pass one/
+  );
+});
+
+test('a singular form_id beside a multi-form form_ids is rejected', () => {
+  assert.throws(
+    () => ValidationFactory.validateToolInput('gf_list_entries', { form_id: 159, form_ids: [159, 70] }),
+    /form_id and form_ids were both given and disagree/
+  );
+});
+
+test('a bad form_id is reported as a bad id, not as a disagreement', () => {
+  assert.throws(
+    () => ValidationFactory.validateToolInput('gf_list_entries', { form_id: 0, form_ids: [159] }),
+    /form_id must be a positive integer/
+  );
+  assert.throws(
+    () => ValidationFactory.validateToolInput('gf_list_entries', { form_id: 'abc' }),
+    /form_id must be a positive integer/
+  );
+});
+
+test('form_ids keeps working unchanged when no singular is passed', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', { form_ids: [5, 9, 13] });
+  assert.deepEqual(validated.form_ids, [5, 9, 13]);
+  const w = wire(buildEntriesQuery(validated));
+  assert.equal(w.get('form_ids[0]'), '5');
+  assert.equal(w.get('form_ids[1]'), '9');
+  assert.equal(w.get('form_ids[2]'), '13');
+});
+
+test('no form named at all still lists across every form (no form filter invented)', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', { paging: { page_size: 5 } });
+  assert.ok(!('form_ids' in validated), 'an absent form must not become a form_ids');
+  const w = wire(buildEntriesQuery(validated));
+  assert.ok(!w.has('form_ids[0]'));
+});
+
+test('the include fast-path still emits its native param when a singular form_id rides along', () => {
+  const validated = ValidationFactory.validateToolInput('gf_list_entries', { form_id: 159, include: [11, 22] });
+  const w = wire(buildEntriesQuery(validated));
+  assert.equal(w.get('include[0]'), '11');
+  assert.equal(w.get('include[1]'), '22');
+  assert.equal(w.get('form_ids[0]'), '159');
+  assert.ok(!w.has('search'), 'include must stay the native fast-path, not become a search filter');
+});

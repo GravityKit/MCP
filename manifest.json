@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "gravitykit-mcp",
   "display_name": "GravityKit for Gravity Forms",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "Build, edit, and query your Gravity Forms with Claude.",
   "long_description": "Connects Claude to the Gravity Forms on your WordPress site: create and edit forms, add and rearrange fields, read and update entries, manage add-on feeds, and answer questions about your submissions in plain language. When GravityKit Foundation is active on the site, tools for GravityKit products such as GravityView are added automatically.\n\nSetup asks for three things: your site address, your WordPress username, and a WordPress application password (in WordPress, go to Users > Profile > Application Passwords, add one named \"Claude\", and copy it including the spaces). Deleting forms and entries stays off unless you turn it on during setup.",
   "author": {

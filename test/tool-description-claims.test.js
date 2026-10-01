@@ -78,3 +78,22 @@ test('the claim check can actually fail', () => {
   assert.ok(/\bsearch/i.test(entries.description), 'its description does mention search');
   assert.ok(entries.props.some((p) => /search|query/.test(p)), 'and its schema exposes it, so it must not be flagged');
 });
+
+test('gf_list_feeds says it lists active feeds only, and names the tool that reads an inactive one', () => {
+  // Both feed controllers call GFAPI::get_feeds() with three arguments, so
+  // $is_active keeps its `true` default (includes/api.php) and no query param
+  // widens it. A caller who creates a feed with is_active false and then lists
+  // otherwise concludes the create failed.
+  const listFeeds = gfToolDefinitions().find((def) => def.name === 'gf_list_feeds');
+  assert.ok(listFeeds, 'gf_list_feeds must be in the parsed definitions');
+  assert.match(listFeeds.description, /active/i, 'the description must say the listing is active-only');
+  assert.match(listFeeds.description, /is_active/, 'the description must name the flag that hides a feed');
+  assert.match(listFeeds.description, /gf_get_feed/, 'the description must point at the tool that does return an inactive feed');
+});
+
+test('gf_create_feed warns that a feed created inactive will not be listed', () => {
+  const createFeed = gfToolDefinitions().find((def) => def.name === 'gf_create_feed');
+  assert.ok(createFeed, 'gf_create_feed must be in the parsed definitions');
+  assert.match(createFeed.description, /is_active/, 'the description must name the flag');
+  assert.match(createFeed.description, /gf_list_feeds/, 'the description must name the listing that will not show it');
+});

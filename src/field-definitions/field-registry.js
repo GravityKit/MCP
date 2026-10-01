@@ -622,7 +622,9 @@ export const fieldRegistry = {
       // GF persists ONLY two sub-inputs to the entry: .1 = the card number
       // MASKED to last-4 (e.g. "XXXXXXXXXXXX1111") and .4 = the card TYPE name
       // (e.g. "Visa"). The expiration (.2), security code (.3) and cardholder
-      // name (.5) are NEVER stored — the security code is never persisted.
+      // name (.5) are NEVER stored by a submission. The entries API stores them
+      // as given (and does not mask .1), so the entry tools refuse them
+      // (EntriesValidator.assertSensitiveValues).
       // (class-gf-field-creditcard.php get_entry_inputs + get_value_save_entry.)
       subInputs: {
         '1': 'card_number_masked',
@@ -1035,6 +1037,183 @@ export function assignFieldIds(fields) {
 
     return rebaseInputs({ ...field, id: newId }, newId);
   });
+}
+
+/**
+ * Fill in the storage mode a NEW field needs, where leaving it unset changes how
+ * Gravity Forms reads the stored value back.
+ *
+ * A multiselect with no storageType stores its values comma-joined, and
+ * GF_Field_MultiSelect::to_array() then splits on every comma
+ * (class-gf-field-multiselect.php:417), so a selected value that itself contains
+ * one is read back as several: ["Atlanta, GA", "Austin, TX"] returns four values.
+ * The form editor writes 'json' on every multiselect it creates (js.php:818);
+ * GFAPI and the REST API write nothing.
+ *
+ * Keyed off the type GF resolves the field to rather than `type` alone, because
+ * GF_Fields::create() instantiates by `inputType` when one is set — so
+ * post_category, post_tags and post_custom_field with inputType 'multiselect'
+ * are GF_Field_MultiSelect and split on commas the same way.
+ *
+ * An explicit storageType is kept as given, including a legacy '': that spelling
+ * is how a caller matches a field whose existing entries are comma-joined.
+ *
+ * Apply this to new fields only. Flipping a stored field to json changes how
+ * GF_Query matches its already-saved comma-joined values
+ * (class-gf-query.php:360 picks GF_Query_JSON_Literal off storageType).
+ *
+ * @param {object} field A field object.
+ * @returns {object} The field, with storageType filled in where it applies.
+ */
+export function applyStorageTypeDefault(field) {
+  if (!field || typeof field !== 'object' || field.storageType !== undefined) {
+    return field;
+  }
+
+  const resolvedType = field.inputType || field.type;
+
+  if (resolvedType !== 'multiselect') {
+    return field;
+  }
+
+  return { ...field, storageType: 'json' };
+}
+
+/**
+ * Field types whose choices carry their own `key` and whose inputs are matched to
+ * choices by it (has_persistent_choices(), class-gf-field.php:120). Their inputs
+ * are not numbered from the choice order, so they are never generated here.
+ */
+const PERSISTENT_CHOICE_TYPES = ['multi_choice', 'image_choice'];
+
+/**
+ * Build the sub-inputs a checkbox field needs from its choices.
+ *
+ * Gravity Forms reads a checkbox from one input per choice (4.1, 4.2, ...), never
+ * from the field id (GF_Field_Checkbox::get_entry_inputs() returns $this->inputs,
+ * class-gf-field-checkbox.php:858). The form editor builds them in JavaScript
+ * (SetFieldCheckboxInputs, form_editor.js:4723); GFAPI and the REST API never run
+ * it, so a checkbox created through the API has choices and nowhere to store them.
+ * Numbering is the editor's: choice order, skipping multiples of ten so 5.1 and
+ * 5.10 cannot collide; label is the choice text; name is empty.
+ *
+ * Keyed off the resolved type (`inputType`, else `type`) because option, quiz,
+ * poll and survey fields become checkboxes through `inputType`.
+ *
+ * @param {object} field A field with an id and choices.
+ * @returns {Array<{id: string, label: string, name: string}>|null} The inputs, or
+ *   null when the field is not a checkbox, has no choices, or keys its own inputs.
+ */
+export function generateCheckboxInputs(field) {
+  if (!field || typeof field !== 'object') {
+    return null;
+  }
+
+  const resolvedType = field.inputType || field.type;
+  const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
+  const keysItsOwnInputs = PERSISTENT_CHOICE_TYPES.includes(field.type) || PERSISTENT_CHOICE_TYPES.includes(field.inputType);
+  if (resolvedType !== 'checkbox' || !hasChoices || keysItsOwnInputs) {
+    return null;
+  }
+
+  let skipped = 0;
+  return field.choices.map((choice, index) => {
+    if ((index + 1 + skipped) % 10 === 0) {
+      skipped++;
+    }
+    return { id: `${field.id}.${index + 1 + skipped}`, label: choice?.text ?? '', name: '' };
+  });
+}
+
+/**
+ * Everything a NEW field needs that the form editor would have written: the
+ * storage mode (applyStorageTypeDefault) and a checkbox's inputs.
+ *
+ * Inputs the caller supplied are kept, since their ids may have gaps that match
+ * existing entries. Apply to new fields only: changing a stored field's inputs
+ * changes where its saved values are read from.
+ *
+ * @param {object} field A field object.
+ * @returns {object} The field with the editor's defaults filled in.
+ */
+export function applyNewFieldDefaults(field) {
+  const withStorage = applyStorageTypeDefault(field);
+  const hasInputs = Array.isArray(withStorage?.inputs) && withStorage.inputs.length > 0;
+  if (hasInputs) {
+    return withStorage;
+  }
+
+  const inputs = generateCheckboxInputs(withStorage);
+  return inputs ? { ...withStorage, inputs } : withStorage;
+}
+
+/** A choice's identity for comparing two choice lists: what GF stores is its value. */
+const choiceKey = (choice) => String(choice?.value ?? choice?.text ?? '');
+
+/**
+ * Bring a stored checkbox's inputs in line with choices a call changed.
+ *
+ * GF numbers a non-persistent checkbox's inputs by choice POSITION: the form editor
+ * regenerates them from scratch on every change (SetFieldCheckboxInputs,
+ * form_editor.js:4723), and the renderer counts positions too
+ * (class-gf-field-checkbox.php:415). Inputs left as they were when choices change
+ * leave a choice with nowhere to be stored. So when the choices differ, the inputs
+ * are regenerated as the editor does, unless the caller sent inputs of its own that
+ * differ from the stored ones (a deliberate choice, kept like a new field's).
+ *
+ * Appending, and renaming, move no stored value. Removing or reordering does, and
+ * GF does the same in its own editor: entries saved earlier keep their values under
+ * the old input numbers. That cannot be avoided, so it is reported.
+ *
+ * @param {object} storedField The field as stored.
+ * @param {object} nextField   The field as the call would write it.
+ * @returns {{field: object, warning: string|null}} The field to write, and a
+ *   warning when a removed or moved choice leaves saved entry values behind.
+ */
+export function reconcileCheckboxInputs(storedField, nextField) {
+  const unchanged = { field: nextField, warning: null };
+  const resolvedType = nextField?.inputType || nextField?.type;
+  const keysItsOwnInputs = PERSISTENT_CHOICE_TYPES.includes(nextField?.type) || PERSISTENT_CHOICE_TYPES.includes(nextField?.inputType);
+  const hasChoiceLists = Array.isArray(storedField?.choices) && Array.isArray(nextField?.choices);
+  if (resolvedType !== 'checkbox' || keysItsOwnInputs || !hasChoiceLists) {
+    return unchanged;
+  }
+
+  const storedKeys = storedField.choices.map((choice) => [choice?.value, choice?.text]);
+  const nextKeys = nextField.choices.map((choice) => [choice?.value, choice?.text]);
+  if (JSON.stringify(storedKeys) === JSON.stringify(nextKeys)) {
+    return unchanged;
+  }
+
+  const callerChangedInputs = JSON.stringify(nextField.inputs ?? null) !== JSON.stringify(storedField.inputs ?? null);
+  if (callerChangedInputs) {
+    return unchanged;
+  }
+
+  const inputs = nextField.choices.length > 0 ? generateCheckboxInputs(nextField) : [];
+  const field = { ...nextField, inputs };
+
+  const nextPositions = nextField.choices.map(choiceKey);
+  const removed = [];
+  const moved = [];
+  storedField.choices.forEach((choice, index) => {
+    const position = nextPositions.indexOf(choiceKey(choice));
+    if (position === -1) {
+      removed.push(choiceKey(choice));
+    } else if (position !== index) {
+      moved.push(choiceKey(choice));
+    }
+  });
+  if (removed.length === 0 && moved.length === 0) {
+    return { field, warning: null };
+  }
+
+  const names = (list) => list.map((value) => JSON.stringify(value)).join(', ');
+  const parts = [];
+  if (removed.length > 0) parts.push(`removed ${names(removed)}`);
+  if (moved.length > 0) parts.push(`moved ${names(moved)}`);
+  const warning = `Checkbox field ${nextField.id}: ${parts.join(' and ')}. Its inputs were renumbered by choice position (now ${inputs.map((input) => input.id).join(', ') || 'none'}), as the form editor does, so values entries saved earlier hold under the old input numbers no longer line up with these choices. Adding a choice at the end moves nothing.`;
+  return { field, warning };
 }
 
 /**

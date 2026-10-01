@@ -10,7 +10,7 @@
  * Contract sources in Gravity Forms:
  *  - sorting.is_numeric / paging.offset: parse_entry_search_params (class-gf-rest-controller.php) feeds GF_Query (class-gf-query.php).
  *  - NOTIN alias: GF_Query's filter-operator switch (case 'NOTIN').
- *  - /forms: get_items (class-controller-forms.php) reads only `include`; status/active/exclude are no-ops.
+ *  - /forms: get_items (class-controller-forms.php) reads only `include`; status/active/exclude are refused, not dropped.
  */
 
 import test from 'node:test';
@@ -204,19 +204,18 @@ test('negative / non-integer offset is rejected', () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// top-level page/per_page must not reach the wire for gf_list_entries
-// (GF /entries uses paging[...] only)
+// top-level page/per_page/offset are refused for gf_list_entries (GF /entries
+// reads paging only from the `paging` object). Silently dropping them returned
+// an un-offset page 1 to a caller who believed they had paginated.
 // ---------------------------------------------------------------------------
 
-test('validateListEntriesParams does not emit page/per_page', () => {
-  const out = validate('gf_list_entries', { page: 2, per_page: 25 });
-  assert.ok(!('page' in out), 'page must not be emitted');
-  assert.ok(!('per_page' in out), 'per_page must not be emitted');
+test('validateListEntriesParams refuses top-level page/per_page/offset', () => {
+  assert.throws(() => validate('gf_list_entries', { page: 2, per_page: 25 }), /page.*per_page|per_page.*page/);
+  assert.throws(() => validate('gf_list_entries', { offset: 100 }), /paging: \{ page_size, current_page \}/);
 });
 
-test('buildEntriesQuery never puts page/per_page on the wire', () => {
-  const validated = validate('gf_list_entries', { page: 3, per_page: 10, paging: { page_size: 10, current_page: 3 } });
+test('buildEntriesQuery carries paging only as the paging object', () => {
+  const validated = validate('gf_list_entries', { paging: { page_size: 10, current_page: 3 } });
   const query = buildEntriesQuery(validated);
   assert.ok(!('page' in query), 'page must not be on the wire');
   assert.ok(!('per_page' in query), 'per_page must not be on the wire');
@@ -327,8 +326,7 @@ test('current_page:1 is accepted', () => {
   assert.equal(out.paging.current_page, 1);
 });
 
-// ---------------------------------------------------------------------------
-// gf_list_forms drops status/active/exclude (GF only reads include)
+// gf_list_forms refuses status/active/exclude (GF only reads include)
 // ---------------------------------------------------------------------------
 
 test('gf_list_forms keeps include only', () => {
@@ -336,16 +334,11 @@ test('gf_list_forms keeps include only', () => {
   assert.deepEqual(out.include, [1, 2]);
 });
 
-test('gf_list_forms does not forward status/active/exclude', () => {
-  const out = validate('gf_list_forms', {
-    include: [1],
-    status: 'active',
-    active: true,
-    exclude: [9],
-  });
-  assert.ok(!('status' in out), 'status is a GF no-op and must be dropped');
-  assert.ok(!('active' in out), 'active is a GF no-op and must be dropped');
-  assert.ok(!('exclude' in out), 'exclude is a GF no-op and must be dropped');
+test('gf_list_forms refuses status/active/exclude instead of ignoring them', () => {
+  assert.throws(
+    () => validate('gf_list_forms', { include: [1], status: 'active', active: true, exclude: [9] }),
+    /status, active, exclude/
+  );
 });
 
 test('gf_list_forms still validates include ids', () => {
@@ -356,24 +349,16 @@ test('gf_list_forms still validates include ids', () => {
   );
 });
 
-// --- field_values contract (gf_submit_form_data / gf_validate_form) ---
-// GF declares field_values as type ['string','array'] (dynamic population);
-// submitted values are the separate input_N keys. An object is the wrong shape
-// and GF 400s it.
-test('gf_submit_form_data: field_values must be a GF string|array, not an object', () => {
-  assert.throws(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: { '1': 'x' } }),
-    /field_values/,
-    'an object must be rejected (GF rejects it)'
-  );
-  assert.doesNotThrow(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: 'p1=a&p2=b' }),
-    'a query string must be accepted'
-  );
-  assert.doesNotThrow(
-    () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, field_values: ['a', 'b'] }),
-    'an array must be accepted'
-  );
+// --- field_values is refused (gf_submit_form_data / gf_validate_form) ---
+// It is GF dynamic-population data and does nothing on the API path in any
+// shape; submitted values are the separate input_N keys.
+test('gf_submit_form_data: field_values is refused in every shape', () => {
+  for (const value of [{ '1': 'x' }, 'p1=a&p2=b', ['a', 'b']]) {
+    assert.throws(
+      () => ValidationFactory.validateToolInput('gf_submit_form_data', { form_id: 1, input_1: 'x', field_values: value }),
+      /field_values does nothing/
+    );
+  }
 });
 
 test('gf_submit_form_data: submission values pass through as input_N keys', () => {
@@ -382,7 +367,73 @@ test('gf_submit_form_data: submission values pass through as input_N keys', () =
   assert.equal(v.input_2, 'j@x.com');
 });
 
-test('gf_validate_form: field_values object likewise rejected, string accepted', () => {
-  assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: { a: 1 } }), /field_values/);
-  assert.doesNotThrow(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: 'a=1' }));
+test('gf_validate_form: field_values is refused too', () => {
+  assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: { a: 1 } }), /field_values does nothing/);
+  assert.throws(() => ValidationFactory.validateToolInput('gf_validate_form', { form_id: 1, field_values: 'a=1' }), /field_values does nothing/);
+});
+
+// --- the entry id under either name ---
+//
+// The entry tools document `id` while gf_send_notifications names the same entry
+// `entry_id`, so a caller who learned one spelling reaches for it on the other
+// tools. BaseValidator.resolveEntryId accepts both and refuses only a genuine
+// contradiction, the same way resolveFormId does for the form tools.
+
+for (const tool of ['gf_get_entry', 'gf_delete_entry', 'gf_update_entry']) {
+  test(`${tool}: entry_id is accepted as the entry id`, () => {
+    const v = ValidationFactory.validateToolInput(tool, { entry_id: 101691 });
+    assert.equal(v.id, 101691);
+  });
+
+  test(`${tool}: id still works and is unaffected`, () => {
+    const v = ValidationFactory.validateToolInput(tool, { id: 101691 });
+    assert.equal(v.id, 101691);
+  });
+
+  test(`${tool}: id and entry_id naming the same entry agree`, () => {
+    const v = ValidationFactory.validateToolInput(tool, { id: 101691, entry_id: 101691 });
+    assert.equal(v.id, 101691);
+  });
+
+  test(`${tool}: id and entry_id that disagree are rejected`, () => {
+    assert.throws(
+      () => ValidationFactory.validateToolInput(tool, { id: 101691, entry_id: 999 }),
+      /id and entry_id were both given and disagree \(101691 vs 999\); pass one/
+    );
+  });
+
+  test(`${tool}: neither name given still reports id as required`, () => {
+    assert.throws(() => ValidationFactory.validateToolInput(tool, {}), /id is required/);
+  });
+
+  test(`${tool}: a bad entry_id is reported under its own name`, () => {
+    assert.throws(
+      () => ValidationFactory.validateToolInput(tool, { entry_id: 0 }),
+      /entry_id must be a positive integer/
+    );
+  });
+}
+
+test('gf_update_entry: an entry_id alias does not survive into the PUT body', () => {
+  // updateEntry spreads everything but `id` into the entry it saves, so an alias
+  // left behind would be written onto the entry as a field of its own.
+  const v = ValidationFactory.validateToolInput('gf_update_entry', { entry_id: 101691, status: 'spam', 1: 'Ada' });
+  assert.equal(v.id, 101691);
+  assert.ok(!('entry_id' in v), 'entry_id must not ride into the saved entry');
+  assert.equal(v.status, 'spam');
+  assert.equal(v['1'], 'Ada');
+});
+
+test('gf_create_entry keys on form_id and gains no entry id alias', () => {
+  // The control: create has no entry id at all, so neither name may appear.
+  const v = ValidationFactory.validateToolInput('gf_create_entry', { form_id: 159, 1: 'Ada' });
+  assert.equal(v.form_id, 159);
+  assert.ok(!('entry_id' in v));
+  assert.throws(() => ValidationFactory.validateToolInput('gf_create_entry', { entry_id: 1 }), /form_id is required/);
+});
+
+test('resolveEntryId and resolveFormId share one mechanism', () => {
+  assert.equal(BaseValidator.resolveIdAlias({ entry_id: 7 }, 'id', 'entry_id'), 7);
+  assert.equal(BaseValidator.resolveEntryId({ entry_id: 7 }), 7);
+  assert.equal(BaseValidator.resolveFormId({ id: 7 }), 7);
 });

@@ -245,7 +245,11 @@ export class PositionEngine {
   }
   
   /**
-   * Validate positioning configuration
+   * Validate positioning configuration.
+   *
+   * calculatePosition() falls back to append/prepend/clamp for anything it
+   * cannot honor. Errors are caller mistakes (refuse); warnings are placements
+   * that will land somewhere other than asked, which the caller must be told.
    */
   validatePositionConfig(positionConfig, fields) {
     const errors = [];
@@ -254,12 +258,18 @@ export class PositionEngine {
     if (!positionConfig) {
       return { valid: true, errors, warnings };
     }
+
+    if (typeof positionConfig !== 'object' || Array.isArray(positionConfig)) {
+      errors.push('Invalid position: must be an object with mode, reference and/or page');
+      return { valid: false, errors, warnings };
+    }
     
     const { mode, reference, page } = positionConfig;
     
-    // Validate mode
+    // Validate mode. '' is rejected too: it would fall into the append default.
     const validModes = ['append', 'prepend', 'after', 'before', 'index'];
-    if (mode && !validModes.includes(mode)) {
+    const hasMode = mode !== undefined && mode !== null;
+    if (hasMode && !validModes.includes(mode)) {
       errors.push(`Invalid position mode: ${mode}. Must be one of: ${validModes.join(', ')}`);
     }
     
@@ -272,7 +282,18 @@ export class PositionEngine {
     if (reference && (mode === 'after' || mode === 'before')) {
       const refField = fields.find(f => f.id == reference);
       if (!refField) {
-        warnings.push(`Reference field ${reference} not found in form`);
+        warnings.push(`Reference field ${reference} not found in form, so the field was not placed ${mode} it; see position.index for where it landed`);
+      }
+    }
+
+    // index mode: positionAtIndex() clamps or appends without saying so
+    if (mode === 'index') {
+      if (typeof reference !== 'number' || Number.isNaN(reference)) {
+        warnings.push(`Position mode 'index' needs a number as the reference (the index); got ${JSON.stringify(reference) ?? 'none'}, so the field was appended`);
+      } else if (reference < 0) {
+        warnings.push(`Position index ${reference} is below 0; placed at index 0 instead`);
+      } else if (reference > fields.length) {
+        warnings.push(`Position index ${reference} is past the end of the form (${fields.length} fields); placed at index ${fields.length} instead`);
       }
     }
     
@@ -287,6 +308,15 @@ export class PositionEngine {
       const totalPages = pageBreaks.length + 1;
       if (page > totalPages) {
         warnings.push(`Page ${page} exceeds total pages (${totalPages})`);
+      } else if (typeof page === 'number' && page >= 1 && reference && (mode === 'after' || mode === 'before')) {
+        // Reference exists, but on another page: the page path falls back to
+        // appending/prepending on the requested page.
+        const refField = fields.find(f => f.id == reference);
+        const refPage = refField ? this.getFieldPage(refField, fields) : null;
+        const isOnOtherPage = refField && refField.type !== 'page' && refPage !== page;
+        if (isOnOtherPage) {
+          warnings.push(`Reference field ${reference} is on page ${refPage}, not page ${page}, so the field was not placed ${mode} it`);
+        }
       }
     }
     

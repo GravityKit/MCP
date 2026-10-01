@@ -18,10 +18,15 @@
  *      permission gate (default manage_options vs core's `read`).
  *      Filtered client-side on Foundation's stamped metadata:
  *      `meta.gk_registered_by === 'gravitykit'`.
- *   3. When both catalogs are unreachable (older WP without the
- *      Abilities API, plugin disabled, network blip) this module throws;
- *      the caller leaves gv_* tools unregistered and retries on the next
- *      gv_* call (self-healing).
+ *   3. A catalog that answers HTTP 200 with no GravityKit abilities is a
+ *      complete answer — the site registers none — and loads as an empty
+ *      tool set naming the catalog that answered.
+ *   4. Only when NEITHER catalog can be reached (older WP without the
+ *      Abilities API, plugin disabled, network blip) does this module
+ *      throw; the caller leaves product tools unregistered and retries on
+ *      the next product-tool call (self-healing). The two states need
+ *      different fixes — a product activated versus connectivity or
+ *      credentials — so they are never reported as one.
  *
  * Tool naming is owned by the SERVER on both paths: Foundation's
  * `mcp_tool_name` (Manager::get_mcp_tool_name() — declared `mcp_prefix`
@@ -259,9 +264,10 @@ function arrayToProperties(arr) {
  * Fetch the abilities surface + build MCP tool definitions and handlers.
  *
  * Tries the Foundation catalog first (canonical naming + filtering),
- * falls back to the WP core catalog. Throws only when BOTH are
- * unreachable — the caller leaves gv_* tools unregistered and retries
- * on a later call.
+ * falls back to the WP core catalog. A catalog that answers with no
+ * GravityKit abilities returns an empty tool set naming that catalog.
+ * Throws only when NEITHER catalog can be reached — the caller then
+ * leaves product tools unregistered and retries on a later call.
  *
  * @param {object} wpClient  WordPressClient instance — uses its
  *                           authenticated httpClient.
@@ -287,13 +293,20 @@ export async function loadAbilitiesAsTools(wpClient, {
   // Why an ability did not become a tool is the question a product author asks,
   // and it was answerable only by reading the server's stderr.
   const skipped = [];
+  const buildOptions = { reservedNames, allowDelete, allowDestructive, skipped, onStaleCatalog };
+
+  // Which catalog answered. An answer carrying no abilities is knowledge about
+  // the site; a catalog nobody could reach is knowledge about nothing, and only
+  // the second one may throw.
+  let answered = null;
 
   try {
     const items = await fetchFoundationCatalogItems(wpClient, retry);
+    answered = 'foundation-catalog';
     const entries = catalogItemsToEntries(items, skipped);
 
     if (entries.length > 0) {
-      return buildTools(wpClient, entries, 'foundation-catalog', { reservedNames, allowDelete, allowDestructive, skipped, onStaleCatalog });
+      return buildTools(wpClient, entries, 'foundation-catalog', buildOptions);
     }
 
     logger.warn(`Foundation catalog at ${FOUNDATION_CATALOG_ROUTE} returned no usable abilities — falling back to WP core catalog`);
@@ -301,12 +314,24 @@ export async function loadAbilitiesAsTools(wpClient, {
     logger.warn(`Foundation catalog unavailable (${err.message}) — falling back to WP core catalog at ${CORE_ABILITIES_ROUTE}`);
   }
 
-  const entries = await fetchCoreEntries(wpClient, skipped, retry);
+  let coreEntries;
+  try {
+    coreEntries = await fetchCoreEntries(wpClient, skipped, retry);
+  } catch (coreErr) {
+    if (!answered) throw coreErr;
 
-  // Every option the Foundation path is built with. This call site drifted from
-  // that one once already, which made the fallback quietly ignore the destructive
-  // gate, the diagnostics and the stale-catalog refresh.
-  return buildTools(wpClient, entries, 'wp-core', { reservedNames, allowDelete, allowDestructive, skipped, onStaleCatalog });
+    logger.warn(`WP core catalog unavailable (${coreErr.message}) — the Foundation catalog answered with no GravityKit abilities for this site`);
+    // Every option the Foundation path is built with. One of these call sites
+    // drifted from that one once already, which made the fallback quietly ignore
+    // the destructive gate, the diagnostics and the stale-catalog refresh.
+    return buildTools(wpClient, [], answered, buildOptions);
+  }
+
+  // With both catalogs empty, the Foundation one is the answer worth naming: it
+  // is the canonical contract and the one an operator configures.
+  const source = coreEntries.length === 0 && answered ? answered : 'wp-core';
+
+  return buildTools(wpClient, coreEntries, source, buildOptions);
 }
 
 /**
@@ -404,8 +429,9 @@ function catalogItemsToEntries(items, skipped = []) {
  * names"). Naming requires `meta.mcp_tool_name`; abilities without it
  * are skipped with a warning (the server owns naming).
  *
- * Throws when no usable abilities are found so the caller's state stays
- * null (not sticky-empty) and the per-call self-heal keeps retrying.
+ * Returns an empty array when the catalog carries no GravityKit abilities:
+ * that is the site's answer, and the caller decides what it means. Throws
+ * only when the catalog cannot be read at all.
  *
  * @param {object} wpClient WordPressClient instance.
  * @returns {Promise<Array<{abilityName: string, toolName: string, description: string, rawInputSchema: unknown, annotations: object}>>}
@@ -473,7 +499,7 @@ async function fetchCoreEntries(wpClient, skipped = [], retry = {}) {
   }
 
   if (entries.length === 0) {
-    throw new Error('No usable GravityKit abilities in the WP core catalog (missing gk_registered_by stamp or mcp_tool_name).');
+    logger.warn('No usable GravityKit abilities in the WP core catalog (missing gk_registered_by stamp or mcp_tool_name).');
   }
 
   return entries;

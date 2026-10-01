@@ -94,3 +94,71 @@ test('gf_get_results: a search with no mode is unchanged', async () => {
   const sent = JSON.parse(gets[0].search);
   assert.ok(Array.isArray(sent.field_filters), 'stays an array when no mode is given');
 });
+
+// --- a serialized WP_Error arrives inside an HTTP 200 ---
+//
+// GF's results controller wraps whatever the results cache returned in a 200
+// (class-controller-form-results.php prepare_item_for_response), so a failed read
+// is a success carrying an `errors` object. The cache returns exactly one such
+// error — not_found for a form id that does not resolve — and a form with no
+// entries answers with an ordinary payload of zero counts, so `errors` is never
+// a way of saying "no data".
+
+test('gf_get_results: a not_found WP_Error in a 200 throws rather than reporting empty results', async () => {
+  const client = makeClient();
+  client.httpClient.get = async () => ({
+    data: { errors: { not_found: ['Form not found'] }, error_data: [] }
+  });
+
+  await assert.rejects(
+    () => client.getResults({ form_id: 99999999 }),
+    (error) => {
+      // The same condition on the sibling field-filters call reports a 404, so
+      // this must read the same way rather than as a successful empty read.
+      assert.match(error.message, /Resource not found: Form not found/);
+      assert.equal(error.status, 404);
+      assert.equal(error.code, 'not_found');
+      return true;
+    }
+  );
+});
+
+test('gf_get_results: any other WP_Error code in a 200 also throws', async () => {
+  const client = makeClient();
+  client.httpClient.get = async () => ({
+    data: { errors: { results_unavailable: ['Something broke'] }, error_data: [] }
+  });
+
+  await assert.rejects(
+    () => client.getResults({ form_id: 1 }),
+    (error) => {
+      assert.match(error.message, /Something broke/);
+      assert.equal(error.code, 'results_unavailable');
+      return true;
+    }
+  );
+});
+
+test('gf_get_results: a real results payload with zero entries is returned, not treated as an error', async () => {
+  // The control. A form with no entries is a successful read of nothing, and GF
+  // spells it as a normal payload — status/entry_count/field_data, no `errors`.
+  const client = makeClient();
+  client.httpClient.get = async () => ({
+    data: { status: 'complete', entry_count: 0, field_data: {}, timestamp: 1758000000 }
+  });
+
+  const result = await client.getResults({ form_id: 159 });
+  assert.equal(result.results.entry_count, 0);
+  assert.equal(result.results.status, 'complete');
+});
+
+test('gf_get_results: a populated results payload still comes back untouched', async () => {
+  const client = makeClient();
+  client.httpClient.get = async () => ({
+    data: { status: 'complete', entry_count: 7, field_data: { 1: { Yes: 4, No: 3 } }, timestamp: 1758000000 }
+  });
+
+  const result = await client.getResults({ form_id: 159 });
+  assert.equal(result.results.entry_count, 7);
+  assert.deepEqual(result.results.field_data, { 1: { Yes: 4, No: 3 } });
+});

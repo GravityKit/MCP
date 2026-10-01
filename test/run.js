@@ -17,6 +17,7 @@ import sanitizeTests from './sanitize.test.js';
 import bugFixesTests from './bug-fixes.test.js';
 import mutexTests from './mutex.test.js';
 import abilitiesLoaderTests from './abilities-loader.test.js';
+import checkboxExpansionTests from './checkbox-expansion.test.js';
 
 // Test suites to run
 const testSuites = [
@@ -31,7 +32,8 @@ const testSuites = [
   sanitizeTests,
   mutexTests,
   bugFixesTests,
-  abilitiesLoaderTests
+  abilitiesLoaderTests,
+  checkboxExpansionTests
 ];
 
 // Test statistics

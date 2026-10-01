@@ -4,6 +4,8 @@
  */
 
 import { FieldAwareValidator } from './field-validation.js';
+import { CORE_ENTRY_KEYS, isFieldKey } from '../utils/compact.js';
+import { getFieldDefinition } from '../field-definitions/field-registry.js';
 import { validate, ValidationSchema } from './validation-chain.js';
 import { VALIDATION_CONFIG, getEnumValues } from './validation-config.js';
 import {
@@ -38,6 +40,89 @@ export class BaseValidator {
     }
   }
 
+  /**
+   * Resolves an id given under either of two accepted names.
+   *
+   * @param {object} input     The tool input.
+   * @param {string} preferred The name this tool documents; the other is accepted too.
+   * @param {string} other     The accepted alias.
+   * @returns {number} The validated id.
+   * @throws When neither is present, either is not a positive integer, or both
+   *   are present and resolve to different ids.
+   */
+  static resolveIdAlias(input, preferred, other) {
+    const isGiven = name => input[name] !== undefined && input[name] !== null && input[name] !== '';
+    const hasPreferred = isGiven(preferred);
+    const hasOther = isGiven(other);
+
+    if (!hasPreferred && !hasOther) {
+      throw new Error(`${preferred} is required`);
+    }
+
+    const preferredId = hasPreferred ? BaseValidator.validateId(input[preferred], preferred) : null;
+    const otherId = hasOther ? BaseValidator.validateId(input[other], other) : null;
+
+    if (hasPreferred && hasOther && preferredId !== otherId) {
+      throw new Error(`${preferred} and ${other} were both given and disagree (${input[preferred]} vs ${input[other]}); pass one`);
+    }
+
+    return hasPreferred ? preferredId : otherId;
+  }
+
+  /**
+   * Resolves an id given under either of two names and removes BOTH names from the
+   * validated copy, leaving the id under `canonicalKey` alone.
+   *
+   * The legacy validators spread their input and the client forwards what is left,
+   * so an alias a validator resolved but forgot to delete rode the request body.
+   * Doing the delete here makes it impossible to forget. It matters beyond a stray
+   * key: WordPress reads `$request['entry_id']` from the JSON body before the URL
+   * (WP_REST_Request::get_parameter_order) and GF's entries controller writes it
+   * into `$entry['id']`, so a body alias that differed from the URL id would have
+   * updated a different entry.
+   *
+   * @param {object} validated    The copy being built; mutated.
+   * @param {string} canonicalKey The one key the id ends up under.
+   * @param {string} preferred    The name the tool documents.
+   * @param {string} other        The accepted alias.
+   * @returns {number} The validated id.
+   * @throws When {@see BaseValidator.resolveIdAlias} would.
+   */
+  static takeIdAlias(validated, canonicalKey, preferred, other) {
+    const id = BaseValidator.resolveIdAlias(validated, preferred, other);
+
+    delete validated[preferred];
+    delete validated[other];
+    validated[canonicalKey] = id;
+
+    return id;
+  }
+
+  /**
+   * Resolves a form id given under either `id` or `form_id`. The form tools are
+   * split between the two spellings, so both are accepted everywhere.
+   *
+   * @param {object} input     The tool input.
+   * @param {string} preferred The name this tool documents.
+   * @returns {number} The validated id.
+   */
+  static resolveFormId(input, preferred = 'form_id') {
+    return BaseValidator.resolveIdAlias(input, preferred, preferred === 'form_id' ? 'id' : 'form_id');
+  }
+
+  /**
+   * Resolves an entry id given under either `id` or `entry_id`. The entry tools
+   * document `id` while gf_send_notifications names the same entry `entry_id`, so
+   * both are accepted.
+   *
+   * @param {object} input     The tool input.
+   * @param {string} preferred The name this tool documents.
+   * @returns {number} The validated id.
+   */
+  static resolveEntryId(input, preferred = 'id') {
+    return BaseValidator.resolveIdAlias(input, preferred, preferred === 'id' ? 'entry_id' : 'id');
+  }
+
   static validateId(id, fieldName = 'id') {
     const schema = new ValidationSchema();
     schema.field('value', validate('value')
@@ -66,6 +151,11 @@ export class BaseValidator {
     return ids.map((id, index) =>
       this.validateId(id, `${fieldName}[${index}]`)
     );
+  }
+
+  /** A value the caller actually passed: an unset or null key says nothing. */
+  static isGiven(value) {
+    return value !== undefined && value !== null;
   }
 
   static validatePagination(params) {
@@ -226,6 +316,66 @@ export class BaseValidator {
     return date;
   }
 
+  /**
+   * An entry timestamp, as the "Y-m-d H:i:s" UTC string Gravity Forms stores.
+   *
+   * GFAPI::add_entry/update_entry write date_created and date_updated verbatim
+   * into a DATETIME column and document the value as UTC "Y-m-d H:i:s", which is
+   * also what every entry read returns, so that shape must be accepted or an
+   * entry cannot be written back as read. ISO 8601 is converted here instead of
+   * forwarded: MySQL would take the "Z" or offset as noise or a session-zone
+   * shift, storing a different moment without saying so. A timestamp with no
+   * zone is refused: GF has no way to know whose clock it is.
+   */
+  static normalizeEntryDate(value, fieldName) {
+    const expected = `${fieldName} must be UTC as "YYYY-MM-DD HH:MM:SS" (the format Gravity Forms returns), or an ISO 8601 timestamp with a Z or offset such as 2026-01-01T02:30:00+02:00`;
+    if (typeof value !== 'string') {
+      throw new Error(`${fieldName} must be a string`);
+    }
+
+    const parts = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:([ T])(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/);
+    if (!parts) {
+      throw new Error(expected);
+    }
+
+    const [, year, month, day, separator, hour = '00', minute = '00', second = '00', zone] = parts;
+    const isGfShape = separator === ' ' && zone === undefined;
+    const isIsoShape = separator === 'T' && zone !== undefined;
+    const isDateOnly = separator === undefined;
+    if (!isGfShape && !isIsoShape && !isDateOnly) {
+      throw new Error(expected);
+    }
+
+    let offsetMinutes = 0;
+    if (zone !== undefined && zone !== 'Z') {
+      const [offsetHours, offsetMins] = zone.slice(1).split(':').map(Number);
+      const offsetInRange = offsetHours <= 23 && offsetMins <= 59;
+      if (!offsetInRange) {
+        throw new Error(expected);
+      }
+      offsetMinutes = (zone[0] === '-' ? -1 : 1) * (offsetHours * 60 + offsetMins);
+    }
+
+    // Date rolls 2026-02-30 forward to March; comparing the parts back catches it.
+    const moment = new Date(0);
+    moment.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
+    moment.setUTCHours(Number(hour), Number(minute), Number(second), 0);
+    const rolledOver =
+      moment.getUTCFullYear() !== Number(year) ||
+      moment.getUTCMonth() !== Number(month) - 1 ||
+      moment.getUTCDate() !== Number(day) ||
+      moment.getUTCHours() !== Number(hour) ||
+      moment.getUTCMinutes() !== Number(minute);
+    if (rolledOver) {
+      throw new Error(expected);
+    }
+
+    const utc = new Date(moment.getTime() - offsetMinutes * 60000);
+    const pad = (number, width = 2) => String(number).padStart(width, '0');
+    return `${pad(utc.getUTCFullYear(), 4)}-${pad(utc.getUTCMonth() + 1)}-${pad(utc.getUTCDate())} ` +
+      `${pad(utc.getUTCHours())}:${pad(utc.getUTCMinutes())}:${pad(utc.getUTCSeconds())}`;
+  }
+
   static validateBoolean(value, fieldName = 'boolean') {
     if (value !== undefined && typeof value !== 'boolean') {
       throw new Error(`${fieldName} must be a boolean`);
@@ -318,9 +468,7 @@ export class FormsValidator extends BaseValidator {
     const validated = { ...formData };
 
     if (isUpdate) {
-      // Use lowercase for validation tests
-      BaseValidator.validateRequired(formData, ['id']);
-      validated.id = BaseValidator.validateId(formData.id, 'id');
+      BaseValidator.takeIdAlias(validated, 'id', 'id', 'form_id');
     } else {
       BaseValidator.validateRequired(formData, ['title']);
     }
@@ -362,6 +510,18 @@ export class FormsValidator extends BaseValidator {
       validated.notifications = this.validateObject(formData.notifications, 'notifications');
     }
 
+    // The opt-in to replace a nested property whole (see guardMerge); only an update
+    // reads it, and it must never reach the wire as a form property.
+    if (formData.replace !== undefined) {
+      if (!isUpdate) {
+        throw new Error('replace applies to gf_update_form, which replaces nested properties whole; a new form has nothing to replace');
+      }
+      const isStringList = Array.isArray(formData.replace) && formData.replace.every((name) => typeof name === 'string');
+      if (!isStringList) {
+        throw new Error('replace must be an array of strings naming properties to replace whole, e.g. ["confirmations"]');
+      }
+    }
+
     if (formData.schedule_start !== undefined) {
       validated.schedule_start = this.validateDate(formData.schedule_start, 'schedule_start');
     }
@@ -381,17 +541,45 @@ export class EntriesValidator extends BaseValidator {
   static validateListEntriesParams(params) {
     const validated = {};
 
-    // NOTE: GF's /entries endpoint paginates ONLY via the `paging` object
-    // (paging[page_size], paging[offset], paging[current_page]) — it has no
-    // top-level page/per_page params (class-gf-rest-controller.php parse_entry_search_params).
-    // Emitting page/per_page here leaked them to the wire as no-op params, so
-    // they are intentionally NOT merged in. Entry paging is the `paging` block below.
+    // GF's /entries endpoint reads paging only from the `paging` object
+    // (page_size, current_page, offset; parse_entry_search_params in
+    // class-gf-rest-controller.php). A top-level page/per_page/offset is never
+    // read, so a caller who passed offset:100 got page 1 and believed they had
+    // paginated. They are refused rather than mapped: mapping would have to
+    // guess what `page` means and which side wins when `paging` is also given.
+    const topLevelPaging = ['per_page', 'page', 'offset'].filter(key => this.isGiven(params[key]));
+    if (topLevelPaging.length > 0) {
+      throw new Error(`${topLevelPaging.join(', ')} ${topLevelPaging.length === 1 ? 'was' : 'were'} given at the top level, where Gravity Forms does not read ${topLevelPaging.length === 1 ? 'it' : 'them'} and returns the first 10 entries: pass paging: { page_size, current_page } instead (or paging: { page_size, offset } to start at an entry offset)`);
+    }
 
-    if (params.form_ids !== undefined) {
+    // GF reads the form filter on /entries as an ARRAY (form_ids[0]=…) and has no
+    // singular form_id there, so one that reaches the wire is ignored and the
+    // response is every entry on the site. Every other gf_* tool spells the form
+    // as form_id, so accept it here as a one-element form_ids. An empty array
+    // says nothing, so it does not contradict a singular alongside it.
+    const formIdsArrayGiven = params.form_ids !== undefined;
+    const formIdGiven = params.form_id !== undefined && params.form_id !== null && params.form_id !== '';
+
+    if (formIdsArrayGiven) {
       validated.form_ids = this.validateArray(params.form_ids, 'form_ids');
       if (validated.form_ids.length > 0) {
         validated.form_ids = this.validateIds(validated.form_ids, 'form_ids');
       }
+    }
+
+    if (formIdGiven) {
+      // Both values are validated before they are compared, so a bad id is
+      // reported as a bad id rather than as a disagreement.
+      const formId = this.validateId(params.form_id, 'form_id');
+      const plural = validated.form_ids || [];
+      const pluralNamesForms = plural.length > 0;
+      const namesTheSameForm = plural.length === 1 && plural[0] === formId;
+
+      if (pluralNamesForms && !namesTheSameForm) {
+        throw new Error(`form_id and form_ids were both given and disagree (${formId} vs [${plural.join(', ')}]); pass one`);
+      }
+
+      validated.form_ids = [formId];
     }
 
     if (params.include !== undefined) {
@@ -463,19 +651,467 @@ export class EntriesValidator extends BaseValidator {
     return validated;
   }
 
+  /**
+   * Keys GF would not have stored, given what it answered with.
+   *
+   * A key that is not a field, not an entry column and not entry meta is dropped
+   * by GFAPI::add_entry/update_entry, and the response gives no sign of it. The
+   * stored entry always lists every registered meta key (false when unset), so a
+   * candidate missing from it was never registered. A sent null or '' is left out:
+   * it clears meta, or says nothing about a key that is not there.
+   *
+   * @param {object} sent   The keys that were sent.
+   * @param {object} stored The entry GF answered with.
+   * @returns {string[]} The sent keys GF did not store.
+   */
+  static findIgnoredKeys(sent, stored) {
+    const storedEntry = stored && typeof stored === 'object' ? stored : {};
+
+    return Object.keys(sent).filter(key => {
+      const isKnownKind = this.isFieldKey(key) || CORE_ENTRY_KEYS.has(key);
+      const isEmptyValue = sent[key] === null || sent[key] === '';
+      const isStored = Object.prototype.hasOwnProperty.call(storedEntry, key);
+
+      return !isKnownKind && !isEmptyValue && !isStored;
+    });
+  }
+
+  /**
+   * A field id ("6"), a sub-input id ("6.3", or "6_3" as submissions spell it), or a
+   * credit card's "7.2_month". Defined once in utils/compact.js.
+   */
+  static isFieldKey(key) {
+    return isFieldKey(key);
+  }
+
+  /**
+   * Puts sub-input keys in the dotted spelling GF stores them under.
+   *
+   * gf_submit_form_data treats `input_5.3` and `input_5_3` as one input and refuses
+   * two values for it; entries follow the same rule. GF reads `6.3` from an entry
+   * body and ignores `6_3`, so the underscored spelling is rewritten rather than
+   * passed through to be dropped.
+   *
+   * @param {object} data Entry data.
+   * @returns {object} A copy with dotted sub-input keys.
+   * @throws When one sub-input is given under both spellings with different values.
+   */
+  static normalizeFieldKeys(data) {
+    const out = { ...data };
+
+    Object.keys(data).forEach(key => {
+      if (!/^\d+_\d+$/.test(key)) {
+        return;
+      }
+      const dotted = key.replace('_', '.');
+      delete out[key];
+
+      const hasBothSpellings = Object.prototype.hasOwnProperty.call(data, dotted);
+      if (hasBothSpellings) {
+        const spellingsDisagree = JSON.stringify(data[dotted]) !== JSON.stringify(data[key]);
+        if (spellingsDisagree) {
+          throw new Error(`${key} and ${dotted} name the same input and disagree; pass one`);
+        }
+        return;
+      }
+      out[dotted] = data[key];
+    });
+
+    return out;
+  }
+
+  /**
+   * Refuses a write that cannot store what it carries, before any HTTP call.
+   *
+   * GF reads field values from top-level keys and ignores the rest. A plain object
+   * under a non-field key is the nested `entry: { "1": "Ada" }` guess; accepted, it
+   * stored nothing and reported success. On create, a payload with no field key at
+   * all stores nothing either.
+   *
+   * @param {object} data      Entry data, sub-input keys already normalized.
+   * @param {boolean} isUpdate Whether this is gf_update_entry.
+   * @throws When the payload cannot store a value.
+   */
+  static assertStorableShape(data, isUpdate) {
+    const idKey = isUpdate ? 'id' : 'form_id';
+    const idExample = `${idKey}: ${data[idKey]}`;
+
+    Object.keys(data).forEach(key => {
+      const value = data[key];
+      const isNamedProperty = this.isFieldKey(key) || CORE_ENTRY_KEYS.has(key);
+      const isPlainObject = value !== null && typeof value === 'object' && !Array.isArray(value);
+
+      if (!isNamedProperty && isPlainObject) {
+        throw new Error(`"${key}" holds an object, and Gravity Forms reads field values only from top-level keys beside ${idKey}: pass { ${idExample}, "1": "Ada", "2": "ada@example.com" }, not values nested under "${key}"`);
+      }
+    });
+
+    const hasFieldKey = Object.keys(data).some(key => this.isFieldKey(key));
+    if (!isUpdate && !hasFieldKey) {
+      throw new Error('no field values were given: pass them as top-level field-id keys (e.g. "1": "Ada", "2": "ada@example.com", "6.3": "..."), one per field id or sub-input, not nested under "entry"');
+    }
+  }
+
+  /**
+   * Refuses field keys that name no field (or no input) on the form.
+   *
+   * GF drops such a key and still answers with the request body, so the value
+   * looks stored. A sub-input is checked against the field's listed inputs; a
+   * field that lists none (some post fields) accepts any sub-input, since refusing
+   * would block a legitimate write.
+   *
+   * Fields nested inside another (a Repeater's children) count as fields of the
+   * form: GF resolves them by id at any depth, and a submission names them
+   * `input_<child id>`.
+   *
+   * @param {object} data   Entry data, sub-input keys already normalized.
+   * @param {Array} formFields The form's `fields`.
+   * @param {number} formId The form id, for the message.
+   * @param {string} [consequence] What GF does with a key like this, ending the message.
+   * @throws When a key resolves to nothing.
+   */
+  static assertKeysResolve(data, formFields, formId, consequence = 'nothing would be stored for it') {
+    const problems = [];
+    const fields = this.flattenFields(formFields);
+
+    Object.keys(data).filter(key => this.isFieldKey(key)).forEach(key => {
+      const [fieldPart, inputPart] = key.split('.');
+      const field = fields.find(candidate => Number(candidate?.id) === Number(fieldPart));
+
+      if (!field) {
+        const ids = fields.map(candidate => candidate?.id).filter(id => id !== undefined);
+        const shown = ids.length > 40 ? `${ids.slice(0, 40).join(', ')}, …` : ids.join(', ');
+        problems.push(`field ${fieldPart} does not exist on form ${formId} (its fields: ${shown || 'none'})`);
+        return;
+      }
+
+      const listsInputs = Array.isArray(field.inputs) && field.inputs.length > 0;
+      if (inputPart !== undefined && listsInputs) {
+        const inputIds = field.inputs.map(input => String(input.id));
+        if (!inputIds.includes(key)) {
+          problems.push(`input ${key} does not exist on field ${fieldPart} of form ${formId} (its inputs: ${inputIds.join(', ')})`);
+        }
+      }
+    });
+
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('; ')}. Gravity Forms ignores a key like this, so ${consequence}`);
+    }
+  }
+
+  /**
+   * What a field's registry storage says about the value shapes it can hold.
+   *
+   * @param {object} field A form field.
+   * @returns {{list: boolean, object: boolean}} Whether an array, and a plain
+   *   object, can be stored under the field's own id.
+   */
+  static acceptedValueShapes(field) {
+    const inputType = field.inputType || field.type;
+
+    // A field with choices holds several values only when it is a checkbox (the client
+    // expands the array to its inputs) or a multiselect. A radio or dropdown keeps
+    // one: given an array, the old client took the first element and dropped the
+    // rest, and a submission had GF read it as repeater rows (2_0, 2_1). The registry
+    // already says which types hold one value, so ask it rather than listing them.
+    const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
+    if (hasChoices) {
+      const choiceDefinition = getFieldDefinition(inputType);
+      const holdsOneChoice = Boolean(choiceDefinition?.hasChoices)
+        && choiceDefinition.storage?.type === 'string'
+        && choiceDefinition.storage?.format === 'single';
+      if (holdsOneChoice) {
+        return { list: false, object: false };
+      }
+
+      const isCheckboxStyle = Array.isArray(field.inputs) && field.inputs.length > 0;
+      return { list: true, object: !isCheckboxStyle && field.type === 'chainedselect' };
+    }
+
+    const definition = getFieldDefinition(inputType) || getFieldDefinition(field.type);
+    if (!definition || !definition.storage) {
+      // A type from an add-on: its shape cannot be judged, so nothing is refused.
+      return { list: true, object: true };
+    }
+
+    const { type, format } = definition.storage;
+    const storesStructure = ['commaSeparated', 'serialized', 'json', 'conditional'].includes(format) || type === 'varies';
+    const isPassthrough = field.type === 'list' || field.type === 'chainedselect';
+
+    return {
+      list: storesStructure || isPassthrough,
+      object: ['serialized', 'json', 'conditional'].includes(format) || type === 'varies' || isPassthrough
+    };
+  }
+
+  /**
+   * Refuses an array or object for a field that holds one value.
+   *
+   * assertKeysResolve checks a key names a field, not that the value fits it. An
+   * array sent to a text field is not joined or expanded: GF stores nothing and the
+   * call still answers with an entry id. An empty array is refused too: on a create
+   * it stores nothing, and on an update GF leaves the stored value untouched, so it
+   * cannot mean "clear" anywhere; "" and null say that, and are not refused.
+   * Fields nested in a Repeater are not judged (the parent holds their rows).
+   *
+   * @param {object} data   Entry data, sub-input keys already normalized.
+   * @param {Array} fields  The form's `fields`.
+   * @throws When a value's shape cannot be stored by its field.
+   */
+  static assertValueShapes(data, fields) {
+    const problems = [];
+    const checkboxProblems = [];
+    const compoundProblems = [];
+
+    Object.keys(data).filter(key => this.isFieldKey(key)).forEach(key => {
+      const value = data[key];
+      const isList = Array.isArray(value);
+      const isObject = value !== null && typeof value === 'object' && !isList;
+      const [fieldPart, inputPart] = key.split('.');
+      const field = fields.find(candidate => Number(candidate?.id) === Number(fieldPart));
+      if (!field) {
+        return;
+      }
+
+      // A scalar is the right shape for most fields and the wrong one for a checkbox's
+      // own key: GF reads a checkbox only from its inputs, so "p" under `4` is stored
+      // nowhere while the call reports success. "" and null say "no value" and pass.
+      const isScalar = !isList && !isObject;
+      const isEmpty = value === '' || value === null || value === undefined;
+
+      // Every compound field (name, address, consent, creditcard, chainedselect) is read
+      // from its inputs the same way, whatever shape lands under the parent key: a scalar
+      // is stored nowhere, and an array has no ordering contract to map it to inputs
+      // (unlike a checkbox's choices, which are matched by value). The registry decides,
+      // so a type is covered by what it stores, not by being named here. A `time` field
+      // has inputs too but is registry-string, and a scalar under its key does store.
+      // Without listed inputs GF falls back to the field's own key, so nothing to refuse.
+      const isNamedCompound = this.isInputOnlyCompound(field);
+      const hasInputList = Array.isArray(field.inputs) && field.inputs.length > 0;
+      const compoundHasEmptyValue = isScalar && isEmpty;
+      if (inputPart === undefined && isNamedCompound && hasInputList && !compoundHasEmptyValue) {
+        compoundProblems.push(this.compoundShapeMessage(field, key, value));
+        return;
+      }
+
+      if (isScalar) {
+        const isCheckbox = (field.inputType || field.type) === 'checkbox';
+        if (inputPart === undefined && isCheckbox && !isEmpty) {
+          checkboxProblems.push(this.checkboxScalarMessage(field, key, value));
+        }
+        return;
+      }
+
+      const accepted = inputPart !== undefined ? { list: false, object: false } : this.acceptedValueShapes(field);
+      const isAccepted = isList ? accepted.list : accepted.object;
+      const needsInputs = isList && inputPart === undefined && this.isCheckboxWithoutInputs(field);
+      if (needsInputs) {
+        checkboxProblems.push(`field ${key} (${field.inputType || field.type}) lists choices but no inputs, and Gravity Forms reads a checkbox from its inputs (${key}.1, ${key}.2, ...), so a value for it has nowhere to be stored. Add the inputs to the field first (send it through gf_update_form with an \`inputs\` list)`);
+      } else if (!isAccepted) {
+        const subject = inputPart !== undefined ? `input ${key} of field ${fieldPart}` : `field ${key} (${field.inputType || field.type})`;
+        problems.push(`${subject} takes a single value, but ${isList ? 'an array' : 'an object'} was given`);
+      }
+    });
+
+    const messages = [...checkboxProblems, ...compoundProblems];
+    if (problems.length > 0) {
+      messages.push(`${problems.join('; ')}. Gravity Forms stores nothing for a value like this: pass one value, or "" to leave it empty`);
+    }
+    if (messages.length > 0) {
+      throw new Error(messages.join('. '));
+    }
+  }
+
+  /**
+   * Whether a card number input's value is already masked.
+   *
+   * A whitelist, so nothing can pass by looking masked: only mask characters (X, x, *,
+   * a bullet) with spaces or hyphens between them, then at most four ASCII digits at
+   * the end. GF's own mask is X padded to the number's length with the last four kept
+   * (GF_Field_CreditCard::get_value_save_input), which this accepts. A digit anywhere
+   * but the last four places, a non-ASCII digit, or a letter that is not the mask
+   * fails, so a real number cannot get through as one with a few characters changed.
+   *
+   * @param {*} value What was sent under the card number input.
+   * @returns {boolean} True when the value is empty or masked.
+   */
+  static isMaskedCardNumber(value) {
+    if (value === null || value === undefined || value === '') {
+      return true;
+    }
+    return /^[Xx*\u2022\u25CF\s-]*\d{0,4}$/.test(String(value));
+  }
+
+  /**
+   * Refuses entry values that Gravity Forms sanitizes only when a form is submitted.
+   *
+   * GF masks a card number to its last four digits and drops a password inside
+   * GF_Field::get_value_save_input(), reached from a submission (save_lead ->
+   * save_input) and nowhere in the entries API: GFAPI::add_entry and update_entry
+   * pass $entry[$input_id] to GFFormsModel::queue_batch_field_operation unchanged. A
+   * creditcard is also written from every input it lists (.1, .2, .3, .4, .5), not
+   * the .1 and .4 a submission keeps, so a security code would be stored as well.
+   * One call would leave that in the entry for the site owner to deal with, and an
+   * agent cannot see it. A masked or empty value passes. Only the entry tools call
+   * this: a submission goes through GF's own masking, so refusing there would block
+   * the one path that is safe. `.4` (card type) is not refused: a submission stores
+   * a plain type name there, and the API stores the string as given with no secret in it.
+   *
+   * @param {object} data   Entry data, sub-input keys already normalized.
+   * @param {Array} fields  The form's `fields`.
+   * @throws When a value would be stored that a submission would not store.
+   */
+  static assertSensitiveValues(data, fields) {
+    const problems = [];
+
+    Object.keys(data).forEach(key => {
+      const match = /^(\d+)(?:\.(\d+)(?:_\w+)?)?$/.exec(key);
+      if (!match) {
+        return;
+      }
+      const field = fields.find(candidate => Number(candidate?.id) === Number(match[1]));
+      if (!field) {
+        return;
+      }
+
+      const value = data[key];
+      const isEmpty = value === '' || value === null || value === undefined;
+      const isScalar = !Array.isArray(value) && (value === null || typeof value !== 'object');
+      if (isEmpty || !isScalar) {
+        return;
+      }
+
+      const fieldType = field.inputType || field.type;
+      const inputNumber = match[2];
+
+      if (fieldType === 'creditcard' && inputNumber === '1' && !this.isMaskedCardNumber(value)) {
+        problems.push(`input ${key} is a credit card number, and it would be stored unmasked`);
+      } else if (fieldType === 'creditcard' && inputNumber !== undefined && inputNumber !== '1' && inputNumber !== '4') {
+        const part = { 2: 'expiration date', 3: 'security code', 5: 'cardholder name' }[inputNumber] || 'input';
+        problems.push(`input ${key} is a credit card ${part}, which Gravity Forms never stores from a submission but the entries API would`);
+      } else if (fieldType === 'password' && inputNumber === undefined) {
+        problems.push(`field ${key} (password) would be stored in plain text`);
+      }
+    });
+
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('; ')}. Gravity Forms only masks a card number to its last four digits, and only discards a password, when a form is submitted. The entries API does neither, so nothing here would protect the value. To store a card number, send it already masked (the last four digits behind X characters). To record a real card number, use gf_submit_form_data, which goes through the form and masks it. A password, security code, expiration date and cardholder name are not kept on an entry by a submission, so leave them out`);
+    }
+  }
+
+  /**
+   * Whether a field is compound by the registry, other than a checkbox.
+   *
+   * Checkbox is excluded because an array of choice values is a real input for it
+   * (see checkboxScalarMessage); the others have no such spelling.
+   *
+   * @param {object} field A form field.
+   * @returns {boolean} True when storage.type is 'compound' and the field is not a checkbox.
+   */
+  static isInputOnlyCompound(field) {
+    const resolvedType = field.inputType || field.type;
+    if (resolvedType === 'checkbox') {
+      return false;
+    }
+    const definition = getFieldDefinition(resolvedType) || getFieldDefinition(field.type);
+    return definition?.storage?.type === 'compound';
+  }
+
+  /**
+   * The refusal for a value sent under a compound field's own key (not a checkbox).
+   *
+   * No array spelling is offered: GF maps nothing from list position to input, so
+   * the only repair is to name the input.
+   *
+   * @param {object} field A name, address, consent, creditcard or chainedselect field.
+   * @param {string} key   The key the value was sent under (the field id).
+   * @param {*} value      What was sent.
+   * @returns {string} What went wrong and the input spelling that works.
+   */
+  static compoundShapeMessage(field, key, value) {
+    const fieldType = field.inputType || field.type;
+    // GF keeps only the number and type inputs of a credit card (GF_Field_CreditCard::get_entry_inputs).
+    const storedOnly = fieldType === 'creditcard' ? [`${key}.1`, `${key}.4`] : null;
+    const listed = field.inputs.filter(input => !storedOnly || storedOnly.includes(String(input.id)));
+    const described = listed.map(input => (input.label ? `${input.id} (${input.label})` : String(input.id)));
+    const shown = described.length > 8 ? `${described.slice(0, 8).join(', ')}, ...` : described.join(', ');
+    const given = Array.isArray(value) ? 'an array' : (value !== null && typeof value === 'object' ? 'an object' : JSON.stringify(value));
+    const example = Array.isArray(value) || (value !== null && typeof value === 'object') ? '"..."' : JSON.stringify(value);
+    const exampleInput = listed[0]?.id ?? `${key}.1`;
+    return `field ${key} (${fieldType}) keeps each part in its own input (${shown}), which Gravity Forms reads instead of the field's own key, so ${given} sent under ${key} is stored nowhere. Name the input ("${exampleInput}": ${example})`;
+  }
+
+  /**
+   * The refusal for a scalar sent under a checkbox's own key.
+   *
+   * Refused rather than matched to a choice: a string like "p,q" cannot be told from
+   * one choice whose text holds a comma, and the array form already does the matching.
+   *
+   * @param {object} field A checkbox field.
+   * @param {string} key   The key the value was sent under (the field id).
+   * @param {*} value      The scalar that was sent.
+   * @returns {string} What went wrong and the two spellings that work.
+   */
+  static checkboxScalarMessage(field, key, value) {
+    if (this.isCheckboxWithoutInputs(field)) {
+      return `field ${key} (${field.inputType || field.type}) lists choices but no inputs, and Gravity Forms reads a checkbox from its inputs (${key}.1, ${key}.2, ...), so ${JSON.stringify(value)} sent under ${key} has nowhere to be stored. Add the inputs to the field first (send it through gf_update_form with an \`inputs\` list)`;
+    }
+
+    const inputIds = (field.inputs || []).map(input => input.id);
+    // Name the input of the choice the value matches, so the example can be pasted.
+    const choices = Array.isArray(field.choices) ? field.choices : [];
+    const matched = choices.findIndex(choice => choice?.value === value || choice?.text === value);
+    const exampleInput = inputIds[matched] ?? inputIds[0] ?? `${key}.1`;
+    const shown = inputIds.length > 5 ? `${inputIds.slice(0, 5).join(', ')}, ...` : inputIds.join(', ');
+    return `field ${key} (${field.inputType || field.type}) is a checkbox, which Gravity Forms reads only from its inputs (${shown}), so ${JSON.stringify(value)} sent under ${key} is stored nowhere. Send an array to tick choices by value (${key}: [${JSON.stringify(value)}]), or name the input ("${exampleInput}": ${JSON.stringify(value)})`;
+  }
+
+  /**
+   * Whether a field is a checkbox whose inputs are missing.
+   *
+   * A checkbox created through the API keeps its choices and gets no inputs (the
+   * form editor builds them in JavaScript), and GF stores each choice under its own
+   * input, so there is nowhere to put a value.
+   *
+   * @param {object} field A form field.
+   * @returns {boolean} True for a checkbox with an empty or absent `inputs`.
+   */
+  static isCheckboxWithoutInputs(field) {
+    const isCheckbox = (field.inputType || field.type) === 'checkbox';
+    const hasInputs = Array.isArray(field.inputs) && field.inputs.length > 0;
+    return isCheckbox && !hasInputs;
+  }
+
+  /**
+   * A form's fields with every nested field (Repeater children) listed beside them.
+   *
+   * @param {Array} fields The form's `fields`.
+   * @returns {Array} Every field at any depth.
+   */
+  static flattenFields(fields) {
+    const flat = [];
+    const walk = list => (Array.isArray(list) ? list : []).forEach(field => {
+      flat.push(field);
+      walk(field?.fields);
+    });
+    walk(fields);
+    return flat;
+  }
+
   static validateEntryData(entryData, isUpdate = false) {
     if (!entryData || typeof entryData !== 'object') {
       throw new Error('Entry data must be an object');
     }
 
-    const validated = { ...entryData };
+    const validated = this.normalizeFieldKeys(entryData);
 
     if (!isUpdate) {
       BaseValidator.validateRequired(entryData, ['form_id']);
       validated.form_id = this.validateId(entryData.form_id, 'form_id');
     } else {
-      BaseValidator.validateRequired(entryData, ['id']);
-      validated.id = this.validateId(entryData.id, 'id');
+      // The client spreads everything but `id` into the PUT body, so an alias left
+      // here would be saved onto the entry as a field of its own.
+      BaseValidator.takeIdAlias(validated, 'id', 'id', 'entry_id');
       if (entryData.form_id !== undefined) {
         validated.form_id = this.validateId(entryData.form_id, 'form_id');
       }
@@ -489,9 +1125,15 @@ export class EntriesValidator extends BaseValidator {
       validated.status = this.validateStatus(entryData.status, getEnumValues('entryStatus'));
     }
 
-    if (entryData.date_created) {
-      validated.date_created = this.validateDate(entryData.date_created, 'date_created');
-    }
+    // Both take the same shape; a date_updated sent raw reached MySQL unchecked.
+    ['date_created', 'date_updated'].forEach(key => {
+      const isSet = BaseValidator.isGiven(entryData[key]) && entryData[key] !== '';
+      if (isSet) {
+        validated[key] = BaseValidator.normalizeEntryDate(entryData[key], key);
+      }
+    });
+
+    this.assertStorableShape(validated, isUpdate);
 
     return validated;
   }
@@ -523,10 +1165,16 @@ export class ValidationFactory {
       switch (toolName) {
         case 'gf_list_forms':
           // GF's /forms endpoint honors ONLY `include` server-side
-          // (class-controller-forms.php get_items reads $request['include'];
-          // get_collection_params declares only page/per_page/search). `status`,
-          // `active`, and `exclude` are NOT read by GF — forwarding them was a
-          // no-op that misleadingly advertised support, so drop them here.
+          // (class-controller-forms.php get_items reads $request['include'] and
+          // nothing else; get_forms(true) lists active forms). The rest were
+          // dropped, which returned every active form to a caller who had asked
+          // for a page or for inactive ones. They are refused so the caller
+          // learns the filter did nothing.
+          const unreadFormsParams = ['per_page', 'page', 'status', 'active', 'exclude', 'search']
+            .filter(key => BaseValidator.isGiven(input[key]));
+          if (unreadFormsParams.length > 0) {
+            throw new Error(`${unreadFormsParams.join(', ')} ${unreadFormsParams.length === 1 ? 'is' : 'are'} not read by Gravity Forms on /forms, which returns every active form at once: narrow the result with include (form ids, which also fetches inactive and trashed forms) or filter what comes back`);
+          }
           const validated = {};
           if (input.include !== undefined) {
             validated.include = BaseValidator.validateArray(input.include, 'include');
@@ -542,9 +1190,8 @@ export class ValidationFactory {
           return FormsValidator.validateFormData(input, true);
         case 'gf_get_form':
         case 'gf_delete_form':
-          BaseValidator.validateRequired(input, ['id']);
           const result = {
-            id: BaseValidator.validateId(input.id, 'id')
+            id: BaseValidator.resolveFormId(input, 'id')
           };
           if (toolName === 'gf_delete_form' && input.force !== undefined) {
             result.force = BaseValidator.validateBoolean(input.force, 'force');
@@ -558,26 +1205,69 @@ export class ValidationFactory {
             throw new Error('Submission data must be an object');
           }
           const subValidated = { ...input };
-          if (!input.form_id) {
-            throw new Error('form_id is required for form submission');
-          }
-          subValidated.form_id = BaseValidator.validateId(input.form_id, 'form_id');
+          BaseValidator.takeIdAlias(subValidated, 'form_id', 'form_id', 'id');
+          let inputKeyCount = 0;
+          // GF spells "no value" as '', never the text "null".
+          const toWireScalar = entry => (entry === null || entry === undefined) ? '' : String(entry);
           Object.keys(input).forEach(key => {
-            if (key.startsWith('input_')) {
-              subValidated[key] = String(input[key]);
+            if (!key.startsWith('input_')) {
+              return;
             }
+            // GF collapses input_5.3 to input_5_3 and keeps whichever spelling
+            // came last. Normalizing first is what lets the two be compared.
+            const targetKey = /^input_\d+\.\d+$/.test(key) ? key.replace('.', '_') : key;
+            if (targetKey !== key) {
+              delete subValidated[key];
+              const hasBothSpellings = Object.prototype.hasOwnProperty.call(input, targetKey);
+              if (hasBothSpellings) {
+                const spellingsDisagree = JSON.stringify(input[targetKey]) !== JSON.stringify(input[key]);
+                if (spellingsDisagree) {
+                  throw new Error(`${key} and ${targetKey} name the same input and disagree; pass one`);
+                }
+                return;
+              }
+            }
+            // Joined, a comma inside an array value ("Atlanta, GA") cannot be
+            // told from a separator. A GF 3.0 "formatted" phone decodes only from
+            // a JSON string. A checkbox reads each choice from its own sub-input and
+            // ignores an array under input_5, so the client expands it
+            // (_prepareSubmission) once it has the form.
+            const value = input[key];
+            if (Array.isArray(value)) {
+              subValidated[targetKey] = value.map(entry =>
+                entry !== null && typeof entry === 'object' ? entry : toWireScalar(entry)
+              );
+            } else if (value !== null && typeof value === 'object') {
+              subValidated[targetKey] = JSON.stringify(value);
+            } else {
+              subValidated[targetKey] = toWireScalar(value);
+            }
+            inputKeyCount++;
           });
-          // GF declares field_values as type ['string','array'] — it is GF
-          // dynamic-population data (GFAPI::submit_form's 3rd arg), NOT the
-          // submitted values. Submitted values are the input_N keys above. An
-          // object is rejected by GF's own arg validation (HTTP 400), so reject
-          // it here with a message that points to the right place.
-          if (
-            input.field_values !== undefined &&
-            typeof input.field_values !== 'string' &&
-            !Array.isArray(input.field_values)
-          ) {
-            throw new Error('field_values must be a string (e.g. "p1=a&p2=b") or array — it is GF dynamic-population data, not submission values; pass field values as input_N keys (e.g. input_1)');
+
+          // field_values does nothing on the REST path, in every shape, so it is
+          // refused rather than accepted and ignored:
+          //  - a string: the only consumer that reads it, State_Handler::add_field, uses
+          //    rgget( $name, $field_values ), and GFForms::get() returns '' when
+          //    that array argument is not an array (parse_str runs only in the
+          //    shortcode and ajax render paths);
+          //  - a list: no dynamic-population parameter name is a list index;
+          //  - an associative array: /submissions registers field_values from the
+          //    schema as ['string','array'], and WordPress rest_is_array() needs a
+          //    numeric-keyed array, so it is a 400.
+          // The validation route registers no args, so an associative array does
+          // reach GFAPI::validate_form there and skips state validation for fields
+          // it names. Honoring it on validate but not submit would make validation
+          // report valid a submission that then fails, so it is refused on all three.
+          if (BaseValidator.isGiven(input.field_values)) {
+            throw new Error('field_values does nothing on Gravity Forms\' API path, so it is refused rather than accepted and ignored: pass field values as top-level input_N keys (e.g. input_1: "Ada", input_3: "..."; sub-inputs input_1_3)');
+          }
+          delete subValidated.field_values;
+
+          // GF answers an empty submission by naming whichever field is
+          // required, never the missing values.
+          if (toolName === 'gf_submit_form_data' && inputKeyCount === 0) {
+            throw new Error('no field values were given: pass them as top-level input_N keys (e.g. input_1: "Ada", input_3: "..."), one per field id');
           }
           return subValidated;
 
@@ -589,9 +1279,8 @@ export class ValidationFactory {
           return EntriesValidator.validateEntryData(input, true);
         case 'gf_get_entry':
         case 'gf_delete_entry':
-          BaseValidator.validateRequired(input, ['id']);
           const entryResult = {
-            id: BaseValidator.validateId(input.id, 'id')
+            id: BaseValidator.resolveEntryId(input, 'id')
           };
           if (toolName === 'gf_delete_entry' && input.force !== undefined) {
             entryResult.force = BaseValidator.validateBoolean(input.force, 'force');
@@ -608,6 +1297,16 @@ export class ValidationFactory {
           }
           if (input.form_id) {
             feedsValidated.form_id = BaseValidator.validateId(input.form_id, 'form_id');
+          }
+          // GF's /feeds controller reads `include` as the feed-id filter
+          // (class-controller-feeds.php get_items), and its per-form sibling
+          // declares it in get_collection_params. Without it the query is every
+          // feed on the site whatever ids were asked for.
+          if (input.include !== undefined) {
+            feedsValidated.include = BaseValidator.validateArray(input.include, 'include');
+            if (feedsValidated.include.length > 0) {
+              feedsValidated.include = BaseValidator.validateIds(feedsValidated.include, 'include');
+            }
           }
           return feedsValidated;
 
@@ -634,7 +1333,14 @@ export class ValidationFactory {
           return ChainFeedsValidator.validateFeedData(input, true);
 
         case 'gf_update_feed':
+          return ChainFeedsValidator.validateFeedData(input, false);
+
         case 'gf_patch_feed':
+          // PATCH already merges meta, so the opt-in has nothing to opt into. Accepting
+          // and ignoring it would let a caller believe it had chosen something.
+          if (input && input.replace !== undefined) {
+            throw new Error('replace applies to gf_update_feed; gf_patch_feed already merges meta into the stored feed');
+          }
           return ChainFeedsValidator.validateFeedData(input, false);
 
         case 'gf_get_feed':
@@ -659,6 +1365,14 @@ export class ValidationFactory {
           // reports required.
           if (!input || input.entry_id === undefined || input.entry_id === null) {
             throw new Error('entry_id is required');
+          }
+          // The route reads the entry, `_notifications` and `_event` only
+          // (class-controller-entry-notifications.php create_item) and sends to the
+          // addresses stored on the notification. These were once validated and then
+          // dropped, so a caller who set `to` got the notification sent elsewhere.
+          const unreadAddressParams = ['to', 'from', 'reply_to'].filter(key => BaseValidator.isGiven(input[key]));
+          if (unreadAddressParams.length > 0) {
+            throw new Error(`${unreadAddressParams.join(', ')} ${unreadAddressParams.length === 1 ? 'does' : 'do'} nothing on gf_send_notifications: Gravity Forms sends each notification to the addresses in that notification's own settings (To, From, Reply To), and this route reads only the entry, the notification ids and the event. Change the addresses on the notification with gf_update_form`);
           }
           return ChainNotificationsValidator.validateSendNotificationsParams(input);
 

@@ -24,7 +24,7 @@ import { sanitize } from './utils/sanitize.js';
 import { stripEmpty, stripEntryMetaFromResponse, abilityToolResult } from './utils/compact.js';
 import { WordPressClient } from './wp-client.js';
 import { loadAbilitiesAsTools } from './abilities/loader.js';
-import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive } from './server-runtime.js';
+import { runPlaneInit, buildToolList, classifyAbilityCall, resolveAbilitiesListTimeoutMs, stripControlParams, parseAllowDestructive, abilitiesStatusNote } from './server-runtime.js';
 import { VERSION } from './version.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -148,6 +148,13 @@ function initializeWordPressPlane() {
     // don't need to mint two separate credentials.
     wpClient = new WordPressClient(process.env);
     logger.info('✅ WordPress client initialized — loading GravityKit abilities');
+
+    // Both planes serve one session, and only GRAVITYKIT_WP_URL can send them to
+    // different hosts. When it has, a product-tool write lands on a site the
+    // gf_* reads never saw, so say which is which before anything runs.
+    if (wpClient.hostMismatch) {
+      logger.warn(`⚠️  Split target: GravityKit product tools act on ${wpClient.hostMismatch.abilities_site}, Gravity Forms tools on ${wpClient.hostMismatch.gravity_forms_site}. Unset GRAVITYKIT_WP_URL to put both on the Gravity Forms site.`);
+    }
 
     // Fire-and-forget: kick off the abilities catalog fetch in the
     // background so MCP startup is fast. ListTools awaits up to 2s
@@ -335,7 +342,7 @@ const GF_TOOL_DEFINITIONS = [
   // Forms Management (6 tools)
   {
     name: 'gf_list_forms',
-    description: 'List this site\'s active forms, by title. Trashed and inactive forms are left out unless their ids are named in `include`, which fetches those forms whatever their state. Gravity Forms returns every matching form at once: this endpoint has no search and no paging, so narrow the result with `include` or filter what comes back.',
+    description: 'List this site\'s active forms, by title. Trashed and inactive forms are left out unless their ids are named in `include`, which fetches those forms whatever their state. Gravity Forms returns every matching form at once: this endpoint has no search and no paging, so narrow the result with `include` or filter what comes back. per_page, page, status, active, exclude and search are refused.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -356,10 +363,11 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Form ID' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
@@ -377,8 +385,8 @@ const GF_TOOL_DEFINITIONS = [
           items: { type: 'object' }
         },
         button: { type: 'object', description: 'Submit button settings' },
-        confirmations: { type: 'object', description: 'Confirmation settings' },
-        notifications: { type: 'object', description: 'Notification settings' },
+        confirmations: { type: 'object', description: 'Confirmations keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); reported in assigned_ids when generated' },
+        notifications: { type: 'object', description: 'Notifications keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); one with no event fires on form_submission' },
         is_active: { type: 'boolean', description: 'Form active state' }
       },
       required: ['title']
@@ -386,12 +394,13 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_form',
-    description: 'Update a form',
+    description: 'Update a form. Keys you omit are kept, but a fields, confirmations, notifications, button or other nested object you send REPLACES the stored one whole. A call that would drop stored keys (a field, a confirmation, a notification event) is refused and names them, unless replace lists that property. To change one field use gf_update_field. A stored checkbox sent with different choices gets its inputs renumbered by position (a new field gets them too); a warning says when that leaves saved entry values under old numbers.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Form ID' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         title: { type: 'string', description: 'Form title' },
         description: { type: 'string', description: 'Form description' },
         fields: {
@@ -400,11 +409,12 @@ const GF_TOOL_DEFINITIONS = [
           items: { type: 'object' }
         },
         button: { type: 'object', description: 'Submit button settings' },
-        confirmations: { type: 'object', description: 'Confirmation settings' },
-        notifications: { type: 'object', description: 'Notification settings' },
-        is_active: { type: 'boolean', description: 'Form active state' }
+        confirmations: { type: 'object', description: 'Confirmations keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); reported in assigned_ids when generated' },
+        notifications: { type: 'object', description: 'Notifications keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); one with no event fires on form_submission' },
+        is_active: { type: 'boolean', description: 'Form active state' },
+        replace: { type: 'array', items: { type: 'string' }, description: 'Properties allowed to drop stored keys they omit, e.g. ["confirmations"]' }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
@@ -414,31 +424,32 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Form ID' },
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' },
         force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
     name: 'gf_validate_form',
-    description: 'Validate form input. Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3). `field_values` is GF dynamic-population data, not the submitted values.',
+    description: 'Validate form input. Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3). `field_values` is refused: it does nothing on this path.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys.' }
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' }
       },
       additionalProperties: true,
-      required: ['form_id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
 
   // Entries Management (5 tools)
   {
     name: 'gf_list_entries',
-    description: 'List/search entries with filtering, sorting, and pagination.',
+    description: 'List/search entries with filtering, sorting, and pagination. Paging goes inside `paging` (page_size, plus current_page or offset); a top-level page, per_page or offset is refused. Returns 10 entries unless page_size says otherwise.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -446,7 +457,11 @@ const GF_TOOL_DEFINITIONS = [
         form_ids: {
           type: 'array',
           items: { type: 'number' },
-          description: 'Filter by form IDs'
+          description: 'Filter by form IDs (or pass form_id for a single form)'
+        },
+        form_id: {
+          type: 'number',
+          description: 'Filter by a single form ID. Same as form_ids: [form_id]. Omit both to list entries from every form.'
         },
         include: {
           type: 'array',
@@ -517,15 +532,16 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Entry ID' },
+        id: { type: 'number', description: 'Entry ID (or pass entry_id)' },
+        entry_id: { type: 'number', description: 'Entry ID (or pass id)' },
         compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['entry_id'] }]
     }
   },
   {
     name: 'gf_create_entry',
-    description: 'Create an entry. Checkbox/multiselect arrays auto-normalized.',
+    description: 'Create an entry. Put field values at the top level beside form_id ("1": "Ada", "6.3": "Oslo"), never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. Returns the entry as stored. A scalar under a checkbox\'s own key is refused (name an input, "4.1": "p", or send an array). So is any value under the key of a name, address, consent, credit card or chained select field: name the input ("10.1": "1 Main St"). A checkbox array is expanded to the field\'s inputs (refused when the field has none, or a value matches no choice); a multiselect array is sent as an array.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -537,7 +553,8 @@ const GF_TOOL_DEFINITIONS = [
           enum: ['active', 'spam', 'trash'],
           description: 'Entry status'
         },
-        date_created: { type: 'string', description: 'ISO date' }
+        date_created: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' },
+        date_updated: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' }
       },
       additionalProperties: true,
       required: ['form_id']
@@ -545,20 +562,23 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_entry',
-    description: 'Update an entry. Checkbox/multiselect arrays auto-normalized; unmentioned fields preserved.',
+    description: 'Update an entry. Put field values at the top level beside id, never nested under "entry". A numeric key naming no field on the form is refused. Any other key (entry meta such as is_approved) is passed through, and ignored_keys lists the ones Gravity Forms did not store. An array or object for a field that holds one value is refused. A scalar under a checkbox\'s own key is refused (name an input, "4.1": "p", or send an array). So is any value under the key of a name, address, consent, credit card or chained select field: name the input ("10.1": "1 Main St"). A checkbox array is expanded to the field\'s inputs (refused when the field has none, or a value matches no choice); a multiselect array is sent as an array; unmentioned fields preserved.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Entry ID' },
+        id: { type: 'number', description: 'Entry ID (or pass entry_id)' },
+        entry_id: { type: 'number', description: 'Entry ID (or pass id)' },
         status: {
           type: 'string',
           enum: ['active', 'spam', 'trash'],
           description: 'Entry status'
-        }
+        },
+        date_created: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' },
+        date_updated: { type: 'string', description: 'UTC, as "YYYY-MM-DD HH:MM:SS" (the format gf_get_entry returns, so a value read from an entry can be written back). ISO 8601 with a Z or offset (2026-01-01T02:30:00+02:00) is also accepted and converted to UTC. A timestamp with no zone is refused.' }
       },
       additionalProperties: true,
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['entry_id'] }]
     }
   },
   {
@@ -568,51 +588,54 @@ const GF_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'number', description: 'Entry ID' },
+        id: { type: 'number', description: 'Entry ID (or pass entry_id)' },
+        entry_id: { type: 'number', description: 'Entry ID (or pass id)' },
         force: { type: 'boolean', description: 'Permanently delete instead of moving to Trash. Default false (Trash, recoverable).' }
       },
-      required: ['id']
+      anyOf: [{ required: ['id'] }, { required: ['entry_id'] }]
     }
   },
 
   // Form Submissions (2 tools)
   {
     name: 'gf_submit_form_data',
-    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Pass field values as top-level input_N keys (e.g. input_1, input_2; sub-inputs input_1_3).',
+    description: 'Submit form data — runs the full pipeline (validation, notifications, confirmations, feeds/payment). Field values go as top-level input_N keys (e.g. input_1: "Ada", input_2; sub-inputs input_1_3) — a call with none is rejected. `field_values` is refused: it does nothing on this path. A scalar under a checkbox\'s input_N is refused. So is any value under input_N of a name, address, consent, credit card or chained select field: use input_N_M. A checkbox array under input_N is expanded to input_N_M; an array for a field that holds one value (radio, dropdown, text) is refused.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' },
-        field_values: { type: ['string', 'array'], description: 'GF dynamic-population values — a query string ("p1=a&p2=b") or array. NOT submission values; pass those as input_N keys.' }
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' }
       },
       additionalProperties: true,
-      required: ['form_id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
   {
     name: 'gf_validate_submission',
-    description: 'Validate submission without processing',
+    description: 'Validate submission without processing. Field values go as top-level input_N keys, the same as gf_submit_form_data. `field_values` is refused: it does nothing on this path.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
-        form_id: { type: 'number', description: 'Form ID' }
+        id: { type: 'number', description: 'Form ID (or pass form_id)' },
+        form_id: { type: 'number', description: 'Form ID (or pass id)' }
       },
       additionalProperties: true,
-      required: ['form_id']
+      anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
   },
 
   // Notifications (1 tool)
   {
     name: 'gf_send_notifications',
-    description: 'Send notifications for entry',
+    description: 'Send notifications for an entry. sent is false when Gravity Forms sent none, with a reason (usually: no notification on the form has the requested event). notifications_sent lists what Gravity Forms handed to its sender; it skips an inactive notification, or one whose conditional logic is not met, without reporting it. Recipients, sender and reply-to come from the notification\'s own settings; to, from and reply_to are refused.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         entry_id: { type: 'number', description: 'Entry ID' },
+        form_id: { type: 'number', description: 'Optional. Checked against the entry\'s own form; a mismatch is refused and nothing is sent. Gravity Forms derives the form from the entry.' },
         notification_ids: {
           type: 'array',
           items: { type: 'string', description: 'A non-empty notification id' },
@@ -630,13 +653,18 @@ const GF_TOOL_DEFINITIONS = [
   // Add-on Feeds (7 tools)
   {
     name: 'gf_list_feeds',
-    description: 'List feeds. Filter by form_id and/or addon slug.',
+    description: 'List ACTIVE feeds only. Filter by form_id and/or addon slug. Gravity Forms filters this endpoint to is_active=1 and reads no parameter to widen it, so a feed with is_active false is absent here and its absence does not mean it was never created. Read one by id with gf_get_feed, which does return an inactive feed.',
     annotations: { readOnlyHint: true, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         addon: { type: 'string', description: 'Addon slug' },
         form_id: { type: 'number', description: 'Form ID' },
+        include: {
+          type: 'array',
+          items: { type: 'number' },
+          description: 'Feed IDs to limit the result set to'
+        },
         compact: { type: 'boolean', description: 'Return raw uncompacted data', default: true }
       }
     }
@@ -659,7 +687,7 @@ const GF_TOOL_DEFINITIONS = [
   // backwards compatibility but no longer exposed as a tool.
   {
     name: 'gf_create_feed',
-    description: 'Create a feed',
+    description: 'Create a feed. is_active false is honored, and a feed created that way does not appear in gf_list_feeds, which Gravity Forms limits to active feeds — confirm it with gf_get_feed on the id returned here.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -674,21 +702,22 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_feed',
-    description: 'Update a feed (full replace)',
+    description: 'Update a feed. A meta you send REPLACES the stored meta whole (other top-level properties are kept). A meta that omits stored keys is refused and names them, unless replace includes "meta". To change only some meta keys use gf_patch_feed.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'number', description: 'Feed ID' },
         is_active: { type: 'boolean', description: 'Feed active state' },
-        meta: { type: 'object', description: 'Feed config' }
+        meta: { type: 'object', description: 'Feed config; replaces the stored meta whole' },
+        replace: { type: 'array', items: { type: 'string' }, description: 'Properties allowed to drop stored keys they omit, e.g. ["meta"]' }
       },
       required: ['id']
     }
   },
   {
     name: 'gf_patch_feed',
-    description: 'Patch a feed (partial update)',
+    description: 'Patch a feed (partial update): only the meta keys you send change; the rest are kept',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -953,13 +982,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               catalog_source: abilityDiagnostics.source,
               site_url: wpClient.baseUrl,
               credential_source: wpClient.credentialSource,
+              // The other plane's target beside this one's: a session that reads
+              // one site and writes another looks identical to a working one from
+              // inside a single tool response.
+              gravity_forms_site: wpClient.gravityFormsBaseUrl,
+              ...(wpClient.hostMismatch ? { host_mismatch: wpClient.hostMismatch } : {}),
               // Every ability the catalog carried that did not become a tool,
               // and why. Answers "it is registered but I cannot see it" without
               // reading the server's stderr.
               skipped: abilityDiagnostics.skipped,
-              note: abilityToolDefinitions
-                ? 'Catalog refreshed. Clients receive `notifications/tools/list_changed` automatically.'
-                : 'Catalog still unreachable — check WP logs / cert / credentials. Will retry on next gv_* tool call.',
+              note: abilitiesStatusNote(abilityToolDefinitions),
             }, null, 2),
           }],
         };

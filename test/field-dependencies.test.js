@@ -295,3 +295,28 @@ test('DependencyTracker - generateDependencySummary', async (t) => {
     assert.strictEqual(summary, 'No dependencies found');
   });
 });
+// GF's form editor writes conditionalLogic.enabled; GFAPI and this server do not.
+// GF applies any logic with rules regardless (forms_model.php get_field_display()),
+// so the scan must not require the flag.
+test('DependencyTracker - conditional logic without or with a false `enabled`', async (t) => {
+  const tracker = new DependencyTracker();
+  const scan = (conditionalLogic) => {
+    const form = { fields: [{ id: 5, type: 'text', label: 'F', conditionalLogic }] };
+    const deps = { conditionalLogic: [] };
+    tracker.scanConditionalLogic(form, 1, deps);
+    return deps.conditionalLogic;
+  };
+  const rules = [{ fieldId: '1', operator: 'is', value: 'y' }];
+
+  await t.test('no `enabled` key is found', () => {
+    assert.strictEqual(scan({ actionType: 'show', logicType: 'all', rules }).length, 1);
+  });
+  await t.test('`enabled: false` with rules is still found (server-side GF still evaluates it)', () => {
+    assert.strictEqual(scan({ enabled: false, rules }).length, 1);
+  });
+  await t.test('empty string, empty rules and non-array rules are not logic', () => {
+    assert.strictEqual(scan('').length, 0);
+    assert.strictEqual(scan({ rules: [] }).length, 0);
+    assert.strictEqual(scan({ rules: 'x' }).length, 0);
+  });
+});

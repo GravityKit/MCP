@@ -8,21 +8,42 @@
  * Inspector test client) extend it and add their own namespace.
  *
  * Authentication: WordPress Application Password via HTTP Basic Auth.
- * The same WP install usually hosts the GF REST surface too, so when
- * GRAVITYKIT_WP_* credentials aren't set we fall back to
- * GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET (which in
- * practice are usually a WP user + app password as well — most
- * local-dev setups reuse them rather than minting two credentials).
+ * The same WP install usually hosts the GF REST surface too, so with no
+ * GRAVITYKIT_WP_* credentials this plane follows the Gravity Forms ones
+ * (GRAVITY_FORMS_CONSUMER_KEY / GRAVITY_FORMS_CONSUMER_SECRET, in practice
+ * a WP user + app password as well) to the Gravity Forms site. Both planes
+ * then act on one install, which is what a single session assumes.
  */
 
 import axios from 'axios';
 import https from 'https';
 import { USER_AGENT } from './version.js';
 import { isLocalUrl } from './config/auth.js';
+import { testConfig } from './config/test-config.js';
+
+/**
+ * A URL's host (including port), or null when it cannot be parsed.
+ *
+ * Host, not the whole URL: a WordPress root under the Gravity Forms host
+ * (a subdirectory install) is one site reached two ways, while a different
+ * host is a different site.
+ *
+ * @param {string} url
+ * @returns {string|null}
+ */
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
 
 export class WordPressClient {
   constructor(config) {
-    this.config = config || {};
+    // GRAVITY_FORMS_TEST_* is remapped onto the primary names in test mode, the
+    // same resolution GravityFormsClient runs, so both planes read one target.
+    this.config = testConfig.resolveEnv(config || {});
 
     const baseUrl = this.resolveBaseUrl();
     if (!baseUrl) {
@@ -45,21 +66,36 @@ export class WordPressClient {
       throw new Error('Refusing to send Basic auth over a remote plain-HTTP URL — credentials would be exposed. Use HTTPS, or set GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true to override.');
     }
 
-    // Auth resolution order: canonical GRAVITYKIT_WP_* (prod-style) →
-    // WORDPRESS_LOCAL_DEV_TEST_* (the local dev.test admin creds; same
-    // values reused by any other MonoKit tool that hits the local
-    // install) → generic WP_USERNAME → GF MCP consumer key fallback.
-    // The descriptive local-dev names exist so this single admin
-    // credential isn't duplicated across every per-product env block.
+    // The host the gf_* tools act on, and whether this plane resolved a different
+    // one. Both planes serve one session: pointed at two hosts, a gv_* write
+    // lands on a site the gf_* reads never saw, and no tool response says so.
+    // Reported by gk_reload_abilities and logged at startup.
+    const gfBaseUrl = (this.config.GRAVITY_FORMS_BASE_URL || '').replace(/\/$/, '');
+    this.gravityFormsBaseUrl = gfBaseUrl || null;
+
+    const abilitiesHost = hostOf(this.baseUrl);
+    const gravityFormsHost = hostOf(gfBaseUrl);
+    this.hostMismatch = gravityFormsHost && abilitiesHost && gravityFormsHost !== abilitiesHost
+      ? { abilities_site: this.baseUrl, gravity_forms_site: gfBaseUrl }
+      : null;
+
+    // Auth resolution order: canonical GRAVITYKIT_WP_* (what a caller sets to
+    // point this plane somewhere of its own) → the Gravity Forms credentials,
+    // which reach the site the gf_* tools already act on → generic WP_USERNAME →
+    // WORDPRESS_LOCAL_DEV_TEST_ADMIN_* last. The local-dev names are ambient in
+    // a MonoKit shell, so a session that configured only GRAVITY_FORMS_* would
+    // otherwise authenticate against the local install instead of the one it
+    // named, and the gv_* tools would read and write a site the gf_* tools never
+    // touched.
     // Each source is taken WHOLE. Resolving the two halves independently pairs a
     // username from one source with a secret from another whenever a source is
     // half-configured, and the 401 that follows reads as a wrong password rather
     // than as the environment being incomplete.
     const sources = [
       ['GRAVITYKIT_WP_USERNAME', 'GRAVITYKIT_WP_APP_PASSWORD'],
-      ['WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER', 'WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD'],
-      ['WP_USERNAME', 'WP_APP_PASSWORD'],
       ['GRAVITY_FORMS_CONSUMER_KEY', 'GRAVITY_FORMS_CONSUMER_SECRET'],
+      ['WP_USERNAME', 'WP_APP_PASSWORD'],
+      ['WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER', 'WORDPRESS_LOCAL_DEV_TEST_ADMIN_PASSWORD'],
     ];
 
     const complete = sources.find(([user, pass]) => this.config[user] && this.config[pass]);
@@ -72,7 +108,7 @@ export class WordPressClient {
         ? ` ${partial[0]} and ${partial[1]} must both be set; only one of them is.`
         : '';
 
-      throw new Error(`WordPress client requires credentials. Set GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD, or WORDPRESS_LOCAL_DEV_TEST_ADMIN_USER + _ADMIN_PASSWORD, or reuse GRAVITY_FORMS_CONSUMER_KEY/SECRET.${detail}`);
+      throw new Error(`WordPress client requires credentials. Set GRAVITYKIT_WP_USERNAME + GRAVITYKIT_WP_APP_PASSWORD, or reuse GRAVITY_FORMS_CONSUMER_KEY/SECRET.${detail}`);
     }
 
     // Recorded so `gk_reload_abilities` can say which site and which credentials
@@ -95,10 +131,21 @@ export class WordPressClient {
     this.httpClient = this.createHttpClient(this.baseUrl);
   }
 
+  /**
+   * The WordPress root this plane talks to.
+   *
+   * GRAVITYKIT_WP_URL is the only variable that may send this plane to a host
+   * other than the one the gf_* tools use, so it comes first; with it unset the
+   * plane follows GRAVITY_FORMS_BASE_URL. WORDPRESS_LOCAL_DEV_TEST_URL is last
+   * because it is ambient in a MonoKit shell — ranked above the Gravity Forms
+   * target it would capture every session that did not name it.
+   *
+   * @returns {string} Base URL, or '' when none is configured.
+   */
   resolveBaseUrl() {
     return this.config.GRAVITYKIT_WP_URL
-      || this.config.WORDPRESS_LOCAL_DEV_TEST_URL
       || this.config.GRAVITY_FORMS_BASE_URL
+      || this.config.WORDPRESS_LOCAL_DEV_TEST_URL
       || '';
   }
 

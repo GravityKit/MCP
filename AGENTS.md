@@ -6,7 +6,7 @@ This is the single canonical doc for the project (agents and humans). `CLAUDE.md
 
 ## Project Identity
 
-- **Package:** `@gravitykit/mcp` v2.5.0
+- **Package:** `@gravitykit/mcp` v2.6.0
 - **Type:** Node.js MCP server (ESM)
 - **Purpose:** Full Gravity Forms REST API v2 coverage (26 Gravity Forms tools), plus dynamic GravityKit product tools (GravityView so far) via the WordPress Abilities API
 - **Repo:** https://github.com/GravityKit/MCP
@@ -63,6 +63,7 @@ MCP/
 │   │   └── test-config.js    # Dual test/live environment config, TestFormManager
 │   └── utils/
 │       ├── compact.js        # stripEmpty() — recursive null/empty/false stripping for token optimization
+│       ├── merge-guard.js    # guardMerge()/droppedPaths() — refuses gf_update_form/gf_update_feed calls that would drop stored keys
 │       ├── logger.js         # MCP-safe logger (stderr in MCP mode, console in test)
 │       └── sanitize.js       # Credential masking for safe logging
 ├── test/                     # Test suites — top-level, NOT published (see Packaging)
@@ -108,11 +109,11 @@ The server registers tools from two independent sources, initialized separately 
 
 ### Core Concepts
 
-**GravityFormsClient** (`gravity-forms-client.js`): Single class wrapping all GF API endpoints. Each method uses the `validateAndCall(toolName, input, apiCall)` pattern — validates input via `ValidationFactory`, then executes the HTTP call. Update operations (forms, entries, feeds) fetch-then-merge to preserve existing data. Returns minimal payloads.
+**GravityFormsClient** (`gravity-forms-client.js`): Single class wrapping all GF API endpoints. Each method uses the `validateAndCall(toolName, input, apiCall)` pattern — validates input via `ValidationFactory`, then executes the HTTP call. Update operations (forms, entries, feeds) fetch-then-merge at the top level only: a top-level key you omit is kept, but a nested object you send (a feed's `meta`, a form's `fields`/`confirmations`/`notifications`/`button`) replaces the stored one whole, because Gravity Forms writes it whole. `gf_update_form` and `gf_update_feed` share one guard (`utils/merge-guard.js`) that refuses a nested object which would drop stored keys, unless the caller lists the property in `replace`. Returns minimal payloads.
 
-**WordPressClient** (`wp-client.js`): Product-agnostic authenticated WordPress transport for Plane B. The abilities loader rides it to reach the Foundation catalog (`/wp-json/gravitykit/v1/...`) and the WP core Abilities API (`/wp-json/wp-abilities/v1/...`). Auth is a WordPress Application Password via HTTP Basic; when `GRAVITYKIT_WP_*` creds aren't set it falls back to `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` (commonly the same WP user + app password).
+**WordPressClient** (`wp-client.js`): Product-agnostic authenticated WordPress transport for Plane B. The abilities loader rides it to reach the Foundation catalog (`/wp-json/gravitykit/v1/...`) and the WP core Abilities API (`/wp-json/wp-abilities/v1/...`). Auth is a WordPress Application Password via HTTP Basic; when `GRAVITYKIT_WP_*` creds aren't set it falls back to `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` (commonly the same WP user + app password), which keeps both planes on one site. It records `gravityFormsBaseUrl` and `hostMismatch` so a split target is reportable.
 
-**Abilities loader** (`abilities/loader.js`): `loadAbilitiesAsTools(wpClient)` builds the GravityKit product tool definitions + handlers from the live catalog (GravityView's carry the `gv_*` prefix). Source-preference chain: (1) Foundation catalog `/wp-json/gravitykit/v1/abilities` (server-filtered to GravityKit, server-owned tool names), (2) WP core catalog `/wp-json/wp-abilities/v1/abilities` (filtered client-side on Foundation's stamped `meta.gk_registered_by`), (3) throw if neither is reachable (caller leaves `gv_*` unregistered and retries — self-healing). **Tool names are owned by the server** via each ability's `mcp_tool_name` (from the product's `mcp_prefix`, or the full product slug); abilities without one are skipped with a warning rather than client-invented. Handlers execute abilities at `/wp-abilities/v1/abilities/{name}/run` with the HTTP method derived from annotations (`readonly` → GET, `destructive`+`idempotent` → DELETE, else POST).
+**Abilities loader** (`abilities/loader.js`): `loadAbilitiesAsTools(wpClient)` builds the GravityKit product tool definitions + handlers from the live catalog (GravityView's carry the `gv_*` prefix). Source-preference chain: (1) Foundation catalog `/wp-json/gravitykit/v1/abilities` (server-filtered to GravityKit, server-owned tool names), (2) WP core catalog `/wp-json/wp-abilities/v1/abilities` (filtered client-side on Foundation's stamped `meta.gk_registered_by`), (3) an empty tool set naming the catalog that answered, when a catalog answers with no GravityKit abilities, (4) throw only if neither catalog can be reached (caller leaves `gv_*` unregistered and retries — self-healing). **Tool names are owned by the server** via each ability's `mcp_tool_name` (from the product's `mcp_prefix`, or the full product slug); abilities without one are skipped with a warning rather than client-invented. Handlers execute abilities at `/wp-abilities/v1/abilities/{name}/run` with the HTTP method derived from annotations (`readonly` → GET, `destructive`+`idempotent` → DELETE, else POST).
 
 **GravityView harness** (`gravityview/inspector-client.js`, `view-validator.js`): The Inspector client and validator target `/wp-json/gravityview/v1` routes that exist only when `DOING_GRAVITYVIEW_TESTS` is defined server-side. They are the integration-test and demo harness — **not** a runtime dependency. Runtime `gv_*` tools come from the abilities loader.
 
@@ -171,7 +172,7 @@ GET/list methods return just the data:
 { form: responseData }              // gf_get_form
 { forms: responseData, total_count, total_pages }  // gf_list_forms
 { entries: responseData, total_count }              // gf_list_entries
-{ entry: responseData }             // gf_get_entry
+{ entry: responseData }             // gf_get_entry; gf_create_entry returns the entry read back after the POST
 { feed: responseData }              // gf_get_feed, gf_create_feed, gf_update_feed, gf_patch_feed
 { feeds: responseData }             // gf_list_feeds (pass form_id to scope to one form)
 ```
@@ -182,7 +183,7 @@ Mutation methods return minimal confirmation:
 { deleted: true, feed_id }               // gf_delete_feed
 { valid: true/false, validation_messages }  // gf_validate_form, gf_validate_submission
 { success: true/false, entry_id, confirmation_message, validation_messages }  // gf_submit_form_data
-{ sent: true, notifications_sent }       // gf_send_notifications
+{ sent, notifications_sent, reason? }  // gf_send_notifications (sent is false, with a reason, when GF sent none)
 ```
 
 ## Conventions
@@ -226,6 +227,12 @@ const existing = await this.httpClient.get(`/resource/${id}`);
 const merged = { ...existing.data, ...updates };
 await this.httpClient.put(`/resource/${id}`, merged);
 ```
+
+The spread is **shallow**. A nested object in `updates` replaces the stored one, and Gravity Forms has no merge of its own to fall back on (`GFAPI::update_form` re-keys confirmations and notifications by id and writes each column whole; `fields` and `button` are written whole too). So `updateForm` and `updateFeed` both run `guardMerge` (`utils/merge-guard.js`) before the PUT: for every top-level key the call sends, a stored key the sent value omits is recorded (recursing into objects, and into arrays whose members all have ids, matched by id), and the call is refused, naming every path, unless `replace` lists that property. `replace: ["meta"]` or `replace: ["confirmations"]` proceeds and returns `removed_keys`. Refusing, rather than deep-merging, is deliberate: a deep merge would silently keep what a caller who sent the full desired map meant to remove. A stored `null` or `''` is not counted, because the compact reader never shows it; a caller who reads, edits and sends back is missing those keys without having removed anything. A key set to `null` is an explicit clear. Arrays without ids (choices, rules) and scalars replace as sent. `gf_patch_feed` is the partial update for feeds (GF merges `meta` keys) and refuses `replace`; there is no patch for forms, so point callers at `gf_update_field` and `gf_delete_field`.
+
+Confirmations and notifications are given ids before the guard runs (`assignSettingIds`), because GF files each member under its `id` and a member without one lands under `""`, where a second one overwrites it. A member with no id gets the key it was sent under, or a generated 13-character hex id when the key is empty or taken; generated ids come back as `assigned_ids`. The ids come first so the guard compares members the way GF will key them. The notification `event` default applies only to notifications the call adds, so it cannot hide a stored notification losing its `event`: the guard refuses that resend.
+
+Entry writes are checked before they are sent: a key that names no field (or sub-input) on the form is refused, as is a value nested under a non-field key such as `entry`. Sub-inputs take the dotted spelling (`6.3`); `6_3` is rewritten to it and two different values for one sub-input are refused, the same rule `gf_submit_form_data` applies to `input_5.3` / `input_5_3`. GF answers `POST /entries` with the request body, so `createEntry` reads the entry back by id (`GET /entries/{id}`) and returns that.
 
 ### Delete Safety
 
@@ -327,9 +334,10 @@ GRAVITYKIT_WP_USERNAME=wp_username
 GRAVITYKIT_WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
 ```
 
-`WordPressClient` resolves the base URL from `GRAVITYKIT_WP_URL` → `WORDPRESS_LOCAL_DEV_TEST_URL` → `GRAVITY_FORMS_BASE_URL`, and credentials from `GRAVITYKIT_WP_*` → `WORDPRESS_LOCAL_DEV_TEST_ADMIN_*` → `WP_USERNAME`/`WP_APP_PASSWORD` → the `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` fallback (`src/wp-client.js` `resolveBaseUrl()` + constructor). On most single-site setups the GF credentials already double as the WP app password, so no extra config is needed.
+`WordPressClient` resolves the base URL from `GRAVITYKIT_WP_URL` → `GRAVITY_FORMS_BASE_URL` → `WORDPRESS_LOCAL_DEV_TEST_URL`, and credentials from `GRAVITYKIT_WP_*` → `GRAVITY_FORMS_CONSUMER_KEY`/`SECRET` → `WP_USERNAME`/`WP_APP_PASSWORD` → `WORDPRESS_LOCAL_DEV_TEST_ADMIN_*` (`src/wp-client.js` `resolveBaseUrl()` + constructor). On most single-site setups the GF credentials already double as the WP app password, so no extra config is needed. It reads its environment through `testConfig.resolveEnv()`, the same remap `GravityFormsClient` runs, so in test mode both planes follow `GRAVITY_FORMS_TEST_BASE_URL`.
 
-- **Gotcha — pointing the abilities plane at a LOCAL site: pin `GRAVITYKIT_WP_URL`/`_USERNAME`/`_APP_PASSWORD`, not just `GRAVITY_FORMS_*`.** The middle of each resolution chain is `WORDPRESS_LOCAL_DEV_TEST_*`, which `~/.monokit/.env` sets to `https://dev.test` (dotenv-loaded and inherited by the MCP process). It **outranks** `GRAVITY_FORMS_BASE_URL`, so a config that pins only the GF vars silently sends the abilities plane to `dev.test` (→ 502 → **0 `gv_*` tools**) while `gf_*` still works against the intended site — a plane-specific misroute that looks like "abilities just won't load." Verified 2026-07-12 wiring to a Siteminter site. [gotcha]
+- **Only `GRAVITYKIT_WP_URL` can send the two planes to different hosts.** `WORDPRESS_LOCAL_DEV_TEST_*` is last in each resolution chain, below the Gravity Forms target, because `~/.monokit/.env` sets it to `https://dev.test` and every MonoKit shell inherits it — ranked above `GRAVITY_FORMS_BASE_URL` it captured every session that pinned only the GF vars, sending the abilities plane to `dev.test` while `gf_*` worked against the intended site. Both planes now land on the Gravity Forms site unless a caller says otherwise. When they do end up on different hosts, `WordPressClient.hostMismatch` carries both, a startup stderr warning names them, and `gk_reload_abilities` reports `host_mismatch` beside `site_url` — a split is allowed (a separate WP root is a documented configuration) but never silent. A WordPress root under the *same* host, e.g. a subdirectory install, is one site and is not a split. [gotcha]
+- **`gk_reload_abilities` has three states, not two.** A catalog that answers HTTP 200 with `[]` is a reachable, empty catalog: `loaded: true`, `ability_tool_count: 0`, `catalog_source` naming the catalog that answered, and a note telling you to activate a product then reload. Only a catalog nobody could reach reports no source. The loader throws only when NEITHER catalog can be read (`src/abilities/loader.js`); `fetchCoreEntries()` returning `[]` is an answer, not a failure. The note strings live in `abilitiesStatusNote()` (`src/server-runtime.js`).
 
 ### Optional Environment
 
@@ -387,7 +395,7 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 
 3. **Auth method is credential-aware.** `AuthManager` picks the transport from the credential shape: app-password creds use Basic over HTTPS or local URLs; `ck_`/`cs_` key pairs use Basic over HTTPS and OAuth 1.0a over plain HTTP (Gravity Forms only checks key-pair Basic auth when `is_ssl()`). An explicit `GRAVITY_FORMS_AUTH_METHOD` is always honored — including `basic` over remote HTTP, so don't set it in `.env` "just in case". Remote-HTTP Basic without an explicit method needs `GRAVITY_FORMS_ALLOW_HTTP_BASIC_AUTH=true`.
 
-4. **Update operations fetch-then-merge.** `updateForm`, `updateEntry`, and `updateFeed` GET the existing resource, merge, then PUT — two HTTP calls per update. If the resource changes between GET and PUT, the intermediate change is overwritten.
+4. **Update operations fetch-then-merge, shallowly.** `updateForm`, `updateEntry`, and `updateFeed` GET the existing resource, merge, then PUT — two HTTP calls per update (three when an entry update names fields, because the form is fetched to check the keys). If the resource changes between GET and PUT, the intermediate change is overwritten. The merge replaces any nested object you send, so `updateForm` and `updateFeed` refuse a nested object that would drop stored keys unless `replace` names the property (see API Method Pattern). The check runs inside the mutex, after the GET, so it sees the same stored state the PUT overwrites. **Field operations are the same pattern and had no lock across it until 2.6.0.** `FieldManager.addField`/`updateField`/`deleteField` GET the form, change `fields`, and PUT the whole form back. `replaceForm` locked only the PUT, so parallel calls read one stored state, `assignFieldIds` gave all ten the same max+1 id, and the last PUT won while every caller was told it succeeded (measured live: ten parallel `gf_add_field`, ten successes, one field). They now run inside `FieldManager.inFormTransaction`, which holds `form:<id>` across GET, change and PUT; `resourceMutex.withLock` is reentrant per async call chain (AsyncLocalStorage), which is why `replaceForm` taking the same key inside that lock does not deadlock (`acquire()` alone is not reentrant). Any new code that does GET-then-`replaceForm` must wrap both in that lock. **What stays true:** the mutex is per process. A second MCP instance, wp-admin, or a cron job can still change the form between the read and the write, and that edit is lost. Gravity Forms has no ETag, `If-Match`, or version check on `PUT /forms/{id}` (`GFAPI::update_form` writes whatever it is given), so there is no compare-and-swap to build on; GravityView's `version` string has no GF equivalent. Serialized means slow: parallel field operations on one form take turns, one GET plus one PUT each.
 
 5. **Field ID generation uses max+1.** If field ID 10 is deleted, the next field gets ID 11, not 10. IDs are never reused within a form.
 
@@ -406,6 +414,8 @@ No build step — pure ESM JavaScript, runs directly with `node src/index.js`. R
 12. **Test mode resolves env vars at client construction.** When `GRAVITYKIT_MCP_TEST_MODE=true` (or legacy `GRAVITYMCP_TEST_MODE=true`), `testConfig.resolveEnv()` remaps `GRAVITY_FORMS_TEST_*` → `GRAVITY_FORMS_*`. The rest of the client and AuthManager work unchanged.
 
 13. **`gv_*` tools load asynchronously and self-heal.** The abilities catalog is fetched in the background after startup, so `gv_*` tools may be absent for a moment (the server emits a `tools/listChanged` once they arrive). If a catalog fetch fails, it retries after a cooldown or immediately on `gk_reload_abilities`. The `src/gravityview/` Inspector client is a test/demo harness only — runtime `gv_*` come from the abilities loader.
+
+14. **The entries API does not mask card numbers or drop passwords; only a submission does.** GF's masking lives in `GF_Field::get_value_save_input()` (`GF_Field_CreditCard`: last four digits of `.1`, the rest `X`; `GF_Field_Password`: returns `''`). Its callers are `GFFormsModel::save_input()` and `get_prepared_input_value()`, reached from `save_lead()` (a submission or the entry editor). `GFAPI::add_entry` and `update_entry` instead pass `$entry[$input_id]` straight to `GFFormsModel::queue_batch_field_operation()`, and for a creditcard they loop every entry in `$field->inputs`, not the `.1`/`.4` a submission keeps, so `.2`, `.3` (security code) and `.5` are stored too. Verified by reading GF 3.1.2 source, not by writing to a site. `EntriesValidator.assertSensitiveValues` therefore refuses, on `gf_create_entry` and `gf_update_entry` only, an unmasked `.1`, any non-empty `.2`/`.3`/`.5`, and a non-empty password. A value passes if it is empty or a mask (X, x, `*`, a bullet, spaces, hyphens) plus at most four trailing ASCII digits; it is a whitelist so a real number cannot pass by looking masked. `.4` (card type) is not refused: it holds a type name, no secret. The submission tools are exempt on purpose: a submission is masked by GF, and refusing there would block the one safe path. Other field types with their own `get_value_save_input` (date, time, number, phone, list, file upload) normalize format, not secrecy, so they are not guarded.
 
 ## Bench (`bench/`) — target + running gotchas
 

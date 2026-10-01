@@ -207,9 +207,12 @@ suite.test('Type Validation: Booleans', async () => {
   );
 
   // `active` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
-  // `include` server-side. It is dropped, not validated — so it must not throw.
-  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
-  await client.listForms({ active: 'true' });
+  // `include` server-side, so it is refused rather than silently ignored.
+  await TestAssert.throwsAsync(
+    () => client.listForms({ active: 'true' }),
+    'not read by Gravity Forms',
+    'active must be refused, not ignored'
+  );
 });
 
 suite.test('Type Validation: Arrays', async () => {
@@ -221,9 +224,12 @@ suite.test('Type Validation: Arrays', async () => {
   );
 
   // `exclude` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
-  // `include` server-side. It is dropped, not validated — so it must not throw.
-  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
-  await client.listForms({ exclude: '4,5,6' });
+  // `include` server-side, so it is refused rather than silently ignored.
+  await TestAssert.throwsAsync(
+    () => client.listForms({ exclude: '4,5,6' }),
+    'not read by Gravity Forms',
+    'exclude must be refused, not ignored'
+  );
 
   // Form fields should be array
   await TestAssert.throwsAsync(
@@ -259,11 +265,18 @@ suite.test('Type Validation: Objects', async () => {
 
 suite.test('Enum Validation: Status values', async () => {
   // `status` is NOT a GF /forms param (SHARED FORMS CONTRACT): GF reads only
-  // `include` server-side. It is dropped, not validated — even an invalid value
-  // must not throw, because the param never reaches GF.
-  mockHttpClient.setMockResponse('GET', '/forms', new MockResponse({ forms: [] }));
-  await client.listForms({ status: 'invalid-status' });
-  await client.listForms({ status: 'active' });
+  // `include` server-side, so any value is refused, valid or not, rather than
+  // returning every active form to a caller who asked for a status.
+  await TestAssert.throwsAsync(
+    () => client.listForms({ status: 'invalid-status' }),
+    'not read by Gravity Forms',
+    'status must be refused'
+  );
+  await TestAssert.throwsAsync(
+    () => client.listForms({ status: 'inactive' }),
+    'not read by Gravity Forms',
+    'status must be refused'
+  );
 });
 
 suite.test('Enum Validation: Search operators', async () => {
@@ -373,27 +386,9 @@ suite.test('Range Validation: String lengths', async () => {
 // FORMAT VALIDATION
 // =================================
 
-suite.test('Format Validation: Email addresses', async () => {
-  // Invalid email format in notification
-  await TestAssert.throwsAsync(
-    () => client.sendNotifications({
-      entry_id: 1,
-      to: 'not-an-email'
-    }),
-    'valid email',
-    'Should validate email format'
-  );
-
-  // Valid email should work
-  mockHttpClient.setMockResponse('POST', '/entries/1/notifications',
-    new MockResponse({ notifications_sent: [] })
-  );
-
-  await client.sendNotifications({
-    entry_id: 1,
-    to: 'test@example.com'
-  });
-});
+// Email format used to be exercised through gf_send_notifications' `to`, which the
+// route never read. `to`, `from` and `reply_to` are now refused outright; see
+// send-notifications.test.js.
 
 suite.test('Format Validation: URLs', async () => {
   // Invalid URL format
@@ -510,6 +505,9 @@ suite.test('Special Characters: HTML encoding', async () => {
   // HTML entities should be handled properly
   mockHttpClient.setMockResponse('POST', '/entries',
     new MockResponse({ id: 1 })
+  );
+  mockHttpClient.setMockResponse('GET', '/entries/1',
+    new MockResponse({ id: 1, form_id: 1 })
   );
 
   const result = await client.createEntry({

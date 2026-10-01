@@ -289,3 +289,57 @@ test('PositionEngine - getPositionSummary', async (t) => {
     assert.strictEqual(summary.beforeField, 4); // Text field (id: 4)
   });
 });
+
+// validatePositionConfig must report every placement calculatePosition cannot
+// honor as written. Each of these fell back silently (or to stderr) before.
+test('PositionEngine - validatePositionConfig reports silent fallbacks', async (t) => {
+  const engine = new PositionEngine();
+
+  await t.test('warns when index is past the end and will be clamped', () => {
+    const result = engine.validatePositionConfig({ mode: 'index', reference: 50 }, createTestFields());
+    assert.strictEqual(result.valid, true);
+    assert.ok(result.warnings.some((w) => /index 50/.test(w) && /8/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('warns when index is negative and will be clamped to 0', () => {
+    const result = engine.validatePositionConfig({ mode: 'index', reference: -3 }, createTestFields());
+    assert.ok(result.warnings.some((w) => /index -3/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('warns when index mode has a non-number reference', () => {
+    const result = engine.validatePositionConfig({ mode: 'index', reference: 'two' }, createTestFields());
+    assert.ok(result.warnings.some((w) => /index/.test(w) && /number/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('warns when index mode has no reference', () => {
+    const result = engine.validatePositionConfig({ mode: 'index' }, createTestFields());
+    assert.ok(result.warnings.some((w) => /index/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('an in-range index produces no warning', () => {
+    const result = engine.validatePositionConfig({ mode: 'index', reference: 8 }, createTestFields());
+    assert.deepStrictEqual(result.warnings, []);
+  });
+
+  await t.test('warns when the reference exists but not on the requested page', () => {
+    // Field 7 is on page 3; asking for "after 7" on page 1 appends to page 1.
+    const result = engine.validatePositionConfig({ mode: 'after', reference: 7, page: 1 }, createTestFields());
+    assert.ok(result.warnings.some((w) => /7/.test(w) && /page 1/.test(w)), result.warnings.join('|'));
+  });
+
+  await t.test('no warning when the reference is on the requested page', () => {
+    const result = engine.validatePositionConfig({ mode: 'after', reference: 4, page: 2 }, createTestFields());
+    assert.deepStrictEqual(result.warnings, []);
+  });
+
+  await t.test('rejects an empty-string mode instead of treating it as append', () => {
+    const result = engine.validatePositionConfig({ mode: '' }, createTestFields());
+    assert.strictEqual(result.valid, false);
+  });
+
+  await t.test('rejects a position that is not an object', () => {
+    const result = engine.validatePositionConfig('after', createTestFields());
+    assert.strictEqual(result.valid, false);
+    assert.ok(/object/.test(result.errors[0]));
+  });
+});

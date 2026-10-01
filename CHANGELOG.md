@@ -5,7 +5,41 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.6.0] - 2026-10-01
+
+This release improves how Gravity Forms tools save the values they are sent: checkbox, multiselect, name and address values have improved structures. Requests that cannot save a value say so instead of reporting success. Feed and form updates keep the settings that weren't touched, and field edits made at the same time no longer overwrite each other. Card numbers, security codes and passwords are kept out of entries. Two library dependencies were updated based on security advisories.
+
+### 🔒 Security
+
+- **The GravityKit product tools now use the same site as the Gravity Forms tools.** Each set of tools worked out its own address and credentials, and the product tools preferred a local-development address if your shell had one set. A server configured with only `GRAVITY_FORMS_*` could send `gv_*` reads and writes, and the credentials with them, to a different site than the one you meant. Both now follow the Gravity Forms site unless `GRAVITYKIT_WP_URL` says otherwise, and if you do point them at different hosts, the server names both at startup and in `gk_reload_abilities`.
+- **Card numbers, security codes and passwords stay out of entries.** Gravity Forms masks a card number and drops a password when someone submits a form, but the entries API keeps whatever it is handed. `gf_create_entry` and `gf_update_entry` now turn down a full card number, a security code, an expiration date, a cardholder name, and a password, and tell you what to send instead: an already-masked number such as `XXXXXXXXXXXX1234`, or `gf_submit_form_data`, which goes through the form and masks it for you.
+
+### ✨ Improved
+
+- **More field values are saved when sent improperly.** A few field types store their answers in more than one place, so a value sent as one lump used to be accepted and then saved nowhere. These now save, or the reply tells you how to send them:
+  - **Checkboxes.** Improved handling of updating multiple checkboxes at once.
+  - **Multiselects.** A choice containing a comma, such as `Reno, NV`, stays one choice instead of splitting into `Reno` and `NV`.
+  - **Names and addresses.** Whole Name or Address fields sent as one value are rejected and the reply lists the parts to use.
+  - **Radio buttons and dropdowns.** Multiple values are rejected, since they only accept one answer.
+  - **A wrong field number.** Name a field the form does not have and the reply lists the form's real field IDs.
+- **Dates round-trip.** `date_created` accepts the format Gravity Forms returns, so an entry's own value can be sent straight back, as well as ISO 8601 with a time zone.
+- `gf_update_entry` now updates `date_updated`, so an edited entry no longer looks untouched since it was created.
+
+### 🐛 Fixed
+
+- **Listing entries keeps to the form you name.** `gf_list_entries` with `form_id` searched every form on the site, so the entries and the count could come from another form.
+- **Updating a feed or form keeps the settings you did not send.** Sending one setting used to wipe the rest. The call now lists what would be lost and changes nothing. Send the whole set, or pass `replace` to clear it on purpose. A confirmation or notification sent without an `id` is given one, instead of overwriting another.
+- **Field edits are safe to run side by side.** Several field calls on one form used to overwrite each other. Only the last one took effect, and all of them reported success. They now take turns, and `gf_add_field` reports the field as it was saved.
+- **Notifications created with these tools now fire.** Gravity Forms needs an event set on a notification. Its form editor adds one; these tools did not. `gf_send_notifications` now reports which notifications went out, and says why if none did, instead of always answering `sent: true`. It checks the `form_id` you pass against the entry, and turns down `to`, `from` and `reply_to`, which it cannot apply.
+- **`gf_delete_field` with `cascade: true` now deletes the field.** It says which conditional logic it cleaned up, and which calculations or merge tags still point at the field. Deleting a field that logic depends on asks for `force` first.
+- **A missing form is now an error.** `gf_get_results` used to report success with the error hidden inside.
+- **`gf_list_feeds` honors `form_id` and `include`.** It also says it lists active feeds only. To find a feed created with `is_active: false`, use `gf_get_feed`.
+- **Submissions keep what you send.** An address or a list used to arrive as one run-together string. A submission with nothing in it reported success. Both ways of writing a multi-part field name now work, `input_6.3` and `input_6_3`. Sending both with different values is turned down. `field_values` is no longer accepted, since Gravity Forms ignores it here. Send each value as `input_1`, `input_2` and so on.
+- **Paging options Gravity Forms ignores are turned down.** `gf_list_entries` wants them inside `paging`. `gf_list_forms` reads only `include`.
+
+### 📦 Updated
+
+- `axios` to 1.20.0 and `fast-uri` to 4.2.1, both past known advisories.
 
 ## [2.5.0] - 2026-09-17
 
@@ -287,6 +321,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.6.0]: https://github.com/GravityKit/MCP/releases/tag/v2.6.0
 [2.5.0]: https://github.com/GravityKit/MCP/releases/tag/v2.5.0
 [2.4.1]: https://github.com/GravityKit/MCP/releases/tag/v2.4.1
 [2.4.0]: https://github.com/GravityKit/MCP/releases/tag/v2.4.0
