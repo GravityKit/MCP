@@ -184,6 +184,65 @@ test('create and update refuse a non-empty password value; empty passes', async 
   assert.strictEqual(writes(requests).length, 1);
 });
 
+// --- a credit card expiration is a field value, so it gets the sensitive-value reason ---
+// `7.2_month` is not digits after the dot, and the key check once read that as "not a field key".
+
+test('an expiration input sent alone is refused as card data, not as "no field values"', async () => {
+  for (const key of ['12.2_month', '12.2_year']) {
+    const { client, requests } = makeClient();
+    await assert.rejects(
+      () => client.createEntry({ form_id: 175, [key]: '12' }),
+      (error) => {
+        assert.match(error.message, /credit card expiration date/, key);
+        assert.doesNotMatch(error.message, /no field values were given/, key);
+        return true;
+      },
+      key
+    );
+    assert.strictEqual(writes(requests).length, 0);
+  }
+});
+
+test('an expiration input beside a real key keeps the sensitive-value reason', async () => {
+  const { client, requests } = makeClient();
+  await assert.rejects(
+    () => client.createEntry({ form_id: 175, '2': 'ok', '12.2_month': '12', '12.2_year': '2099' }),
+    (error) => {
+      assert.match(error.message, /input 12\.2_month is a credit card expiration date/);
+      assert.match(error.message, /input 12\.2_year is a credit card expiration date/);
+      return true;
+    }
+  );
+  assert.strictEqual(writes(requests).length, 0);
+});
+
+test('an expiration input on update is refused as card data too', async () => {
+  const { client, requests } = makeClient();
+  await assert.rejects(() => client.updateEntry({ id: 9, '12.2_month': '12' }), /credit card expiration date/);
+  assert.strictEqual(writes(requests).length, 0);
+});
+
+test('an unknown sub-input is still refused as naming no input, in both spellings', async () => {
+  for (const key of ['12.99', '12.99_month']) {
+    const { client, requests } = makeClient();
+    await assert.rejects(
+      () => client.createEntry({ form_id: 175, [key]: 'x' }),
+      (error) => {
+        assert.match(error.message, new RegExp(`input ${key.replace('.', '\\.')} does not exist on field 12`));
+        return true;
+      },
+      key
+    );
+    assert.strictEqual(writes(requests).length, 0);
+  }
+});
+
+test('an empty expiration value is not refused', async () => {
+  const { client, requests } = makeClient();
+  await client.createEntry({ form_id: 175, '12.2_month': '' });
+  assert.strictEqual(writes(requests).length, 1);
+});
+
 // --- not over-reaching ---
 
 test('a long digit string in an ordinary field is untouched', async () => {

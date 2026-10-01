@@ -4,7 +4,7 @@
  */
 
 import { FieldAwareValidator } from './field-validation.js';
-import { CORE_ENTRY_KEYS } from '../utils/compact.js';
+import { CORE_ENTRY_KEYS, isFieldKey } from '../utils/compact.js';
 import { getFieldDefinition } from '../field-definitions/field-registry.js';
 import { validate, ValidationSchema } from './validation-chain.js';
 import { VALIDATION_CONFIG, getEnumValues } from './validation-config.js';
@@ -677,10 +677,11 @@ export class EntriesValidator extends BaseValidator {
   }
 
   /**
-   * A field id ("6") or a sub-input id ("6.3", or "6_3" as submissions spell it).
+   * A field id ("6"), a sub-input id ("6.3", or "6_3" as submissions spell it), or a
+   * credit card's "7.2_month". Defined once in utils/compact.js.
    */
   static isFieldKey(key) {
-    return /^\d+(?:[._]\d+)?$/.test(key);
+    return isFieldKey(key);
   }
 
   /**

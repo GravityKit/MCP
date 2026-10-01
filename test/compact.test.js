@@ -379,6 +379,24 @@ runner.test('stripEntryMetaFromResponse: passes through non-entry responses', ()
   TestAssert.equal(result.forms[0].id, 1, 'non-entry response unchanged');
 });
 
+runner.test('stripEntryMeta: keeps a credit card sub-input spelled 2_month', () => {
+  // The entries API stores whatever input id it is given, so a response has to show it.
+  const result = stripEntryMeta({ id: '9', '7.2_month': '12', '7.2_year': '2099', some_plugin_meta: 'x' });
+  TestAssert.equal(result['7.2_month'], '12', '7.2_month kept');
+  TestAssert.equal(result['7.2_year'], '2099', '7.2_year kept');
+  TestAssert.equal(result.some_plugin_meta, undefined, 'plugin meta stripped');
+});
+
+runner.test('isFieldKey: one definition, shared by the validator and the response filter', async () => {
+  const { isFieldKey } = await import('../src/utils/compact.js');
+  const { EntriesValidator } = await import('../src/config/validation.js');
+  for (const key of ['7', '7.2', '6_3', '7.2_month', '7.2_year', 'id', '7.', '7.2_', '_3', '7.2_month.x', '']) {
+    TestAssert.equal(EntriesValidator.isFieldKey(key), isFieldKey(key), `same answer for "${key}"`);
+  }
+  TestAssert.equal(isFieldKey('7.2_month'), true, '7.2_month is a field key');
+  TestAssert.equal(isFieldKey('7.'), false, 'trailing dot is not');
+});
+
 // Run tests when executed directly
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/.*\//, ''));
 if (isMain) {
