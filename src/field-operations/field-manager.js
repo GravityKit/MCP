@@ -4,7 +4,7 @@
  */
 
 import { createHash } from 'crypto';
-import { assignFieldIds, applyStorageTypeDefault } from '../field-definitions/field-registry.js';
+import { assignFieldIds, applyNewFieldDefaults, generateCheckboxInputs } from '../field-definitions/field-registry.js';
 
 /**
  * Field properties that dependents actually consume. Conditional-logic rules
@@ -78,7 +78,11 @@ export class FieldManager {
     // registry, keyed off the generated field id. Otherwise caller-supplied
     // `inputs` are kept, but their dotted sub-input ids are rebased onto the
     // generated field id so the parent reference matches (mirrors assignFieldIds).
-    const isCompoundType = fieldDef?.storage?.type === 'compound';
+    // A checkbox is registered as compound, but its inputs come from its choices
+    // (createField, via applyNewFieldDefaults), not from generateSubInputs, which
+    // would replace them with an empty list.
+    const isCheckboxStyle = generateCheckboxInputs(field) !== null;
+    const isCompoundType = fieldDef?.storage?.type === 'compound' && !isCheckboxStyle;
     if (isCompoundType) {
       field.inputs = this.generateSubInputs(field, fieldDef);
     } else if (Array.isArray(field.inputs)) {
@@ -334,10 +338,10 @@ export class FieldManager {
     // the properties spread — a caller-supplied properties.id after the spread
     // was how duplicate field ids (form corruption) got in.
     const { id: _requestedId, type: _requestedType, ...safeProperties } = properties;
-    // applyStorageTypeDefault runs LAST because it reads the assembled field:
-    // a caller-supplied storageType has to win, and the property it keys off
-    // (`inputType`) arrives with safeProperties.
-    return applyStorageTypeDefault({
+    // applyNewFieldDefaults runs LAST because it reads the assembled field: a
+    // caller-supplied storageType or inputs has to win, and the properties it keys
+    // off (`inputType`, `choices`) arrive with safeProperties.
+    return applyNewFieldDefaults({
       id,
       type,
       label: properties.label || fieldDef.label || 'Untitled',

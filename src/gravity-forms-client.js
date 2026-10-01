@@ -10,7 +10,7 @@ import { AuthManager, validateRestApiAccess, flattenParams, rfc3986Encode } from
 import { ValidationFactory, EntriesValidator } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
-import { generateCompoundInputs, assignFieldIds, applyStorageTypeDefault } from './field-definitions/field-registry.js';
+import { generateCompoundInputs, assignFieldIds, applyNewFieldDefaults } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
 import { guardMerge } from './utils/merge-guard.js';
@@ -516,8 +516,9 @@ export class GravityFormsClient {
       // Process fields to ensure compound types have proper inputs array.
       if (validated.fields && Array.isArray(validated.fields)) {
         validated.fields = validated.fields.map(suppliedField => {
-          // Every field here is new, so the storage default always applies.
-          const field = applyStorageTypeDefault(suppliedField);
+          // Every field here is new, so the editor's defaults (storage mode, checkbox
+          // inputs) always apply.
+          const field = applyNewFieldDefaults(suppliedField);
 
           if (field.inputs && Array.isArray(field.inputs) && field.inputs.length > 0) {
             return field;
@@ -612,14 +613,14 @@ export class GravityFormsClient {
           ...updates
         };
 
-        // Storage defaults reach the fields this call ADDS. A stored field
-        // round-trips byte-for-byte: its storageType decides how GF reads values
-        // that are already saved under it.
+        // Editor defaults (storage mode, checkbox inputs) reach the fields this call
+        // ADDS. A stored field round-trips byte-for-byte: its storageType and inputs
+        // decide how GF reads values that are already saved under it.
         if (Array.isArray(updates.fields)) {
           const storedFieldIds = new Set((existingForm.fields || []).map((field) => String(field?.id)));
 
           updatedFormData.fields = updates.fields.map((field) => (
-            storedFieldIds.has(String(field?.id)) ? field : applyStorageTypeDefault(field)
+            storedFieldIds.has(String(field?.id)) ? field : applyNewFieldDefaults(field)
           ));
         }
 

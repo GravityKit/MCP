@@ -9,6 +9,7 @@
  *   create  "2": ["a","b"]      -> "a"              (radio kept the first, dropped the rest)
  *   submit  input_2: ["a","b"]  -> "2": "" plus "2_0", "2_1"  (GF's hydrate_post reads an
  *                                  array under a single-value input as repeater rows)
+ *   a checkbox made through the API has choices and no inputs.
  *
  * Assertions read the wire through the recorded requests.
  */
@@ -16,6 +17,9 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { GravityFormsClient } from '../src/gravity-forms-client.js';
+import { FieldManager } from '../src/field-operations/field-manager.js';
+import FieldAwareValidator from '../src/config/field-validation.js';
+import { fieldRegistry, generateCheckboxInputs } from '../src/field-definitions/field-registry.js';
 
 const CHOICES = (...values) => values.map((value) => ({ text: value, value }));
 
@@ -244,4 +248,94 @@ test('the validation tools apply the same rule as the submit tool', async () => 
   await assert.rejects(() => client.validateSubmission({ form_id: 172, input_2: ['a', 'b'] }), /field 2 \(radio\)/);
   await client.validateSubmission({ form_id: 172, input_7: ['Boston'] });
   assert.strictEqual(submitted(requests, '/validation').input_7_3, 'Boston');
+});
+
+// --- bug 5: checkbox inputs ---
+
+test('generateCheckboxInputs numbers inputs as the form editor does and skips multiples of ten', () => {
+  const inputs = generateCheckboxInputs({ id: 4, type: 'checkbox', choices: CHOICES('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k') });
+  assert.deepStrictEqual(inputs.slice(0, 2), [{ id: '4.1', label: 'a', name: '' }, { id: '4.2', label: 'b', name: '' }]);
+  assert.deepStrictEqual(inputs.map((i) => i.id).slice(8), ['4.9', '4.11', '4.12']);
+});
+
+test('generateCheckboxInputs leaves other types, choiceless fields and persistent-choice types alone', () => {
+  assert.strictEqual(generateCheckboxInputs({ id: 1, type: 'radio', choices: CHOICES('a') }), null);
+  assert.strictEqual(generateCheckboxInputs({ id: 1, type: 'checkbox', choices: [] }), null);
+  assert.strictEqual(generateCheckboxInputs({ id: 1, type: 'checkbox' }), null);
+  // multi_choice and image_choice key inputs by a per-choice `key`, which is not ours to invent.
+  assert.strictEqual(generateCheckboxInputs({ id: 1, type: 'multi_choice', inputType: 'checkbox', choices: CHOICES('a') }), null);
+});
+
+test('generateCheckboxInputs reads inputType: an option, quiz or survey field set to checkbox', () => {
+  for (const type of ['option', 'quiz', 'poll', 'survey']) {
+    const inputs = generateCheckboxInputs({ id: 3, type, inputType: 'checkbox', choices: CHOICES('a', 'b') });
+    assert.deepStrictEqual(inputs.map((i) => i.id), ['3.1', '3.2'], type);
+  }
+});
+
+const postedForm = (requests) => requests.find((r) => r.method === 'POST' && r.path === '/forms').body;
+
+test('gf_create_form gives a new checkbox its inputs', async () => {
+  const { client, requests } = makeClient({ 'POST /forms': (b) => ({ ...b, id: 1 }) });
+  await client.createForm({ title: 'T', fields: [{ id: 1, type: 'checkbox', label: 'C', choices: CHOICES('p', 'q') }] });
+  assert.deepStrictEqual(postedForm(requests).fields[0].inputs, [{ id: '1.1', label: 'p', name: '' }, { id: '1.2', label: 'q', name: '' }]);
+});
+
+test('gf_create_form keeps inputs the caller supplied, and leaves a radio without any', async () => {
+  const supplied = [{ id: '1.1', label: 'p' }, { id: '1.3', label: 'q' }];
+  const { client, requests } = makeClient({ 'POST /forms': (b) => ({ ...b, id: 1 }) });
+  await client.createForm({
+    title: 'T',
+    fields: [
+      { id: 1, type: 'checkbox', label: 'C', choices: CHOICES('p', 'q'), inputs: supplied },
+      { id: 2, type: 'radio', label: 'R', choices: CHOICES('a', 'b') }
+    ]
+  });
+  const fields = postedForm(requests).fields;
+  assert.deepStrictEqual(fields[0].inputs, supplied);
+  assert.strictEqual(fields[1].inputs, undefined);
+});
+
+test('gf_update_form gives inputs to a checkbox the call adds and leaves a stored one alone', async () => {
+  const stored = { id: 1, type: 'checkbox', label: 'Old', choices: CHOICES('p', 'q'), inputs: [] };
+  const { client, requests } = makeClient({
+    'GET /forms/9': { id: 9, title: 'T', fields: [stored] },
+    'PUT /forms/9': (b) => b
+  });
+  await client.updateForm({
+    id: 9,
+    fields: [stored, { id: 2, type: 'checkbox', label: 'New', choices: CHOICES('x', 'y') }]
+  });
+  const fields = requests.find((r) => r.method === 'PUT').body.fields;
+  assert.deepStrictEqual(fields[0].inputs, [], 'a stored field round-trips: its inputs decide where saved values are read');
+  assert.deepStrictEqual(fields[1].inputs.map((i) => i.id), ['2.1', '2.2']);
+});
+
+test('gf_add_field gives a new checkbox its inputs and keeps supplied ones', async () => {
+  const api = {
+    getForm: async () => ({ form: { id: 1, title: 'T', fields: [{ id: 1, type: 'text', label: 'Name' }] } }),
+    replaceForm: async (formId, form) => ({ form }),
+    allowDelete: true
+  };
+  const manager = new FieldManager(api, fieldRegistry, new FieldAwareValidator());
+
+  const generated = await manager.addField(1, 'checkbox', { label: 'C', choices: CHOICES('p', 'q') });
+  assert.deepStrictEqual(generated.field.inputs, [
+    { id: `${generated.field.id}.1`, label: 'p', name: '' },
+    { id: `${generated.field.id}.2`, label: 'q', name: '' }
+  ]);
+
+  const supplied = await manager.addField(1, 'checkbox', { label: 'C', choices: CHOICES('p', 'q'), inputs: [{ id: '5.1', label: 'p' }, { id: '5.3', label: 'q' }] });
+  assert.deepStrictEqual(supplied.field.inputs.map((i) => i.id), [`${supplied.field.id}.1`, `${supplied.field.id}.3`]);
+});
+
+test('gf_update_form accepts a stored checkbox sent back with an inputs list, the repair the entry error names', async () => {
+  const stored = { id: 1, type: 'checkbox', label: 'Old', choices: CHOICES('p', 'q'), inputs: [] };
+  const repaired = { ...stored, inputs: [{ id: '1.1', label: 'p', name: '' }, { id: '1.2', label: 'q', name: '' }] };
+  const { client, requests } = makeClient({
+    'GET /forms/9': { id: 9, title: 'T', fields: [stored] },
+    'PUT /forms/9': (b) => b
+  });
+  await client.updateForm({ id: 9, fields: [repaired] });
+  assert.deepStrictEqual(requests.find((r) => r.method === 'PUT').body.fields[0].inputs, repaired.inputs);
 });

@@ -1078,6 +1078,74 @@ export function applyStorageTypeDefault(field) {
 }
 
 /**
+ * Field types whose choices carry their own `key` and whose inputs are matched to
+ * choices by it (has_persistent_choices(), class-gf-field.php:120). Their inputs
+ * are not numbered from the choice order, so they are never generated here.
+ */
+const PERSISTENT_CHOICE_TYPES = ['multi_choice', 'image_choice'];
+
+/**
+ * Build the sub-inputs a checkbox field needs from its choices.
+ *
+ * Gravity Forms reads a checkbox from one input per choice (4.1, 4.2, ...), never
+ * from the field id (GF_Field_Checkbox::get_entry_inputs() returns $this->inputs,
+ * class-gf-field-checkbox.php:858). The form editor builds them in JavaScript
+ * (SetFieldCheckboxInputs, form_editor.js:4723); GFAPI and the REST API never run
+ * it, so a checkbox created through the API has choices and nowhere to store them.
+ * Numbering is the editor's: choice order, skipping multiples of ten so 5.1 and
+ * 5.10 cannot collide; label is the choice text; name is empty.
+ *
+ * Keyed off the resolved type (`inputType`, else `type`) because option, quiz,
+ * poll and survey fields become checkboxes through `inputType`.
+ *
+ * @param {object} field A field with an id and choices.
+ * @returns {Array<{id: string, label: string, name: string}>|null} The inputs, or
+ *   null when the field is not a checkbox, has no choices, or keys its own inputs.
+ */
+export function generateCheckboxInputs(field) {
+  if (!field || typeof field !== 'object') {
+    return null;
+  }
+
+  const resolvedType = field.inputType || field.type;
+  const hasChoices = Array.isArray(field.choices) && field.choices.length > 0;
+  const keysItsOwnInputs = PERSISTENT_CHOICE_TYPES.includes(field.type) || PERSISTENT_CHOICE_TYPES.includes(field.inputType);
+  if (resolvedType !== 'checkbox' || !hasChoices || keysItsOwnInputs) {
+    return null;
+  }
+
+  let skipped = 0;
+  return field.choices.map((choice, index) => {
+    if ((index + 1 + skipped) % 10 === 0) {
+      skipped++;
+    }
+    return { id: `${field.id}.${index + 1 + skipped}`, label: choice?.text ?? '', name: '' };
+  });
+}
+
+/**
+ * Everything a NEW field needs that the form editor would have written: the
+ * storage mode (applyStorageTypeDefault) and a checkbox's inputs.
+ *
+ * Inputs the caller supplied are kept, since their ids may have gaps that match
+ * existing entries. Apply to new fields only: changing a stored field's inputs
+ * changes where its saved values are read from.
+ *
+ * @param {object} field A field object.
+ * @returns {object} The field with the editor's defaults filled in.
+ */
+export function applyNewFieldDefaults(field) {
+  const withStorage = applyStorageTypeDefault(field);
+  const hasInputs = Array.isArray(withStorage?.inputs) && withStorage.inputs.length > 0;
+  if (hasInputs) {
+    return withStorage;
+  }
+
+  const inputs = generateCheckboxInputs(withStorage);
+  return inputs ? { ...withStorage, inputs } : withStorage;
+}
+
+/**
  * Get all field types by category
  */
 export function getFieldsByCategory() {
