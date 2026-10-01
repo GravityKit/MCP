@@ -4,6 +4,7 @@
  */
 
 import { createHash } from 'crypto';
+import { resourceMutex } from '../utils/mutex.js';
 import { assignFieldIds, applyNewFieldDefaults, generateCheckboxInputs, reconcileCheckboxInputs } from '../field-definitions/field-registry.js';
 
 /**
@@ -42,6 +43,28 @@ export class FieldManager {
    * @returns {object} Field creation result with warnings
    */
   async addField(formId, fieldType, properties = {}, position = {}) {
+    return this.inFormTransaction(formId, () => this.addFieldUnlocked(formId, fieldType, properties, position));
+  }
+
+  /**
+   * Run a read-modify-write of one form while holding that form's lock.
+   *
+   * The lock has to span the GET, the change and the PUT. Held for the PUT alone
+   * (what replaceForm does), N callers all read the same stored form, each
+   * computes the same next field id, and the later PUTs overwrite the earlier
+   * ones while every caller is told it succeeded. replaceForm takes the same
+   * lock again inside this one; the mutex is reentrant for the holder.
+   *
+   * @param {number} formId
+   * @param {() => Promise<T>} work
+   * @returns {Promise<T>}
+   * @template T
+   */
+  async inFormTransaction(formId, work) {
+    return resourceMutex.withLock(`form:${formId}`, work);
+  }
+
+  async addFieldUnlocked(formId, fieldType, properties = {}, position = {}) {
     if (typeof fieldType !== 'string' || fieldType.trim() === '') {
       throw new Error('field_type is required and must be a non-empty string');
     }
@@ -115,7 +138,17 @@ export class FieldManager {
     form.fields.splice(insertIndex, 0, field);
     
     // Replace form via direct PUT (no re-fetch; we already have the full state)
-    await this.api.replaceForm(formId, form);
+    const written = await this.api.replaceForm(formId, form);
+
+    // Report from what the PUT returned, not from what was computed before it:
+    // a field the stored form does not hold must not be reported as created.
+    const storedFields = written?.form?.fields;
+    const storedField = Array.isArray(storedFields)
+      ? storedFields.find((candidate) => String(candidate?.id) === String(fieldId))
+      : undefined;
+    if (Array.isArray(storedFields) && storedField === undefined) {
+      throw new Error(`Field ${fieldId} was sent to form ${formId} but is not in the form Gravity Forms returned. The field was not created; re-read the form and retry.`);
+    }
 
     // Surface field-shape warnings, plus a heads-up when the type is unrecognized.
     const warnings = this.validator.getWarnings(field);
@@ -152,6 +185,10 @@ export class FieldManager {
    * Update existing field with dependency checking
    */
   async updateField(formId, fieldId, updates = {}, options = {}) {
+    return this.inFormTransaction(formId, () => this.updateFieldUnlocked(formId, fieldId, updates, options));
+  }
+
+  async updateFieldUnlocked(formId, fieldId, updates = {}, options = {}) {
     const { force = false } = options;
 
     // Fetch form
@@ -220,6 +257,10 @@ export class FieldManager {
    * Delete field with comprehensive dependency analysis
    */
   async deleteField(formId, fieldId, options = {}) {
+    return this.inFormTransaction(formId, () => this.deleteFieldUnlocked(formId, fieldId, options));
+  }
+
+  async deleteFieldUnlocked(formId, fieldId, options = {}) {
     // Unlike a form or entry, a deleted field does not go to the Trash: the config
     // is gone and its entry data is orphaned. Gate it as the other deletes are.
     if (!this.api.allowDelete) {

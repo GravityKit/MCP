@@ -9,10 +9,20 @@
  *   try { ... } finally { lock.release(); }
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 class ResourceMutex {
   constructor() {
     /** @type {Map<string, Promise<void>>} */
     this.locks = new Map();
+    /**
+     * Keys held by the current async call chain. withLock() consults it so a
+     * holder that asks for the same key again (a field operation holding
+     * form:42 calls replaceForm, which takes form:42) runs inside the lock it
+     * already owns instead of waiting on itself forever.
+     * @type {AsyncLocalStorage<Set<string>>}
+     */
+    this.held = new AsyncLocalStorage();
   }
 
   /**
@@ -50,7 +60,9 @@ class ResourceMutex {
    * Execute a function while holding the lock for a resource key.
    *
    * Acquires the lock, runs the function, and releases the lock when done
-   * (even if the function throws).
+   * (even if the function throws). Reentrant per async call chain: a function
+   * running under a key may call withLock() on that same key and runs at once.
+   * acquire() is not reentrant; only withLock() is.
    *
    * @param {string} key - Resource identifier.
    * @param {() => Promise<T>} fn - Async function to execute under the lock.
@@ -58,9 +70,19 @@ class ResourceMutex {
    * @template T
    */
   async withLock(key, fn) {
+    const heldKeys = this.held.getStore();
+    const alreadyHeld = heldKeys !== undefined && heldKeys.has(key);
+    if (alreadyHeld) {
+      // Reentrant: this call chain owns the key. Waiting would deadlock, and
+      // exclusion against everyone else already holds.
+      return fn();
+    }
+
     const lock = await this.acquire(key);
     try {
-      return await fn();
+      const nowHeld = new Set(heldKeys || []);
+      nowHeld.add(key);
+      return await this.held.run(nowHeld, fn);
     } finally {
       lock.release();
     }
