@@ -865,13 +865,22 @@ export class EntriesValidator extends BaseValidator {
       const value = data[key];
       const isList = Array.isArray(value);
       const isObject = value !== null && typeof value === 'object' && !isList;
-      if (!isList && !isObject) {
-        return;
-      }
-
       const [fieldPart, inputPart] = key.split('.');
       const field = fields.find(candidate => Number(candidate?.id) === Number(fieldPart));
       if (!field) {
+        return;
+      }
+
+      // A scalar is the right shape for most fields and the wrong one for a checkbox's
+      // own key: GF reads a checkbox only from its inputs, so "p" under `4` is stored
+      // nowhere while the call reports success. "" and null say "no value" and pass.
+      const isScalar = !isList && !isObject;
+      const isEmpty = value === '' || value === null || value === undefined;
+      if (isScalar) {
+        const isCheckbox = (field.inputType || field.type) === 'checkbox';
+        if (inputPart === undefined && isCheckbox && !isEmpty) {
+          checkboxProblems.push(this.checkboxScalarMessage(field, key, value));
+        }
         return;
       }
 
@@ -893,6 +902,31 @@ export class EntriesValidator extends BaseValidator {
     if (messages.length > 0) {
       throw new Error(messages.join('. '));
     }
+  }
+
+  /**
+   * The refusal for a scalar sent under a checkbox's own key.
+   *
+   * Refused rather than matched to a choice: a string like "p,q" cannot be told from
+   * one choice whose text holds a comma, and the array form already does the matching.
+   *
+   * @param {object} field A checkbox field.
+   * @param {string} key   The key the value was sent under (the field id).
+   * @param {*} value      The scalar that was sent.
+   * @returns {string} What went wrong and the two spellings that work.
+   */
+  static checkboxScalarMessage(field, key, value) {
+    if (this.isCheckboxWithoutInputs(field)) {
+      return `field ${key} (${field.inputType || field.type}) lists choices but no inputs, and Gravity Forms reads a checkbox from its inputs (${key}.1, ${key}.2, ...), so ${JSON.stringify(value)} sent under ${key} has nowhere to be stored. Add the inputs to the field first (send it through gf_update_form with an \`inputs\` list)`;
+    }
+
+    const inputIds = (field.inputs || []).map(input => input.id);
+    // Name the input of the choice the value matches, so the example can be pasted.
+    const choices = Array.isArray(field.choices) ? field.choices : [];
+    const matched = choices.findIndex(choice => choice?.value === value || choice?.text === value);
+    const exampleInput = inputIds[matched] ?? inputIds[0] ?? `${key}.1`;
+    const shown = inputIds.length > 5 ? `${inputIds.slice(0, 5).join(', ')}, ...` : inputIds.join(', ');
+    return `field ${key} (${field.inputType || field.type}) is a checkbox, which Gravity Forms reads only from its inputs (${shown}), so ${JSON.stringify(value)} sent under ${key} is stored nowhere. Send an array to tick choices by value (${key}: [${JSON.stringify(value)}]), or name the input ("${exampleInput}": ${JSON.stringify(value)})`;
   }
 
   /**

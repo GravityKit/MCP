@@ -339,3 +339,68 @@ test('gf_update_form accepts a stored checkbox sent back with an inputs list, th
   await client.updateForm({ id: 9, fields: [repaired] });
   assert.deepStrictEqual(requests.find((r) => r.method === 'PUT').body.fields[0].inputs, repaired.inputs);
 });
+
+
+// --- a scalar under a checkbox's own key: GF reads a checkbox only from its inputs ---
+// Field 7 has non-empty inputs AND choices and resolves to checkbox; field 2 (radio) has
+// choices and no inputs. A guard keyed off "has choices" refuses the radio too, so the
+// radio control below is what proves the checkbox check is on the resolved type.
+
+test('create refuses a scalar under a checkbox key and names the input spelling and the array', async () => {
+  const { client, requests } = makeClient(entryRoutes());
+  await assert.rejects(
+    () => client.createEntry({ form_id: 172, '7': 'Boston' }),
+    (error) => {
+      assert.match(error.message, /field 7 \(checkbox\)/);
+      assert.match(error.message, /7\.1, 7\.2, 7\.3/);
+      assert.match(error.message, /"7\.3": "Boston"/, 'names the input spelling');
+      assert.match(error.message, /\["Boston"\]/, 'names the array spelling');
+      return true;
+    }
+  );
+  assert.strictEqual(writes(requests).length, 0);
+});
+
+test('create refuses a scalar under a checkbox that has no inputs, with the repair that error names', async () => {
+  const { client, requests } = makeClient(entryRoutes());
+  await assert.rejects(() => client.createEntry({ form_id: 172, '4': 'p' }), /field 4.*no inputs/);
+  assert.strictEqual(writes(requests).length, 0);
+});
+
+test('update refuses a scalar under a checkbox key', async () => {
+  const { client, requests } = makeClient({
+    'GET /forms/172': FORM_172,
+    'GET /entries/9': { id: 9, form_id: 172 },
+    'PUT /entries/9': (b) => b
+  });
+  await assert.rejects(() => client.updateEntry({ id: 9, '7': 'Boston' }), /field 7 \(checkbox\)/);
+  assert.strictEqual(writes(requests).length, 0);
+});
+
+test('submit refuses a scalar under input_N of a checkbox, and the validation tool does too', async () => {
+  const { client, requests } = makeClient(submitRoutes());
+  await assert.rejects(() => client.submitFormData({ form_id: 172, input_7: 'Boston' }), /field 7 \(checkbox\)/);
+  await assert.rejects(() => client.validateSubmission({ form_id: 172, input_7: 'Boston' }), /field 7 \(checkbox\)/);
+  assert.strictEqual(writes(requests).length, 0);
+});
+
+test('a scalar under a checkbox is refused when the checkbox comes from inputType', async () => {
+  // An option field set to checkbox: type is `option`, only inputType says checkbox.
+  const form = { id: 50, fields: [{ id: 1, type: 'option', inputType: 'checkbox', label: 'O', choices: CHOICES('a', 'b'), inputs: [{ id: '1.1', label: 'a' }, { id: '1.2', label: 'b' }] }] };
+  const { client } = makeClient({ 'GET /forms/50': form, 'POST /entries': (b) => ({ ...b, id: 1 }), 'GET /entries/1': { id: 1, form_id: 50 } });
+  await assert.rejects(() => client.createEntry({ form_id: 50, '1': 'a' }), /field 1 \(checkbox\)/);
+});
+
+test('a checkbox still takes an input key, an array, and an empty value', async () => {
+  const { client, requests } = makeClient(entryRoutes());
+  await client.createEntry({ form_id: 172, '7.3': 'Boston' });
+  assert.strictEqual(sent(requests)['7.3'], 'Boston');
+  await client.createEntry({ form_id: 172, '7': ['Boston'] });
+  await client.createEntry({ form_id: 172, '7': '' });
+});
+
+test('a scalar for a radio, a select and a text field is still accepted', async () => {
+  const { client, requests } = makeClient(entryRoutes());
+  await client.createEntry({ form_id: 172, '1': 'Ada', '2': 'a', '3': 'x' });
+  assert.deepStrictEqual([sent(requests)['1'], sent(requests)['2'], sent(requests)['3']], ['Ada', 'a', 'x']);
+});
