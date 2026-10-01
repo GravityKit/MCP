@@ -340,6 +340,9 @@ suite.test('createEntry: expands checkbox arrays', async () => {
   TestAssert.equal(postedData['1'], 'John', 'Non-checkbox fields preserved');
 });
 
+// A write with a field key fetches the form once, to check the key names a field
+// (assertKeysResolve). These two used to assert NO fetch; that predates the check and
+// the fetch is deliberate. What they still pin is that nothing gets expanded.
 suite.test('createEntry: no expansion when no arrays', async () => {
   mockHttpClient.setMockResponse('POST', '/entries', new MockResponse({
     id: 101, form_id: 1, '1': 'Jane', '2.1': 'red'
@@ -351,9 +354,13 @@ suite.test('createEntry: no expansion when no arrays', async () => {
     '2.1': 'red'
   });
 
-  // Should NOT have fetched the form
   const formRequests = mockHttpClient.requests.filter(r => r.path === '/forms/1');
-  TestAssert.equal(formRequests.length, 0, 'Should skip form fetch when no arrays');
+  TestAssert.equal(formRequests.length, 1, 'One form fetch, for the key check only');
+
+  const postRequest = mockHttpClient.requests.find(r => r.method === 'POST' && r.path === '/entries');
+  TestAssert.equal(postRequest.config.data['2.1'], 'red', 'Sub-input sent as given');
+  TestAssert.equal(postRequest.config.data['2.2'], undefined, 'No input added by expansion');
+  TestAssert.equal(postRequest.config.data['2'], undefined, 'No value invented under the parent key');
 });
 
 // =================================
@@ -419,9 +426,21 @@ suite.test('updateEntry: does not touch checkbox when not in update', async () =
   TestAssert.equal(putData['2.1'], 'red', 'Checkbox 2.1 preserved');
   TestAssert.equal(putData['2.3'], 'blue', 'Checkbox 2.3 preserved');
 
-  // Should NOT have fetched the form (no arrays in update)
   const formRequests = mockHttpClient.requests.filter(r => r.path === '/forms/1');
-  TestAssert.equal(formRequests.length, 0, 'Should skip form fetch');
+  TestAssert.equal(formRequests.length, 1, 'One form fetch, for the key check only');
+  TestAssert.equal(putData['2.2'], '', 'Checkbox 2.2 not ticked by the update');
+});
+
+suite.test('updateEntry: a write with no field key fetches no form', async () => {
+  // The case "no fetch" was written for: a status change names no field.
+  const existingEntry = generateMockEntry(1, { id: 53, form_id: 1, '1': 'John' });
+  mockHttpClient.setMockResponse('GET', '/entries/53', new MockResponse(existingEntry));
+  mockHttpClient.setMockResponse('PUT', '/entries/53', new MockResponse({ ...existingEntry, status: 'trash' }));
+
+  await client.updateEntry({ id: 53, status: 'trash' });
+
+  const formRequests = mockHttpClient.requests.filter(r => r.path.startsWith('/forms/'));
+  TestAssert.equal(formRequests.length, 0, 'A status-only write needs no form');
 });
 
 suite.test('updateEntry: clears all checkboxes with empty array', async () => {
@@ -1008,5 +1027,4 @@ suite.test('HTML-encoded: value match still preferred over text', async () => {
   TestAssert.equal(result['1.2'], 'import_export', 'Value match works');
 });
 
-// Run all tests
-suite.run();
+export default suite;
