@@ -860,6 +860,7 @@ export class EntriesValidator extends BaseValidator {
   static assertValueShapes(data, fields) {
     const problems = [];
     const checkboxProblems = [];
+    const compoundProblems = [];
 
     Object.keys(data).filter(key => this.isFieldKey(key)).forEach(key => {
       const value = data[key];
@@ -876,6 +877,22 @@ export class EntriesValidator extends BaseValidator {
       // nowhere while the call reports success. "" and null say "no value" and pass.
       const isScalar = !isList && !isObject;
       const isEmpty = value === '' || value === null || value === undefined;
+
+      // Every compound field (name, address, consent, creditcard, chainedselect) is read
+      // from its inputs the same way, whatever shape lands under the parent key: a scalar
+      // is stored nowhere, and an array has no ordering contract to map it to inputs
+      // (unlike a checkbox's choices, which are matched by value). The registry decides,
+      // so a type is covered by what it stores, not by being named here. A `time` field
+      // has inputs too but is registry-string, and a scalar under its key does store.
+      // Without listed inputs GF falls back to the field's own key, so nothing to refuse.
+      const isNamedCompound = this.isInputOnlyCompound(field);
+      const hasInputList = Array.isArray(field.inputs) && field.inputs.length > 0;
+      const compoundHasEmptyValue = isScalar && isEmpty;
+      if (inputPart === undefined && isNamedCompound && hasInputList && !compoundHasEmptyValue) {
+        compoundProblems.push(this.compoundShapeMessage(field, key, value));
+        return;
+      }
+
       if (isScalar) {
         const isCheckbox = (field.inputType || field.type) === 'checkbox';
         if (inputPart === undefined && isCheckbox && !isEmpty) {
@@ -895,13 +912,55 @@ export class EntriesValidator extends BaseValidator {
       }
     });
 
-    const messages = [...checkboxProblems];
+    const messages = [...checkboxProblems, ...compoundProblems];
     if (problems.length > 0) {
       messages.push(`${problems.join('; ')}. Gravity Forms stores nothing for a value like this: pass one value, or "" to leave it empty`);
     }
     if (messages.length > 0) {
       throw new Error(messages.join('. '));
     }
+  }
+
+  /**
+   * Whether a field is compound by the registry, other than a checkbox.
+   *
+   * Checkbox is excluded because an array of choice values is a real input for it
+   * (see checkboxScalarMessage); the others have no such spelling.
+   *
+   * @param {object} field A form field.
+   * @returns {boolean} True when storage.type is 'compound' and the field is not a checkbox.
+   */
+  static isInputOnlyCompound(field) {
+    const resolvedType = field.inputType || field.type;
+    if (resolvedType === 'checkbox') {
+      return false;
+    }
+    const definition = getFieldDefinition(resolvedType) || getFieldDefinition(field.type);
+    return definition?.storage?.type === 'compound';
+  }
+
+  /**
+   * The refusal for a value sent under a compound field's own key (not a checkbox).
+   *
+   * No array spelling is offered: GF maps nothing from list position to input, so
+   * the only repair is to name the input.
+   *
+   * @param {object} field A name, address, consent, creditcard or chainedselect field.
+   * @param {string} key   The key the value was sent under (the field id).
+   * @param {*} value      What was sent.
+   * @returns {string} What went wrong and the input spelling that works.
+   */
+  static compoundShapeMessage(field, key, value) {
+    const fieldType = field.inputType || field.type;
+    // GF keeps only the number and type inputs of a credit card (GF_Field_CreditCard::get_entry_inputs).
+    const storedOnly = fieldType === 'creditcard' ? [`${key}.1`, `${key}.4`] : null;
+    const listed = field.inputs.filter(input => !storedOnly || storedOnly.includes(String(input.id)));
+    const described = listed.map(input => (input.label ? `${input.id} (${input.label})` : String(input.id)));
+    const shown = described.length > 8 ? `${described.slice(0, 8).join(', ')}, ...` : described.join(', ');
+    const given = Array.isArray(value) ? 'an array' : (value !== null && typeof value === 'object' ? 'an object' : JSON.stringify(value));
+    const example = Array.isArray(value) || (value !== null && typeof value === 'object') ? '"..."' : JSON.stringify(value);
+    const exampleInput = listed[0]?.id ?? `${key}.1`;
+    return `field ${key} (${fieldType}) keeps each part in its own input (${shown}), which Gravity Forms reads instead of the field's own key, so ${given} sent under ${key} is stored nowhere. Name the input ("${exampleInput}": ${example})`;
   }
 
   /**

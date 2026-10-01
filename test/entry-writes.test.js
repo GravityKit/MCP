@@ -483,7 +483,9 @@ test('create refuses an array on a radio: it holds one value, and the first used
 });
 
 test('create refuses an array on a compound field\'s own id and on a single input', async () => {
-  for (const key of ['8', '8.3', '7.1']) {
+  // Field 8 is a name: refused, but as a compound field (it is not a single-value one;
+  // test/compound-value-shapes.test.js pins the message). Its inputs hold one value each.
+  for (const key of ['8.3', '7.1']) {
     const { client, requests } = makeShapeClient();
     await assert.rejects(
       () => client.createEntry({ form_id: 162, [key]: ['Ada'] }),
@@ -492,6 +494,9 @@ test('create refuses an array on a compound field\'s own id and on a single inpu
     );
     assert.equal(writes(requests).length, 0);
   }
+  const { client, requests } = makeShapeClient();
+  await assert.rejects(() => client.createEntry({ form_id: 162, '8': ['Ada'] }), /field 8 \(name\).*8\.3.*an array/);
+  assert.equal(writes(requests).length, 0);
 });
 
 test('create refuses a plain object on a checkbox, which the expansion never handled', async () => {
