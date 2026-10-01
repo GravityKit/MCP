@@ -4,7 +4,7 @@
  */
 
 import { createHash } from 'crypto';
-import { assignFieldIds, applyNewFieldDefaults, generateCheckboxInputs } from '../field-definitions/field-registry.js';
+import { assignFieldIds, applyNewFieldDefaults, generateCheckboxInputs, reconcileCheckboxInputs } from '../field-definitions/field-registry.js';
 
 /**
  * Field properties that dependents actually consume. Conditional-logic rules
@@ -186,11 +186,14 @@ export class FieldManager {
 
     // Apply updates
     const originalField = { ...form.fields[fieldIndex] };
-    form.fields[fieldIndex] = {
+    // A checkbox's inputs follow its choices: left stale, an added choice has nowhere
+    // to be stored. Removed or moved choices cannot be kept safe, so they are reported.
+    const { field: reconciled, warning: inputsWarning } = reconcileCheckboxInputs(originalField, {
       ...originalField,
       ...(updates || {}),
       id: originalField.id // Preserve ID
-    };
+    });
+    form.fields[fieldIndex] = reconciled;
     this.normalizeLayoutProperties(form.fields[fieldIndex], formId);
 
     // Replace form via direct PUT (no re-fetch; we already have the full state)
@@ -207,7 +210,8 @@ export class FieldManager {
         dependencies: hasBreakingDeps
           ? ['Field has dependents (conditional logic, calculations, or merge tags); value-shape changes (type/choices/inputs) require force']
           : [],
-        validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex])
+        validationIssues: this.validator.getWarnings(result.form.fields[fieldIndex]),
+        inputs: inputsWarning ? [inputsWarning] : []
       }
     };
   }

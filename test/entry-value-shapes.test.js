@@ -19,7 +19,7 @@ import assert from 'node:assert';
 import { GravityFormsClient } from '../src/gravity-forms-client.js';
 import { FieldManager } from '../src/field-operations/field-manager.js';
 import FieldAwareValidator from '../src/config/field-validation.js';
-import { fieldRegistry, generateCheckboxInputs } from '../src/field-definitions/field-registry.js';
+import { fieldRegistry, generateCheckboxInputs, reconcileCheckboxInputs } from '../src/field-definitions/field-registry.js';
 
 const CHOICES = (...values) => values.map((value) => ({ text: value, value }));
 
@@ -403,4 +403,114 @@ test('a scalar for a radio, a select and a text field is still accepted', async 
   const { client, requests } = makeClient(entryRoutes());
   await client.createEntry({ form_id: 172, '1': 'Ada', '2': 'a', '3': 'x' });
   assert.deepStrictEqual([sent(requests)['1'], sent(requests)['2'], sent(requests)['3']], ['Ada', 'a', 'x']);
+});
+
+// --- changing a checkbox's choices: inputs follow, as the form editor does ---
+// GF numbers a checkbox's inputs by choice position (the editor regenerates them from
+// scratch, SetFieldCheckboxInputs; the renderer counts positions too,
+// class-gf-field-checkbox.php:415). The fixture is a NON-persistent checkbox with inputs
+// that line up with its choices, so a stale-inputs result is the thing under test.
+
+const stale = () => ({ id: 4, type: 'checkbox', label: 'C', choices: CHOICES('r', 's'), inputs: [{ id: '4.1', label: 'r', name: '' }, { id: '4.2', label: 's', name: '' }] });
+
+function managerFor(field, extra = []) {
+  const form = { id: 1, title: 'T', fields: [field, ...extra] };
+  const api = { getForm: async () => ({ form: JSON.parse(JSON.stringify(form)) }), replaceForm: async (formId, f) => ({ form: f }), allowDelete: true };
+  return new FieldManager(api, fieldRegistry, new FieldAwareValidator());
+}
+const inputIds = (field) => field.inputs.map((i) => i.id);
+
+test('gf_update_field gives an added choice its input (form 173: 3 choices, 2 inputs)', async () => {
+  const result = await managerFor(stale()).updateField(1, 4, { choices: CHOICES('r', 's', 't') }, { force: true });
+  assert.deepStrictEqual(inputIds(result.field), ['4.1', '4.2', '4.3']);
+  assert.strictEqual(result.field.inputs[2].label, 't');
+  assert.deepStrictEqual(result.warnings.inputs, [], 'appending moves nothing, so there is nothing to warn about');
+});
+
+test('gf_update_field skips a multiple of ten when a choice lands on position ten', async () => {
+  const nine = { ...stale(), choices: CHOICES(...'abcdefghi'.split('')), inputs: generateCheckboxInputs({ id: 4, type: 'checkbox', choices: CHOICES(...'abcdefghi'.split('')) }) };
+  const result = await managerFor(nine).updateField(1, 4, { choices: CHOICES(...'abcdefghij'.split('')) }, { force: true });
+  assert.strictEqual(inputIds(result.field)[9], '4.11');
+});
+
+test('gf_update_field drops the input of a removed choice and warns that later choices moved', async () => {
+  const three = { ...stale(), choices: CHOICES('r', 's', 't'), inputs: generateCheckboxInputs({ id: 4, type: 'checkbox', choices: CHOICES('r', 's', 't') }) };
+  const result = await managerFor(three).updateField(1, 4, { choices: CHOICES('r', 't') }, { force: true });
+  assert.deepStrictEqual(inputIds(result.field), ['4.1', '4.2']);
+  const warning = result.warnings.inputs.join(' ');
+  assert.match(warning, /"s"/, 'names the removed choice');
+  assert.match(warning, /"t"/, 'names the choice that moved');
+  assert.match(warning, /4\.2/);
+});
+
+test('gf_update_field warns about a reordered checkbox', async () => {
+  const result = await managerFor(stale()).updateField(1, 4, { choices: CHOICES('s', 'r') }, { force: true });
+  assert.deepStrictEqual(inputIds(result.field), ['4.1', '4.2']);
+  assert.match(result.warnings.inputs.join(' '), /"r".*"s"|"s".*"r"/);
+});
+
+test('gf_update_field renaming a choice relabels its input without moving it or warning', async () => {
+  const result = await managerFor(stale()).updateField(1, 4, { choices: [{ text: 'R!', value: 'r' }, { text: 'S', value: 's' }] }, { force: true });
+  assert.deepStrictEqual(inputIds(result.field), ['4.1', '4.2']);
+  assert.strictEqual(result.field.inputs[0].label, 'R!');
+  assert.deepStrictEqual(result.warnings.inputs, []);
+});
+
+test('gf_update_field keeps inputs the same call supplies', async () => {
+  const supplied = [{ id: '4.1', label: 'r' }, { id: '4.5', label: 's' }, { id: '4.7', label: 't' }];
+  const result = await managerFor(stale()).updateField(1, 4, { choices: CHOICES('r', 's', 't'), inputs: supplied }, { force: true });
+  assert.deepStrictEqual(inputIds(result.field), ['4.1', '4.5', '4.7']);
+});
+
+test('gf_update_field leaves inputs alone when the call does not touch choices', async () => {
+  const gapped = { ...stale(), inputs: [{ id: '4.1', label: 'r' }, { id: '4.3', label: 's' }] };
+  const result = await managerFor(gapped).updateField(1, 4, { label: 'Renamed' });
+  assert.deepStrictEqual(inputIds(result.field), ['4.1', '4.3']);
+});
+
+test('gf_update_field leaves a radio, and a persistent-choice checkbox, without generated inputs', async () => {
+  const radio = { id: 2, type: 'radio', label: 'R', choices: CHOICES('a') };
+  const radioResult = await managerFor(radio).updateField(1, 2, { choices: CHOICES('a', 'b') }, { force: true });
+  assert.strictEqual(radioResult.field.inputs, undefined);
+
+  const keyed = { id: 3, type: 'image_choice', inputType: 'checkbox', label: 'I', choices: [{ text: 'a', value: 'a', key: 'ka' }], inputs: [{ id: '3.1', label: 'a', key: 'ka' }] };
+  const keyedResult = await managerFor(keyed).updateField(1, 3, { choices: [{ text: 'a', value: 'a', key: 'ka' }, { text: 'b', value: 'b', key: 'kb' }] }, { force: true });
+  assert.deepStrictEqual(inputIds(keyedResult.field), ['3.1'], 'inputs matched to choices by key are not renumbered');
+});
+
+test('gf_update_form regenerates a stored checkbox whose choices changed and warns', async () => {
+  const three = CHOICES('r', 's', 't');
+  const { client, requests } = makeClient({
+    'GET /forms/9': { id: 9, title: 'T', fields: [stale()] },
+    'PUT /forms/9': (b) => b
+  });
+  const result = await client.updateForm({ id: 9, fields: [{ ...stale(), choices: three }] });
+  const put = requests.find((r) => r.method === 'PUT').body.fields[0];
+  assert.deepStrictEqual(put.inputs.map((i) => i.id), ['4.1', '4.2', '4.3']);
+  assert.strictEqual(result.warning, undefined, 'appending moves nothing');
+
+  const removed = await makeClient({
+    'GET /forms/9': { id: 9, title: 'T', fields: [{ ...stale(), choices: three, inputs: generateCheckboxInputs({ id: 4, type: 'checkbox', choices: three }) }] },
+    'PUT /forms/9': (b) => b
+  }).client.updateForm({ id: 9, fields: [{ ...stale(), choices: CHOICES('r', 't'), inputs: generateCheckboxInputs({ id: 4, type: 'checkbox', choices: three }) }] });
+  assert.match(removed.warning, /field 4.*"s"/);
+});
+
+test('gf_update_form keeps a stored checkbox byte-for-byte when its choices did not change, or when it sends its own inputs', async () => {
+  const gapped = { ...stale(), inputs: [{ id: '4.1', label: 'r' }, { id: '4.3', label: 's' }] };
+  const { client, requests } = makeClient({ 'GET /forms/9': { id: 9, title: 'T', fields: [gapped] }, 'PUT /forms/9': (b) => b });
+  await client.updateForm({ id: 9, fields: [gapped] });
+  assert.deepStrictEqual(requests.find((r) => r.method === 'PUT').body.fields[0].inputs.map((i) => i.id), ['4.1', '4.3']);
+
+  const own = [{ id: '4.1', label: 'r' }, { id: '4.2', label: 's' }, { id: '4.11', label: 't' }];
+  const second = makeClient({ 'GET /forms/9': { id: 9, title: 'T', fields: [stale()] }, 'PUT /forms/9': (b) => b });
+  await second.client.updateForm({ id: 9, fields: [{ ...stale(), choices: CHOICES('r', 's', 't'), inputs: own }] });
+  assert.deepStrictEqual(second.requests.find((r) => r.method === 'PUT').body.fields[0].inputs.map((i) => i.id), ['4.1', '4.2', '4.11']);
+});
+
+test('reconcileCheckboxInputs reports nothing for a field that is not a checkbox', () => {
+  const radio = { id: 2, type: 'radio', choices: CHOICES('a') };
+  const { field, warning } = reconcileCheckboxInputs(radio, { ...radio, choices: CHOICES('a', 'b') });
+  assert.strictEqual(field.inputs, undefined);
+  assert.strictEqual(warning, null);
 });

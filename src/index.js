@@ -394,7 +394,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_form',
-    description: 'Update a form. Keys you omit are kept, but a fields, confirmations, notifications, button or other nested object you send REPLACES the stored one whole. A call that would drop stored keys (a field, a confirmation, a notification event) is refused and names them, unless replace lists that property. To change one field use gf_update_field.',
+    description: 'Update a form. Keys you omit are kept, but a fields, confirmations, notifications, button or other nested object you send REPLACES the stored one whole. A call that would drop stored keys (a field, a confirmation, a notification event) is refused and names them, unless replace lists that property. To change one field use gf_update_field. A stored checkbox sent with different choices gets its inputs renumbered by position (a new field gets them too); a warning says when that leaves saved entry values under old numbers.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',

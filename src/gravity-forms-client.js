@@ -10,7 +10,7 @@ import { AuthManager, validateRestApiAccess, flattenParams, rfc3986Encode } from
 import { ValidationFactory, EntriesValidator } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
-import { generateCompoundInputs, assignFieldIds, applyNewFieldDefaults } from './field-definitions/field-registry.js';
+import { generateCompoundInputs, assignFieldIds, applyNewFieldDefaults, reconcileCheckboxInputs } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
 import { guardMerge } from './utils/merge-guard.js';
@@ -616,12 +616,20 @@ export class GravityFormsClient {
         // Editor defaults (storage mode, checkbox inputs) reach the fields this call
         // ADDS. A stored field round-trips byte-for-byte: its storageType and inputs
         // decide how GF reads values that are already saved under it.
+        // A stored checkbox whose choices changed is the exception: its inputs follow
+        // the choices (reconcileCheckboxInputs), or a new choice could never be stored.
+        const inputWarnings = [];
         if (Array.isArray(updates.fields)) {
-          const storedFieldIds = new Set((existingForm.fields || []).map((field) => String(field?.id)));
+          const storedFields = new Map((existingForm.fields || []).map((field) => [String(field?.id), field]));
 
-          updatedFormData.fields = updates.fields.map((field) => (
-            storedFieldIds.has(String(field?.id)) ? field : applyNewFieldDefaults(field)
-          ));
+          updatedFormData.fields = updates.fields.map((field) => {
+            const stored = storedFields.get(String(field?.id));
+            if (stored === undefined) return applyNewFieldDefaults(field);
+
+            const { field: reconciled, warning } = reconcileCheckboxInputs(stored, field);
+            if (warning) inputWarnings.push(warning);
+            return reconciled;
+          });
         }
 
         // The same holds for notifications: one already on the form round-trips
@@ -647,6 +655,7 @@ export class GravityFormsClient {
         const result = { form: response.data };
         if (removedKeys.length > 0) result.removed_keys = removedKeys;
         if (Object.keys(assignedIds).length > 0) result.assigned_ids = assignedIds;
+        if (inputWarnings.length > 0) result.warning = inputWarnings.join(' ');
         return result;
       });
     });

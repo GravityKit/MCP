@@ -1145,6 +1145,75 @@ export function applyNewFieldDefaults(field) {
   return inputs ? { ...withStorage, inputs } : withStorage;
 }
 
+/** A choice's identity for comparing two choice lists: what GF stores is its value. */
+const choiceKey = (choice) => String(choice?.value ?? choice?.text ?? '');
+
+/**
+ * Bring a stored checkbox's inputs in line with choices a call changed.
+ *
+ * GF numbers a non-persistent checkbox's inputs by choice POSITION: the form editor
+ * regenerates them from scratch on every change (SetFieldCheckboxInputs,
+ * form_editor.js:4723), and the renderer counts positions too
+ * (class-gf-field-checkbox.php:415). Inputs left as they were when choices change
+ * leave a choice with nowhere to be stored. So when the choices differ, the inputs
+ * are regenerated as the editor does, unless the caller sent inputs of its own that
+ * differ from the stored ones (a deliberate choice, kept like a new field's).
+ *
+ * Appending, and renaming, move no stored value. Removing or reordering does, and
+ * GF does the same in its own editor: entries saved earlier keep their values under
+ * the old input numbers. That cannot be avoided, so it is reported.
+ *
+ * @param {object} storedField The field as stored.
+ * @param {object} nextField   The field as the call would write it.
+ * @returns {{field: object, warning: string|null}} The field to write, and a
+ *   warning when a removed or moved choice leaves saved entry values behind.
+ */
+export function reconcileCheckboxInputs(storedField, nextField) {
+  const unchanged = { field: nextField, warning: null };
+  const resolvedType = nextField?.inputType || nextField?.type;
+  const keysItsOwnInputs = PERSISTENT_CHOICE_TYPES.includes(nextField?.type) || PERSISTENT_CHOICE_TYPES.includes(nextField?.inputType);
+  const hasChoiceLists = Array.isArray(storedField?.choices) && Array.isArray(nextField?.choices);
+  if (resolvedType !== 'checkbox' || keysItsOwnInputs || !hasChoiceLists) {
+    return unchanged;
+  }
+
+  const storedKeys = storedField.choices.map((choice) => [choice?.value, choice?.text]);
+  const nextKeys = nextField.choices.map((choice) => [choice?.value, choice?.text]);
+  if (JSON.stringify(storedKeys) === JSON.stringify(nextKeys)) {
+    return unchanged;
+  }
+
+  const callerChangedInputs = JSON.stringify(nextField.inputs ?? null) !== JSON.stringify(storedField.inputs ?? null);
+  if (callerChangedInputs) {
+    return unchanged;
+  }
+
+  const inputs = nextField.choices.length > 0 ? generateCheckboxInputs(nextField) : [];
+  const field = { ...nextField, inputs };
+
+  const nextPositions = nextField.choices.map(choiceKey);
+  const removed = [];
+  const moved = [];
+  storedField.choices.forEach((choice, index) => {
+    const position = nextPositions.indexOf(choiceKey(choice));
+    if (position === -1) {
+      removed.push(choiceKey(choice));
+    } else if (position !== index) {
+      moved.push(choiceKey(choice));
+    }
+  });
+  if (removed.length === 0 && moved.length === 0) {
+    return { field, warning: null };
+  }
+
+  const names = (list) => list.map((value) => JSON.stringify(value)).join(', ');
+  const parts = [];
+  if (removed.length > 0) parts.push(`removed ${names(removed)}`);
+  if (moved.length > 0) parts.push(`moved ${names(moved)}`);
+  const warning = `Checkbox field ${nextField.id}: ${parts.join(' and ')}. Its inputs were renumbered by choice position (now ${inputs.map((input) => input.id).join(', ') || 'none'}), as the form editor does, so values entries saved earlier hold under the old input numbers no longer line up with these choices. Adding a choice at the end moves nothing.`;
+  return { field, warning };
+}
+
 /**
  * Get all field types by category
  */
