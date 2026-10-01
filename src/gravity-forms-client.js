@@ -896,7 +896,11 @@ export class GravityFormsClient {
     const result = {};
     visibleInputs.forEach(input => { result[String(input.id)] = ''; });
 
-    const decodeHtml = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
+    // One pass, so the "&" an entity decodes to is never read as the start of another entity.
+    // Decoding "&amp;" first and then "&lt;" turned the literal text "&lt;" (stored as "&amp;lt;")
+    // into "<" (CodeQL js/double-escaping). Do not split this into chained replaces.
+    const htmlEntities = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#039;': "'" };
+    const decodeHtml = (s) => s.replace(/&(?:amp|lt|gt|quot|#039);/g, entity => htmlEntities[entity]);
     const unmatched = [];
     const withoutInput = [];
 

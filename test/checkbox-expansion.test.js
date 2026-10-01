@@ -1027,4 +1027,47 @@ suite.test('HTML-encoded: value match still preferred over text', async () => {
   TestAssert.equal(result['1.2'], 'import_export', 'Value match works');
 });
 
+// A choice whose literal text is "&lt;" is stored as "&amp;lt;". Decoding "&amp;"
+// first turns it into "&lt;" and then "<", so a caller sending "<" would tick it.
+const DOUBLE_ENCODED_FORM = {
+  id: 31,
+  fields: [
+    {
+      id: 1, type: 'checkbox', label: 'Symbols',
+      inputs: [{ id: '1.1', label: 'x' }, { id: '1.2', label: 'y' }],
+      choices: [
+        { text: '&amp;lt;', value: 'literal_lt' },
+        { text: 'A &amp; B', value: 'a_and_b' }
+      ]
+    }
+  ]
+};
+
+suite.test('HTML-encoded: text stored as &amp;lt; is not matched by "<"', async () => {
+  mockHttpClient.setMockResponse('GET', '/forms/31', new MockResponse(DOUBLE_ENCODED_FORM));
+
+  await TestAssert.throwsAsync(
+    () => client._normalizeArrayValues({ form_id: 31, '1': ['<'] }, 31),
+    'matches no choice',
+    'a caller sending "<" must not tick the choice whose text is the literal "&lt;"'
+  );
+});
+
+suite.test('HTML-encoded: text stored as &amp;lt; is matched by "&lt;"', async () => {
+  mockHttpClient.setMockResponse('GET', '/forms/31', new MockResponse(DOUBLE_ENCODED_FORM));
+
+  const result = await client._normalizeArrayValues({ form_id: 31, '1': ['&lt;'] }, 31);
+
+  TestAssert.equal(result['1.1'], 'literal_lt', '&lt; matches the choice whose text is literally &lt;');
+  TestAssert.equal(result['1.2'], '', 'other choice stays cleared');
+});
+
+suite.test('HTML-encoded: "A & B" still matches text stored as "A &amp; B"', async () => {
+  mockHttpClient.setMockResponse('GET', '/forms/31', new MockResponse(DOUBLE_ENCODED_FORM));
+
+  const result = await client._normalizeArrayValues({ form_id: 31, '1': ['A & B'] }, 31);
+
+  TestAssert.equal(result['1.2'], 'a_and_b', '& matches &amp;');
+});
+
 export default suite;
