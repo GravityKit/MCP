@@ -385,8 +385,8 @@ const GF_TOOL_DEFINITIONS = [
           items: { type: 'object' }
         },
         button: { type: 'object', description: 'Submit button settings' },
-        confirmations: { type: 'object', description: 'Confirmation settings' },
-        notifications: { type: 'object', description: 'Notification settings' },
+        confirmations: { type: 'object', description: 'Confirmations keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); reported in assigned_ids when generated' },
+        notifications: { type: 'object', description: 'Notifications keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); one with no event fires on form_submission' },
         is_active: { type: 'boolean', description: 'Form active state' }
       },
       required: ['title']
@@ -394,7 +394,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_form',
-    description: 'Update a form',
+    description: 'Update a form. Keys you omit are kept, but a fields, confirmations, notifications, button or other nested object you send REPLACES the stored one whole. A call that would drop stored keys (a field, a confirmation, a notification event) is refused and names them, unless replace lists that property. To change one field use gf_update_field.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -409,9 +409,10 @@ const GF_TOOL_DEFINITIONS = [
           items: { type: 'object' }
         },
         button: { type: 'object', description: 'Submit button settings' },
-        confirmations: { type: 'object', description: 'Confirmation settings' },
-        notifications: { type: 'object', description: 'Notification settings' },
-        is_active: { type: 'boolean', description: 'Form active state' }
+        confirmations: { type: 'object', description: 'Confirmations keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); reported in assigned_ids when generated' },
+        notifications: { type: 'object', description: 'Notifications keyed by id. A member with no id gets its key as id (a generated id if the key is empty or taken); one with no event fires on form_submission' },
+        is_active: { type: 'boolean', description: 'Form active state' },
+        replace: { type: 'array', items: { type: 'string' }, description: 'Properties allowed to drop stored keys they omit, e.g. ["confirmations"]' }
       },
       anyOf: [{ required: ['id'] }, { required: ['form_id'] }]
     }
@@ -701,7 +702,7 @@ const GF_TOOL_DEFINITIONS = [
   },
   {
     name: 'gf_update_feed',
-    description: 'Update a feed. A meta you send REPLACES the stored meta whole (other top-level properties are kept). A meta that omits stored keys is refused and names them, unless replace_meta=true. To change only some meta keys use gf_patch_feed.',
+    description: 'Update a feed. A meta you send REPLACES the stored meta whole (other top-level properties are kept). A meta that omits stored keys is refused and names them, unless replace includes "meta". To change only some meta keys use gf_patch_feed.',
     annotations: { idempotentHint: false, openWorldHint: true },
     inputSchema: {
       type: 'object',
@@ -709,7 +710,7 @@ const GF_TOOL_DEFINITIONS = [
         id: { type: 'number', description: 'Feed ID' },
         is_active: { type: 'boolean', description: 'Feed active state' },
         meta: { type: 'object', description: 'Feed config; replaces the stored meta whole' },
-        replace_meta: { type: 'boolean', description: 'Allow meta to drop stored keys it omits' }
+        replace: { type: 'array', items: { type: 'string' }, description: 'Properties allowed to drop stored keys they omit, e.g. ["meta"]' }
       },
       required: ['id']
     }

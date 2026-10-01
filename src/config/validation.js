@@ -480,6 +480,18 @@ export class FormsValidator extends BaseValidator {
       validated.notifications = this.validateObject(formData.notifications, 'notifications');
     }
 
+    // The opt-in to replace a nested property whole (see guardMerge); only an update
+    // reads it, and it must never reach the wire as a form property.
+    if (formData.replace !== undefined) {
+      if (!isUpdate) {
+        throw new Error('replace applies to gf_update_form, which replaces nested properties whole; a new form has nothing to replace');
+      }
+      const isStringList = Array.isArray(formData.replace) && formData.replace.every((name) => typeof name === 'string');
+      if (!isStringList) {
+        throw new Error('replace must be an array of strings naming properties to replace whole, e.g. ["confirmations"]');
+      }
+    }
+
     if (formData.schedule_start !== undefined) {
       validated.schedule_start = this.validateDate(formData.schedule_start, 'schedule_start');
     }
@@ -977,8 +989,8 @@ export class ValidationFactory {
         case 'gf_patch_feed':
           // PATCH already merges meta, so the opt-in has nothing to opt into. Accepting
           // and ignoring it would let a caller believe it had chosen something.
-          if (input && input.replace_meta !== undefined) {
-            throw new Error('replace_meta applies to gf_update_feed; gf_patch_feed already merges meta into the stored feed');
+          if (input && input.replace !== undefined) {
+            throw new Error('replace applies to gf_update_feed; gf_patch_feed already merges meta into the stored feed');
           }
           return ChainFeedsValidator.validateFeedData(input, false);
 

@@ -4,6 +4,7 @@
  */
 
 import GravityFormsClient from '../src/gravity-forms-client.js';
+import { stripEmpty } from '../src/utils/compact.js';
 import {
   TestRunner,
   TestAssert,
@@ -649,6 +650,258 @@ suite.test('Update Form: Should handle permission errors (403)', async () => {
     'forbidden',
     'Should handle permission errors'
   );
+});
+
+// =================================
+// UPDATE FORM: MERGE GUARD
+// =================================
+//
+// The fetch-then-merge is a shallow spread, so a nested object the caller sends
+// replaces the stored one. GFAPI::update_form re-keys confirmations and
+// notifications by id and writes each column whole (api.php:262, :270), writes
+// display_meta whole, and sanitize_settings rebuilds `button` from what it is sent
+// (forms_model.php:7884-7892). One confirmation sent means one confirmation stored.
+
+function guardedForm(id) {
+  return {
+    id,
+    title: 'Guarded',
+    adminLabel: '',
+    fields: [
+      { id: 1, type: 'text', label: 'One', inputs: null },
+      { id: 2, type: 'list', label: 'Two', choices: [{ text: 'A', value: 'a' }], conditionalLogic: { enabled: true, rules: [{ fieldId: '1', operator: 'is', value: 'x' }], actionType: 'show', logicType: 'all' } },
+      { id: 3, type: 'text', label: 'Three' }
+    ],
+    button: { type: 'text', text: 'Go', conditionalLogic: { enabled: true, rules: [{ fieldId: '1', operator: 'is', value: 'x' }], actionType: 'show', logicType: 'all' } },
+    confirmations: {
+      a: { id: 'a', name: 'Default', isDefault: true, type: 'message', message: 'Hi' },
+      b: { id: 'b', name: 'Other', type: 'message', message: 'Yo' }
+    },
+    notifications: {
+      n1: { id: 'n1', name: 'Admin', event: 'form_submission', to: '{admin_email}', subject: 'S', message: 'M' }
+    }
+  };
+}
+
+function stageForm(id, form = guardedForm(id)) {
+  mockHttpClient.setMockResponse('GET', `/forms/${id}`, new MockResponse(form));
+  mockHttpClient.setMockResponse('PUT', `/forms/${id}`, new MockResponse(form));
+  mockHttpClient.clearRequests();
+  return form;
+}
+
+const putCount = () => mockHttpClient.getRequests().filter((r) => r.method === 'PUT').length;
+
+async function errorOf(fn) {
+  try {
+    await fn();
+  } catch (error) {
+    return error.message;
+  }
+  return null;
+}
+
+suite.test('Update Form guard: Should refuse confirmations that omit a stored one, and write nothing', async () => {
+  const form = stageForm(80);
+
+  const message = await errorOf(() => client.updateForm({ id: 80, confirmations: { a: form.confirmations.a } }));
+
+  TestAssert.isTrue(message !== null && message.includes('confirmations.b'), `expected a refusal naming confirmations.b, got: ${message}`);
+  TestAssert.equal(putCount(), 0, 'the form on the site must be untouched');
+});
+
+suite.test('Update Form guard: Should refuse fields that omit a stored field or a stored key of one', async () => {
+  const form = stageForm(81);
+
+  const dropsField = await errorOf(() => client.updateForm({ id: 81, fields: [form.fields[0], form.fields[1]] }));
+  TestAssert.isTrue(dropsField !== null && dropsField.includes('fields[3]'), `expected fields[3], got: ${dropsField}`);
+
+  const { choices, ...withoutChoices } = form.fields[1];
+  const dropsKey = await errorOf(() => client.updateForm({ id: 81, fields: [form.fields[0], withoutChoices, form.fields[2]] }));
+  TestAssert.isTrue(dropsKey !== null && dropsKey.includes('fields[2].choices'), `expected fields[2].choices, got: ${dropsKey}`);
+  TestAssert.equal(putCount(), 0, 'neither refusal may write');
+});
+
+suite.test('Update Form guard: Should refuse a button that omits stored keys', async () => {
+  stageForm(82);
+
+  const message = await errorOf(() => client.updateForm({ id: 82, button: { text: 'Send' } }));
+
+  TestAssert.isTrue(message !== null && message.includes('button.type') && message.includes('button.conditionalLogic'), `expected button.type and button.conditionalLogic, got: ${message}`);
+  TestAssert.equal(putCount(), 0);
+});
+
+suite.test('Update Form guard: Should report every offending property in one error', async () => {
+  const form = stageForm(83);
+
+  const message = await errorOf(() => client.updateForm({ id: 83, button: { text: 'Send' }, confirmations: { a: form.confirmations.a } }));
+
+  TestAssert.isTrue(message !== null && message.includes('button.type') && message.includes('confirmations.b'), `expected both properties, got: ${message}`);
+  TestAssert.isTrue(message.includes('replace: ["button", "confirmations"]'), `the message names the way out, got: ${message}`);
+});
+
+suite.test('Update Form guard: Should protect a stored notification\'s event from a resend that omits it', async () => {
+  stageForm(84);
+
+  const message = await errorOf(() => client.updateForm({ id: 84, notifications: { n1: { id: 'n1', name: 'Admin', to: '{admin_email}', subject: 'S', message: 'M' } } }));
+
+  TestAssert.isTrue(message !== null && message.includes('notifications.n1.event'), `a notification resent without event never fires again; got: ${message}`);
+  TestAssert.equal(putCount(), 0);
+});
+
+suite.test('Update Form guard: Should accept the round trip of a compacted form (empty keys the reader never saw)', async () => {
+  const form = stageForm(85);
+  const sent = stripEmpty(form);
+  sent.title = 'Renamed';
+  delete sent.id;
+
+  await client.updateForm({ id: 85, ...sent });
+
+  TestAssert.equal(putCount(), 1, 'a caller who did GET, edit, send back must not be refused');
+  const body = putForm(85);
+  TestAssert.equal(body.title, 'Renamed');
+  TestAssert.equal(body.adminLabel, '', 'the stored empty value rides along from the merge');
+  // A nested null the caller never saw is not restored: the fields array replaces whole.
+  // GF stores an omitted empty key as absent and reads both the same way.
+  TestAssert.isTrue(body.fields[0].inputs == null, 'a nested empty key may be absent');
+});
+
+suite.test('Update Form guard: replace names the property to shrink; the PUT happens and lists removed_keys', async () => {
+  const form = stageForm(86);
+
+  const result = await client.updateForm({ id: 86, confirmations: { a: form.confirmations.a }, replace: ['confirmations'] });
+
+  TestAssert.equal(putCount(), 1);
+  TestAssert.deepEqual(result.removed_keys, ['confirmations.b']);
+  const body = putForm(86);
+  TestAssert.deepEqual(Object.keys(body.confirmations), ['a']);
+  TestAssert.isFalse('replace' in body, 'the opt-in is ours, not a form property');
+});
+
+suite.test('Update Form guard: replace for one property does not excuse another', async () => {
+  const form = stageForm(87);
+
+  const message = await errorOf(() => client.updateForm({ id: 87, confirmations: { a: form.confirmations.a }, button: { text: 'x' }, replace: ['confirmations'] }));
+
+  TestAssert.isTrue(message !== null && message.includes('button.type') && !message.includes('confirmations.b'), `only button should be refused, got: ${message}`);
+  TestAssert.equal(putCount(), 0);
+});
+
+suite.test('Update Form guard: replace must be an array of strings naming a property the call sends', async () => {
+  stageForm(88);
+
+  await TestAssert.throwsAsync(() => client.updateForm({ id: 88, title: 'T', replace: 'fields' }), 'replace', 'a string is not a list');
+  await TestAssert.throwsAsync(() => client.updateForm({ id: 88, title: 'T', replace: [1] }), 'replace', 'entries must be strings');
+  await TestAssert.throwsAsync(() => client.updateForm({ id: 88, title: 'T', replace: ['fields'] }), 'fields', 'naming a property the call does not send is a mistake, not a no-op');
+  TestAssert.equal(putCount(), 0);
+});
+
+suite.test('Update Form guard: a title-only update is untouched by the guard (one GET, one PUT)', async () => {
+  stageForm(89);
+
+  await client.updateForm({ id: 89, title: 'Only the title' });
+
+  const requests = mockHttpClient.getRequests();
+  TestAssert.equal(requests.filter((r) => r.method === 'GET').length, 1);
+  TestAssert.equal(requests.filter((r) => r.method === 'PUT').length, 1);
+  const body = putForm(89);
+  TestAssert.lengthOf(body.fields, 3, 'fields survive a title-only update');
+  TestAssert.deepEqual(Object.keys(body.confirmations), ['a', 'b'], 'so do confirmations');
+});
+
+suite.test('Update Form guard: a null clears a key on purpose', async () => {
+  const form = stageForm(90);
+  const { conditionalLogic, ...rest } = form.button;
+
+  await client.updateForm({ id: 90, button: { ...rest, conditionalLogic: null } });
+
+  TestAssert.equal(putCount(), 1);
+  TestAssert.equal(putForm(90).button.conditionalLogic, null);
+});
+
+suite.test('Update Form guard: Should cap a long list of dropped keys', async () => {
+  const fields = Array.from({ length: 60 }, (_, i) => ({ id: i + 1, type: 'text', label: `F${i + 1}` }));
+  stageForm(91, { id: 91, title: 'Big', fields });
+
+  const message = await errorOf(() => client.updateForm({ id: 91, fields: [fields[0]] }));
+
+  TestAssert.isTrue(message !== null && message.includes('and 19 more'), `59 dropped, 40 shown, 19 more; got: ${message}`);
+});
+
+// =================================
+// CONFIRMATION / NOTIFICATION IDS
+// =================================
+//
+// GFAPI::set_property_as_key indexes each member by $item['id'] (api.php:548), so a
+// member with no id lands under the "" key and two of them overwrite each other.
+// add_form (api.php:509-516) and update_form (:262, :270) both call it and neither
+// generates an id.
+
+suite.test('Create Form ids: Should give a confirmation or notification with no id the key it was sent under', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ id: 100, title: 'T' }));
+  mockHttpClient.clearRequests();
+
+  const result = await client.createForm({
+    title: 'T',
+    fields: [{ id: 1, type: 'text', label: 'Name' }],
+    confirmations: { thanks: { type: 'message', message: 'Thanks' }, other: { type: 'message', message: 'Other' } },
+    notifications: { admin: { to: 'a@example.com', subject: 'S', message: 'M' } }
+  });
+
+  const sent = postedForm();
+  TestAssert.deepEqual(Object.keys(sent.confirmations), ['thanks', 'other']);
+  TestAssert.equal(sent.confirmations.thanks.id, 'thanks', 'the stored id must exist, or GF files it under ""');
+  TestAssert.equal(sent.confirmations.other.id, 'other');
+  TestAssert.equal(sent.notifications.admin.id, 'admin');
+  TestAssert.equal(sent.notifications.admin.event, 'form_submission', 'the event default still applies to it');
+  TestAssert.equal(result.assigned_ids, undefined, 'ids taken from the keys the caller chose are not news');
+});
+
+suite.test('Create Form ids: Should generate a 13-character hex id for a duplicate whose key is taken, and report it', async () => {
+  mockHttpClient.setMockResponse('POST', '/forms', new MockResponse({ id: 101, title: 'T' }));
+  mockHttpClient.clearRequests();
+
+  const result = await client.createForm({
+    title: 'T',
+    fields: [{ id: 1, type: 'text', label: 'Name' }],
+    confirmations: { x: { id: 'dup', type: 'message', message: 'A' }, dup: { id: 'dup', type: 'message', message: 'B' } }
+  });
+
+  const ids = Object.values(postedForm().confirmations).map((c) => c.id);
+  TestAssert.equal(ids.length, 2, 'two members must not collapse into one');
+  TestAssert.equal(ids[0], 'dup', 'the first holder of an id keeps it');
+  TestAssert.isTrue(/^[0-9a-f]{13}$/.test(ids[1]), `the duplicate gets a generated id, got ${ids[1]}`);
+  TestAssert.deepEqual(result.assigned_ids, { confirmations: [ids[1]] });
+});
+
+suite.test('Update Form ids: Should re-key a member by its own id, as GF does', async () => {
+  const form = stageForm(102);
+
+  await client.updateForm({
+    id: 102,
+    confirmations: { a: form.confirmations.a, whatever: { ...form.confirmations.b } }
+  });
+
+  TestAssert.deepEqual(Object.keys(putForm(102).confirmations), ['a', 'b'], 'the stored id b, not the key the caller typed, names the member');
+});
+
+suite.test('Update Form ids: Should assign ids before the guard, so an id-less resend of a stored member matches it', async () => {
+  const form = stageForm(103);
+  const { id: aId, ...aWithoutId } = form.confirmations.a;
+  const { id: bId, ...bWithoutId } = form.confirmations.b;
+
+  await client.updateForm({ id: 103, confirmations: { a: aWithoutId, b: bWithoutId } });
+
+  TestAssert.equal(putCount(), 1);
+  TestAssert.equal(putForm(103).confirmations.a.id, 'a');
+});
+
+suite.test('Update Form ids: Should refuse a resend whose member has no stored counterpart to match (an id-less member keyed "" is new)', async () => {
+  const form = stageForm(104);
+
+  const message = await errorOf(() => client.updateForm({ id: 104, confirmations: { '': { type: 'message', message: 'New' } } }));
+
+  TestAssert.isTrue(message !== null && message.includes('confirmations.a') && message.includes('confirmations.b'), `both stored confirmations would be dropped; got: ${message}`);
 });
 
 // =================================

@@ -13,6 +13,8 @@ import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
 import { generateCompoundInputs, assignFieldIds, applyStorageTypeDefault } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
+import { guardMerge } from './utils/merge-guard.js';
+import { randomBytes } from 'node:crypto';
 import { USER_AGENT } from './version.js';
 
 /**
@@ -120,6 +122,81 @@ export function applyNotificationEventDefault(notifications, isNew = () => true)
   }
 
   return defaulted;
+}
+
+/**
+ * Give every confirmation or notification an id, and key the result by it.
+ *
+ * GFAPI::set_property_as_key files each member under $item['id'] (api.php:548) and
+ * neither add_form nor update_form generates one, so a member with no id lands
+ * under the "" key and two of them overwrite each other. The same call discards
+ * the key the caller chose, so the members are re-keyed here the way GF will.
+ *
+ * Mirrors assignFieldIds: an id the caller supplied is kept (the first holder of
+ * it), and only a missing, invalid or duplicate one is replaced. A replacement is
+ * the key the member was sent under when that key is free, else a 13-character
+ * hex id, the form GF's own editor writes (uniqid).
+ *
+ * @param {object} members Confirmations or notifications, keyed by anything.
+ * @param {Iterable<string>} [reserved] Ids already stored, which a generated id must avoid.
+ * @returns {{members: object, assigned: string[]}} The members keyed by id, and
+ *   the ids that were generated (not the ones taken from a key).
+ */
+export function assignSettingIds(members, reserved = []) {
+  const isKeyed = members && typeof members === 'object' && !Array.isArray(members);
+  if (!isKeyed) {
+    return { members, assigned: [] };
+  }
+
+  const ownId = (member) => {
+    const id = member && typeof member === 'object' ? member.id : undefined;
+    const isUsableString = typeof id === 'string' && id !== '';
+    const isUsableNumber = typeof id === 'number' && Number.isSafeInteger(id);
+    return isUsableString || isUsableNumber ? String(id) : undefined;
+  };
+
+  // Pass one claims every explicit id, so a replacement can never take an id a
+  // later member holds on purpose.
+  const claimed = new Set();
+  const keeps = new Set();
+  const entries = Object.entries(members);
+  for (const [key, member] of entries) {
+    const id = ownId(member);
+    if (id !== undefined && !claimed.has(id)) {
+      claimed.add(id);
+      keeps.add(key);
+    }
+  }
+
+  const avoid = new Set([...claimed, ...Array.from(reserved, String)]);
+  const assigned = [];
+  const keyed = {};
+
+  for (const [key, member] of entries) {
+    const isObject = member && typeof member === 'object' && !Array.isArray(member);
+    if (!isObject) {
+      keyed[key] = member;
+      continue;
+    }
+
+    let id;
+    if (keeps.has(key)) {
+      id = ownId(member);
+    } else if (key !== '' && !claimed.has(key)) {
+      id = key;
+      claimed.add(id);
+    } else {
+      do {
+        id = randomBytes(7).toString('hex').slice(0, 13);
+      } while (claimed.has(id) || avoid.has(id));
+      claimed.add(id);
+      assigned.push(id);
+    }
+
+    keyed[id] = member.id === id ? member : { ...member, id };
+  }
+
+  return { members: keyed, assigned };
 }
 
 export class GravityFormsClient {
@@ -434,6 +511,16 @@ export class GravityFormsClient {
         });
       }
 
+      // Ids first, so the members are keyed the way GF will key them.
+      const assignedIds = {};
+      for (const property of ['confirmations', 'notifications']) {
+        if (validated[property] !== undefined) {
+          const { members, assigned } = assignSettingIds(validated[property]);
+          validated[property] = members;
+          if (assigned.length > 0) assignedIds[property] = assigned;
+        }
+      }
+
       // Every notification here is new, so the event default always applies.
       if (validated.notifications !== undefined) {
         validated.notifications = applyNotificationEventDefault(validated.notifications);
@@ -441,9 +528,11 @@ export class GravityFormsClient {
 
       const response = await this.httpClient.post('/forms', validated);
 
-      return {
-        form: response.data
-      };
+      const result = { form: response.data };
+      if (Object.keys(assignedIds).length > 0) {
+        result.assigned_ids = assignedIds;
+      }
+      return result;
     });
   }
 
@@ -452,15 +541,47 @@ export class GravityFormsClient {
    *
    * Acquires a per-form lock to prevent concurrent updates from
    * overwriting each other in the GET→merge→PUT pattern.
+   *
+   * The merge is shallow, so a nested object the caller sends (fields,
+   * confirmations, notifications, button, ...) replaces the stored one whole, and
+   * GF writes it whole. guardMerge refuses a call that would drop stored keys
+   * unless `replace` names the property.
    */
   async updateForm(params) {
     return this.validateAndCall('gf_update_form', params, async (validated) => {
-      const { id, ...updates } = validated;
+      const { id, replace = [], ...sentUpdates } = validated;
 
       return resourceMutex.withLock(`form:${id}`, async () => {
         // Fetch existing form to preserve all current data
         const existingFormResponse = await this.httpClient.get(`/forms/${id}`);
         const existingForm = existingFormResponse.data;
+
+        // Ids come BEFORE the guard. The guard matches stored members by id, and
+        // GF re-keys what it is sent by id (set_property_as_key), so an id-less
+        // member must have the id GF will file it under before it is compared, or
+        // an id-less resend of a stored member would read as that member dropped.
+        const updates = { ...sentUpdates };
+        const assignedIds = {};
+        for (const property of ['confirmations', 'notifications']) {
+          if (updates[property] === undefined) continue;
+
+          const stored = existingForm[property] && typeof existingForm[property] === 'object' ? existingForm[property] : {};
+          const reserved = [...Object.keys(stored), ...Object.values(stored).map((member) => member?.id).filter((storedId) => storedId !== undefined)];
+          const { members, assigned } = assignSettingIds(updates[property], reserved);
+          updates[property] = members;
+          if (assigned.length > 0) assignedIds[property] = assigned;
+        }
+
+        // The event default (below) touches only members the call adds, so it
+        // cannot hide a drop: a stored notification resent without its `event` is
+        // caught here, before anything is written.
+        const removedKeys = guardMerge({
+          tool: 'gf_update_form',
+          noun: 'form',
+          stored: existingForm,
+          updates,
+          replace
+        });
 
         // Merge updates with existing form data
         const updatedFormData = {
@@ -499,9 +620,10 @@ export class GravityFormsClient {
 
         const response = await this.httpClient.put(`/forms/${id}`, updatedFormData);
 
-        return {
-          form: response.data
-        };
+        const result = { form: response.data };
+        if (removedKeys.length > 0) result.removed_keys = removedKeys;
+        if (Object.keys(assignedIds).length > 0) result.assigned_ids = assignedIds;
+        return result;
       });
     });
   }
@@ -1135,28 +1257,25 @@ export class GravityFormsClient {
    *
    * The merge is shallow: top-level keys (is_active, form_id) survive, but a
    * submitted `meta` replaces the stored one whole. A caller changing one setting
-   * used to delete the rest (a webhook feed lost its URL and stayed active), so a
-   * `meta` that omits stored keys is refused unless `replace_meta: true` says the
-   * removal is wanted. gf_patch_feed is the partial update.
+   * used to delete the rest (a webhook feed lost its URL and stayed active), so
+   * guardMerge refuses a `meta` that omits stored keys unless `replace: ["meta"]`
+   * says the removal is wanted. gf_patch_feed is the partial update.
    */
   async updateFeed(params) {
     return this.validateAndCall('gf_update_feed', params, async (validated) => {
-      const { id, replace_meta: replaceMeta, ...updates } = validated;
+      const { id, replace = [], ...updates } = validated;
 
       return resourceMutex.withLock(`feed:${id}`, async () => {
         const existingFeedResponse = await this.httpClient.get(`/feeds/${id}`);
         const existingFeed = existingFeedResponse.data;
 
-        const storedMeta = existingFeed?.meta;
-        const storedMetaIsObject = storedMeta !== null && typeof storedMeta === 'object';
-        const submittedKeys = updates.meta ? Object.keys(updates.meta) : [];
-        const droppedKeys = (updates.meta && storedMetaIsObject)
-          ? Object.keys(storedMeta).filter(key => !submittedKeys.includes(key))
-          : [];
-
-        if (droppedKeys.length > 0 && replaceMeta !== true) {
-          throw new Error(`gf_update_feed replaces meta whole, and this meta would drop ${droppedKeys.length} stored key(s): ${droppedKeys.join(', ')}. The feed was not changed. Use gf_patch_feed to change only the keys you send, or send every key you want kept, or pass replace_meta: true to remove these on purpose`);
-        }
+        const removedKeys = guardMerge({
+          tool: 'gf_update_feed',
+          noun: 'feed',
+          stored: existingFeed,
+          updates,
+          replace
+        });
 
         const updatedFeedData = {
           ...existingFeed,
@@ -1166,8 +1285,8 @@ export class GravityFormsClient {
         const response = await this.httpClient.put(`/feeds/${id}`, updatedFeedData);
 
         const result = { feed: response.data };
-        if (droppedKeys.length > 0) {
-          result.removed_meta_keys = droppedKeys;
+        if (removedKeys.length > 0) {
+          result.removed_keys = removedKeys;
         }
         return result;
       });

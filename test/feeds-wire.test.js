@@ -286,22 +286,22 @@ test('gf_update_feed: a meta that omits stored keys is refused, naming each drop
       assert.match(error.message, /requestFormat/);
       assert.ok(!/feedName/.test(error.message.split('drop')[1] || ''), 'a key that was sent is not reported as dropped');
       assert.match(error.message, /gf_patch_feed/, 'points at the partial-update tool');
-      assert.match(error.message, /replace_meta/, 'and at the explicit opt-in');
+      assert.match(error.message, /replace: \["meta"\]/, 'and at the explicit opt-in');
       return true;
     }
   );
   assert.equal(puts.length, 0, 'the feed on the site must be untouched');
 });
 
-test('gf_update_feed: replace_meta:true replaces meta on purpose and reports what it removed', async () => {
+test('gf_update_feed: replace ["meta"] replaces meta on purpose and reports what it removed', async () => {
   const { client, puts } = clientWithStoredFeed();
 
-  const out = await client.updateFeed({ id: 154, meta: { feedName: 'Only this' }, replace_meta: true });
+  const out = await client.updateFeed({ id: 154, meta: { feedName: 'Only this' }, replace: ['meta'] });
 
   const body = wireBody(puts[0].data);
   assert.deepEqual(body.meta, { feedName: 'Only this' });
-  assert.ok(!('replace_meta' in body), 'the opt-in is ours, not a feed property');
-  assert.deepEqual(out.removed_meta_keys.sort(), ['requestFormat', 'requestMethod', 'requestURL']);
+  assert.ok(!('replace' in body), 'the opt-in is ours, not a feed property');
+  assert.deepEqual(out.removed_keys.sort(), ['meta.requestFormat', 'meta.requestMethod', 'meta.requestURL']);
 });
 
 test('gf_update_feed: a meta carrying every stored key (changed or added) is not refused', async () => {
@@ -311,7 +311,7 @@ test('gf_update_feed: a meta carrying every stored key (changed or added) is not
   const out = await client.updateFeed({ id: 154, meta });
 
   assert.deepEqual(wireBody(puts[0].data).meta, meta);
-  assert.ok(!('removed_meta_keys' in out), 'nothing was removed, so nothing is reported');
+  assert.ok(!('removed_keys' in out), 'nothing was removed, so nothing is reported');
 });
 
 test('gf_update_feed: is_active alone still leaves meta untouched', async () => {
@@ -330,18 +330,50 @@ test('gf_update_feed: a stored feed with no meta has nothing to drop', async () 
   assert.deepEqual(wireBody(puts[0].data).meta, { feedName: 'First config' });
 });
 
-test('gf_update_feed: replace_meta must be a boolean', async () => {
+test('gf_update_feed: replace must be an array of strings', async () => {
   const { client } = clientWithStoredFeed();
   // A meta carrying every stored key cannot trip the drop guard, so only the
-  // type check on replace_meta can refuse this call.
-  await assert.rejects(() => client.updateFeed({ id: 154, meta: { ...WEBHOOK_FEED.meta }, replace_meta: 'yes' }), /replace_meta/);
+  // type check on replace can refuse this call.
+  await assert.rejects(() => client.updateFeed({ id: 154, meta: { ...WEBHOOK_FEED.meta }, replace: 'meta' }), /replace/);
+  await assert.rejects(() => client.updateFeed({ id: 154, meta: { ...WEBHOOK_FEED.meta }, replace: [true] }), /replace/);
 });
 
-test('gf_patch_feed: replace_meta is refused instead of silently ignored', async () => {
+test('gf_patch_feed: replace is refused instead of silently ignored', async () => {
   const client = makeClient();
   client.httpClient.patch = async () => ({ data: {} });
   await assert.rejects(
-    () => client.patchFeed({ id: 154, meta: { feedName: 'x' }, replace_meta: true }),
-    /replace_meta.*gf_update_feed/
+    () => client.patchFeed({ id: 154, meta: { feedName: 'x' }, replace: ['meta'] }),
+    /replace.*gf_update_feed/
   );
+});
+
+test('gf_update_feed: a stored empty value the compact reader never showed is not counted as dropped', async () => {
+  // gf_get_feed compacts by default and stripEmpty drops null and '', so a caller
+  // who reads, edits and sends back is missing every empty key they never saw.
+  // Refusing that caller would refuse exactly the one who did the right thing.
+  const feed = { ...WEBHOOK_FEED, meta: { ...WEBHOOK_FEED.meta, requestBodyType: '', requestHeaders: null } };
+  const { client, puts } = clientWithStoredFeed(feed);
+
+  const out = await client.updateFeed({ id: 154, meta: { ...WEBHOOK_FEED.meta, feedName: 'Renamed' } });
+
+  assert.equal(puts.length, 1, 'the feed is written');
+  assert.ok(!('removed_keys' in out), 'an empty key that was never sent is not a removal');
+});
+
+test('gf_update_feed: a nested object inside meta that drops stored keys is refused too', async () => {
+  const feed = { ...WEBHOOK_FEED, meta: { ...WEBHOOK_FEED.meta, fieldMap: { email: '3', name: '1' } } };
+  const { client, puts } = clientWithStoredFeed(feed);
+
+  await assert.rejects(
+    () => client.updateFeed({ id: 154, meta: { ...WEBHOOK_FEED.meta, fieldMap: { email: '3' } } }),
+    /meta\.fieldMap\.name/
+  );
+  assert.equal(puts.length, 0);
+});
+
+test('gf_update_feed: replace names a property the call does not send is refused', async () => {
+  const { client, puts } = clientWithStoredFeed();
+
+  await assert.rejects(() => client.updateFeed({ id: 154, is_active: false, replace: ['meta'] }), /meta/);
+  assert.equal(puts.length, 0);
 });

@@ -369,8 +369,14 @@ export class FeedsValidator {
         )
         // Only gf_update_feed reads this (see updateFeed); gf_patch_feed refuses it
         // before the schema runs.
-        .field('replace_meta', validate('replace_meta')
-          .boolean()
+        .field('replace', validate('replace')
+          .array()
+          .custom((names) => {
+            if (names !== undefined && !names.every((name) => typeof name === 'string')) {
+              throw new Error('replace must be an array of strings');
+            }
+            return true;
+          })
         );
     }
     
