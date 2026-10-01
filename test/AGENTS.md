@@ -13,7 +13,9 @@ Every fix, feature, and refactor is test-first: write one failing test that pins
 | Custom `TestRunner` | `npm run test:unit` (`test/run.js`) | Export a runner as the default export, then `import` it and add it to the `testSuites` array in `test/run.js` | `authentication`, `forms`, `entries`, `abilities-loader`, … |
 | `node:test` | `npm run test:node` | `import test from 'node:test'`; add the file path to the `test:node` script in `package.json` | `field-registry`, `server-lifecycle`, `logger-stdout`, `bench-*` |
 
-**Registration is required — adding a `*.test.js` file is not enough.** A node:test file that is not in the `test:node` script (or a custom suite not in the `testSuites` array) silently never runs.
+**Registration is required — adding a `*.test.js` file is not enough.** A node:test file that is not in the `test:node` script (or a custom suite not in the `testSuites` array) silently never runs. `test/suite-registration.test.js` now fails when a test file is loaded by neither runner, so an unregistered suite is caught rather than merely invisible.
+
+**Registering a `TestRunner` suite in `test:node` is worse than leaving it out: it reports green whatever fails.** `TestRunner.run()` sets no exit code, so `node --test` prints `ok 1` for the file while "N passed, M failed" sits inside its output. Match the harness to the script — a `TestRunner` suite belongs in `test/run.js`'s `testSuites`, a `node:test` suite in the `test:node` script. The registration test checks this too.
 
 Which to use:
 - New pure-function / unit tests → **node:test** (standard, parallel, less boilerplate). Register in `package.json` → `test:node`.
