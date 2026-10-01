@@ -70,6 +70,35 @@ export class BaseValidator {
   }
 
   /**
+   * Resolves an id given under either of two names and removes BOTH names from the
+   * validated copy, leaving the id under `canonicalKey` alone.
+   *
+   * The legacy validators spread their input and the client forwards what is left,
+   * so an alias a validator resolved but forgot to delete rode the request body.
+   * Doing the delete here makes it impossible to forget. It matters beyond a stray
+   * key: WordPress reads `$request['entry_id']` from the JSON body before the URL
+   * (WP_REST_Request::get_parameter_order) and GF's entries controller writes it
+   * into `$entry['id']`, so a body alias that differed from the URL id would have
+   * updated a different entry.
+   *
+   * @param {object} validated    The copy being built; mutated.
+   * @param {string} canonicalKey The one key the id ends up under.
+   * @param {string} preferred    The name the tool documents.
+   * @param {string} other        The accepted alias.
+   * @returns {number} The validated id.
+   * @throws When {@see BaseValidator.resolveIdAlias} would.
+   */
+  static takeIdAlias(validated, canonicalKey, preferred, other) {
+    const id = BaseValidator.resolveIdAlias(validated, preferred, other);
+
+    delete validated[preferred];
+    delete validated[other];
+    validated[canonicalKey] = id;
+
+    return id;
+  }
+
+  /**
    * Resolves a form id given under either `id` or `form_id`. The form tools are
    * split between the two spellings, so both are accepted everywhere.
    *
@@ -439,8 +468,7 @@ export class FormsValidator extends BaseValidator {
     const validated = { ...formData };
 
     if (isUpdate) {
-      validated.id = BaseValidator.resolveFormId(formData, 'id');
-      delete validated.form_id;
+      BaseValidator.takeIdAlias(validated, 'id', 'id', 'form_id');
     } else {
       BaseValidator.validateRequired(formData, ['title']);
     }
@@ -875,10 +903,9 @@ export class EntriesValidator extends BaseValidator {
       BaseValidator.validateRequired(entryData, ['form_id']);
       validated.form_id = this.validateId(entryData.form_id, 'form_id');
     } else {
-      validated.id = BaseValidator.resolveEntryId(entryData, 'id');
       // The client spreads everything but `id` into the PUT body, so an alias left
       // here would be saved onto the entry as a field of its own.
-      delete validated.entry_id;
+      BaseValidator.takeIdAlias(validated, 'id', 'id', 'entry_id');
       if (entryData.form_id !== undefined) {
         validated.form_id = this.validateId(entryData.form_id, 'form_id');
       }
@@ -972,8 +999,7 @@ export class ValidationFactory {
             throw new Error('Submission data must be an object');
           }
           const subValidated = { ...input };
-          subValidated.form_id = BaseValidator.resolveFormId(input, 'form_id');
-          delete subValidated.id;
+          BaseValidator.takeIdAlias(subValidated, 'form_id', 'form_id', 'id');
           let inputKeyCount = 0;
           // GF spells "no value" as '', never the text "null".
           const toWireScalar = entry => (entry === null || entry === undefined) ? '' : String(entry);
