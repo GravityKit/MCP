@@ -54,7 +54,7 @@
   "author": "GravityKit",
   "license": "GPL-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "axios": "^1.20.0",
     "dotenv": "^16.4.7"
   },
