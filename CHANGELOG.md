@@ -5,6 +5,12 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 🐛 Fixed
+
+- **`gf_update_field` no longer reports success for a change it did not make.** A field property sent beside `properties` instead of inside it, such as `placeholder: "Your name"`, was dropped and the call still said it worked. The call is now refused, and the reply names the property and shows it nested under `properties`. A call with no `properties`, or an empty one, is refused too.
+
 ## [2.6.0] - 2026-10-01
 
 This release improves how Gravity Forms tools save the values they are sent: checkbox, multiselect, name and address values have improved structures. Requests that cannot save a value say so instead of reporting success. Feed and form updates keep the settings that weren't touched, and field edits made at the same time no longer overwrite each other. Card numbers, security codes and passwords are kept out of entries. Two library dependencies were updated based on security advisories.
