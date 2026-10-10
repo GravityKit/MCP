@@ -99,3 +99,31 @@ test('properties nested correctly still updates the field', async () => {
   assert.equal(site.writes, 1);
   assert.equal(site.form.fields[0].placeholder, '—');
 });
+
+test('a properties.id that differs from field_id is refused, since ids cannot change', async () => {
+  const { site, update } = makeRig();
+
+  await assert.rejects(
+    () => update({ form_id: FORM_ID, field_id: 12, properties: { id: 99, label: 'Full name' } }),
+    /id/
+  );
+  assert.equal(site.writes, 0);
+  assert.equal(site.form.fields[0].label, 'Name');
+});
+
+test('a properties.id equal to field_id is accepted, so a field read back can be sent as-is', async () => {
+  const { site, update } = makeRig();
+
+  const result = await update({ form_id: FORM_ID, field_id: 12, properties: { id: '12', label: 'Full name' } });
+
+  assert.equal(result.success, true);
+  assert.equal(site.form.fields[0].label, 'Full name');
+  assert.equal(site.form.fields[0].id, 12);
+});
+
+test('properties holding only the matching id is refused as empty', async () => {
+  const { site, update } = makeRig();
+
+  await assert.rejects(() => update({ form_id: FORM_ID, field_id: 12, properties: { id: 12 } }), /nothing to change/);
+  assert.equal(site.writes, 0);
+});

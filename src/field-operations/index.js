@@ -112,7 +112,13 @@ function assertUpdateFieldInput(params = {}) {
   if (!isObject) {
     throw new Error('gf_update_field needs "properties", an object of the field properties to change (e.g. properties: { label: "Full name" })');
   }
-  if (Object.keys(properties).length === 0) {
+  // An id equal to field_id is allowed so a field read back can be sent whole.
+  const hasId = Object.prototype.hasOwnProperty.call(properties, 'id');
+  if (hasId && String(properties.id) !== String(params.field_id)) {
+    throw new Error(`gf_update_field cannot change a field's id (properties.id ${JSON.stringify(properties.id)}, field_id ${JSON.stringify(params.field_id)}): remove id from properties`);
+  }
+  const changes = Object.keys(properties).filter((key) => key !== 'id');
+  if (changes.length === 0) {
     throw new Error('gf_update_field was given an empty "properties" object, so there is nothing to change: list the field properties to update (e.g. properties: { label: "Full name" })');
   }
 }
