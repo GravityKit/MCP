@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🔒 Security
 
-- **Two library dependencies were updated based on security advisories:** the MCP SDK to 1.32.1 and `proxy-addr` to 2.0.8.
+- **Library dependencies were updated based on security advisories:** the MCP SDK to 1.32.1, `proxy-addr` to 2.0.8, `hono` to 4.13.13, `@hono/node-server` to 2.1.5, `qs` to 6.16.0, `path-to-regexp` to 8.4.2 and `body-parser` to 2.3.0.
 
 ### 🐛 Fixed
 
