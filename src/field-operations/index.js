@@ -90,6 +90,39 @@ function resolveFeatureKey(feature, registry) {
   return FEATURE_FLAGS[folded];
 }
 
+// compact and test_mode are control flags the server strips before the handler
+// runs; they are listed so a direct caller passing them is not refused.
+const UPDATE_FIELD_KEYS = new Set(['form_id', 'field_id', 'properties', 'force', 'test_mode', 'compact']);
+
+/**
+ * Refuse a gf_update_field call whose field changes would be dropped.
+ * Field changes are read only from `properties`; anything beside it, or an
+ * empty `properties`, would write the form back unchanged and still report
+ * success.
+ */
+function assertUpdateFieldInput(params = {}) {
+  const stray = Object.keys(params).filter((key) => !UPDATE_FIELD_KEYS.has(key));
+  if (stray.length > 0) {
+    const example = stray.map((key) => `${key}: ${JSON.stringify(params[key])}`).join(', ');
+    throw new Error(`gf_update_field reads field changes only from "properties", so ${stray.join(', ')} would be ignored: pass them as properties: { ${example} }`);
+  }
+
+  const { properties } = params;
+  const isObject = properties !== null && typeof properties === 'object' && !Array.isArray(properties);
+  if (!isObject) {
+    throw new Error('gf_update_field needs "properties", an object of the field properties to change (e.g. properties: { label: "Full name" })');
+  }
+  // An id equal to field_id is allowed so a field read back can be sent whole.
+  const hasId = Object.prototype.hasOwnProperty.call(properties, 'id');
+  if (hasId && String(properties.id) !== String(params.field_id)) {
+    throw new Error(`gf_update_field cannot change a field's id (properties.id ${JSON.stringify(properties.id)}, field_id ${JSON.stringify(params.field_id)}): remove id from properties`);
+  }
+  const changes = Object.keys(properties).filter((key) => key !== 'id');
+  if (changes.length === 0) {
+    throw new Error('gf_update_field was given an empty "properties" object, so there is nothing to change: list the field properties to update (e.g. properties: { label: "Full name" })');
+  }
+}
+
 /**
  * Field operation tool handlers for MCP integration
  */
@@ -117,6 +150,7 @@ export const fieldOperationHandlers = {
    * Update field properties
    */
   async gf_update_field(params, { fieldManager }) {
+    assertUpdateFieldInput(params);
     const { form_id, field_id, properties, force = false } = params;
 
     // updateField gates the write on dependencies and returns the final
@@ -340,7 +374,7 @@ export const fieldOperationTools = [
         },
         properties: {
           type: 'object',
-          description: 'Properties to update'
+          description: 'Field properties to change, e.g. { placeholder: "Your name" }. Every field change goes here; a field property sent at the top level is refused.'
         },
         force: {
           type: 'boolean',

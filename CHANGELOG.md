@@ -5,6 +5,18 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-10-14
+
+### 🔒 Security
+
+- **Library dependencies were updated based on security advisories:** the MCP SDK to 1.32.1, `proxy-addr` to 2.0.8, `hono` to 4.13.13, `@hono/node-server` to 2.1.5, `qs` to 6.16.0, `path-to-regexp` to 8.4.2 and `body-parser` to 2.3.0.
+
+### 🐛 Fixed
+
+- **`gf_update_field` refuses a field property sent outside `properties`.** A property sent beside `properties` instead of inside it, such as `placeholder: "Your name"`, was dropped and the call still reported success. The reply now names the property and shows it nested under `properties`.
+- **`gf_update_field` refuses a call with nothing to change.** A call with no `properties`, or an empty one, changed nothing. It is now refused.
+- **`gf_update_field` refuses a change to a field's ID.** Field IDs cannot change, so a `properties.id` that differs from `field_id` is now refused instead of being ignored. Sending a field back with its own ID still works.
+
 ## [2.6.0] - 2026-10-01
 
 This release improves how Gravity Forms tools save the values they are sent: checkbox, multiselect, name and address values have improved structures. Requests that cannot save a value say so instead of reporting success. Feed and form updates keep the settings that weren't touched, and field edits made at the same time no longer overwrite each other. Card numbers, security codes and passwords are kept out of entries. Two library dependencies were updated based on security advisories.
@@ -321,6 +333,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.6.1]: https://github.com/GravityKit/MCP/releases/tag/v2.6.1
 [2.6.0]: https://github.com/GravityKit/MCP/releases/tag/v2.6.0
 [2.5.0]: https://github.com/GravityKit/MCP/releases/tag/v2.5.0
 [2.4.1]: https://github.com/GravityKit/MCP/releases/tag/v2.4.1

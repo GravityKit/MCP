@@ -1,6 +1,6 @@
 # GravityKit MCP
 
-A Model Context Protocol (MCP) server for Gravity Forms. Interact with your WordPress forms, feeds, and entries through any MCP-compatible client.
+A Model Context Protocol (MCP) server for Gravity Forms and GravityKit. Interact with your WordPress forms, feeds, and entries through any MCP-compatible client.
 
 [![npm version](https://img.shields.io/npm/v/@gravitykit/mcp.svg)](https://www.npmjs.com/package/@gravitykit/mcp)
 
@@ -13,7 +13,7 @@ Built by [GravityKit](https://www.gravitykit.com) for the Gravity Forms communit
 - **Advanced Search**: Complex filtering and searching capabilities for entries
 - **Form Submissions**: Full submission workflow with validation
 - **Add-on Integration**: Manage feeds for MailChimp, Stripe, PayPal, and more
-- **GravityKit Products**: dynamic tools auto-generated from the site's Foundation abilities catalog — each add-on under its own prefix (GravityView's View authoring is first, using `gv_*`)
+- **GravityKit Products**: dynamic tools auto-generated from the site's Foundation abilities catalog, each product under its own prefix: GravityView (`gv_*`), GravityBoard (`gb_*`), GravityMigrate (`gmig_*`) and Visual Merge Tags (`mergetags_*`)
 - **Type-Safe**: Comprehensive validation for all operations
 - **Battle-Tested**: Extensive offline + adversarial hardening suites, plus a self-seeding live harness that runs end-to-end against a real Gravity Forms site
 
@@ -70,7 +70,7 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
 
 ## Available Tools
 
-Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Gravity Forms credentials are valid — and **GravityKit** — dynamic tools generated from the Foundation catalog when it's active, where each add-on registers tools under its own prefix (GravityView uses `gv_*`). The `gk_reload_abilities` tool reloads the GravityKit catalog. The two planes are independent: a Gravity-Forms-only site lists just `gf_*`; a GravityKit site without Gravity Forms REST keys still lists its product tools.
+Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Gravity Forms credentials are valid — and **GravityKit** — dynamic tools generated from the Foundation catalog when it's active, where each product registers tools under its own prefix (`gv_*`, `gb_*`, `gmig_*`, `mergetags_*`). The `gk_reload_abilities` tool reloads the GravityKit catalog. The two planes are independent: a Gravity-Forms-only site lists just `gf_*`; a GravityKit site without Gravity Forms REST keys still lists its product tools.
 
 ### Forms (6 tools)
 - `gf_list_forms`    - List forms (optionally filter to specific IDs via `include`)
@@ -114,7 +114,18 @@ Two planes: **Gravity Forms** (`gf_*`) — 26 static tools, listed whenever Grav
 
 ### GravityKit Products (dynamic)
 
-When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional tools are generated at runtime from its Abilities catalog — each GravityKit add-on under its own server-assigned prefix, so the exact set depends on the installed products and versions. **GravityView** is supported today, using the `gv_*` prefix: View lifecycle (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`), field/widget/search/grid editing (add a search bar in one call with `gv_search_bar_add`), and discovery (`gv_layouts_list`, `gv_field_type_schema_get`, …). Use the `gv_*_list` discovery tools to see what's available on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
+When [GravityKit Foundation](https://www.gravitykit.com) is active on the connected site, additional tools are generated at runtime from its Abilities catalog, each product under its own prefix. Which tools you get depends on the GravityKit products installed and their versions.
+
+| Product | Prefix | What the tools do |
+| --- | --- | --- |
+| [GravityView](https://www.gravitykit.com/products/gravityview/) | `gv_*` | Create, configure, clone and delete Views (`gv_view_create`, `gv_view_config_apply`, `gv_view_delete`); add and edit fields, widgets, search bars and grid rows (add a search bar in one call with `gv_search_bar_add`); discover layouts, widgets and field settings (`gv_layouts_list`, `gv_field_type_schema_get`). |
+| [GravityBoard](https://www.gravitykit.com/products/gravityboard/) | `gb_*` | Create, update and delete boards (`gb_board_create`); add, rename, reorder and delete lanes (`gb_lane_create`, `gb_lane_move`); add, edit, move and delete cards (`gb_card_create`, `gb_card_move`); list boards and cards (`gb_boards_list`, `gb_cards_list`). Each board's own permissions apply. Needs the GravityBoard release after 1.5.0. |
+| [GravityMigrate](https://www.gravitykit.com/products/gravitymigrate/) | `gmig_*` | List the form plugins and forms on the site (`gmig_platforms_list`, `gmig_forms_list`); report what a migration would do without changing anything (`gmig_migration_analyze`); migrate forms to Gravity Forms (`gmig_migration_run`); export, inspect and import bundles (`gmig_bundle_export`, `gmig_bundle_import`). |
+| [Visual Merge Tags](https://www.gravitykit.com/visual-merge-tags/), in GravityKit Foundation | `mergetags_*` | List the merge tags a form offers (`mergetags_catalog_get`), and render merge tags against a real entry (`mergetags_preview_entries_list`, `mergetags_preview_render`). |
+
+Tools that delete or overwrite data, such as `gv_view_delete` or `gb_board_delete`, stay disabled until you name them in `GRAVITYKIT_MCP_ALLOW_DESTRUCTIVE`: an exact tool name, a product prefix such as `gb`, or `all`.
+
+Use each product's `*_list` tools to see what exists on your site, and `gk_reload_abilities` to reload the catalog after activating or updating GravityKit products.
 
 ## Usage Examples
 
