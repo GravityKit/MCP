@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Fixed
 
-- **`gf_update_field` no longer reports success for a change it did not make.** A field property sent beside `properties` instead of inside it, such as `placeholder: "Your name"`, was dropped and the call still said it worked. The call is now refused, and the reply names the property and shows it nested under `properties`. A call with no `properties`, an empty one, or one that tries to change the field's ID is refused too.
+- **`gf_update_field` refuses a field property sent outside `properties`.** A property sent beside `properties` instead of inside it, such as `placeholder: "Your name"`, was dropped and the call still reported success. The reply now names the property and shows it nested under `properties`.
+- **`gf_update_field` refuses a call with nothing to change.** A call with no `properties`, or an empty one, changed nothing. It is now refused.
+- **`gf_update_field` refuses a change to a field's ID.** Field IDs cannot change, so a `properties.id` that differs from `field_id` is now refused instead of being ignored. Sending a field back with its own ID still works.
 
 ## [2.6.0] - 2026-10-01
 
