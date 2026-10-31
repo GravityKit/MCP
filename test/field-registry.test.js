@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert';
-import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig, detectFieldVariant, applyStorageTypeDefault } from '../src/field-definitions/field-registry.js';
+import { generateCompoundInputs, isCompoundField, getFieldDefinition, assignFieldIds, validateFieldConfig, detectFieldVariant, applyStorageTypeDefault, applyStorageTypeOnConversion } from '../src/field-definitions/field-registry.js';
 
 test('assignFieldIds', async (t) => {
   await t.test('assigns sequential ids when none are provided', () => {
@@ -461,5 +461,40 @@ test('applyStorageTypeDefault', async (t) => {
   await t.test('non-object input passes through', () => {
     assert.strictEqual(applyStorageTypeDefault(null), null);
     assert.strictEqual(applyStorageTypeDefault(undefined), undefined);
+  });
+});
+
+// applyStorageTypeOnConversion: a stored field an update turns into a multiselect
+// gets the json default a new one gets; one that was already a multiselect keeps
+// its storage mode, because its saved entries are in that format.
+test('applyStorageTypeOnConversion', async (t) => {
+  await t.test('a select turned multiselect gets json', () => {
+    const out = applyStorageTypeOnConversion({ id: 1, type: 'select' }, { id: 1, type: 'multiselect' });
+    assert.strictEqual(out.storageType, 'json');
+  });
+
+  await t.test('a post field whose inputType turns multiselect gets json', () => {
+    const out = applyStorageTypeOnConversion(
+      { id: 1, type: 'post_tags', inputType: 'select' },
+      { id: 1, type: 'post_tags', inputType: 'multiselect' }
+    );
+    assert.strictEqual(out.storageType, 'json');
+  });
+
+  await t.test('an explicit storageType on the updated field is kept', () => {
+    const out = applyStorageTypeOnConversion({ id: 1, type: 'select' }, { id: 1, type: 'multiselect', storageType: '' });
+    assert.strictEqual(out.storageType, '');
+  });
+
+  await t.test('a field that was already a multiselect is returned as is', () => {
+    const updated = { id: 1, type: 'multiselect', label: 'Renamed' };
+    assert.strictEqual(applyStorageTypeOnConversion({ id: 1, type: 'multiselect' }, updated), updated);
+    const viaInputType = { id: 1, type: 'post_category', inputType: 'multiselect' };
+    assert.strictEqual(applyStorageTypeOnConversion({ id: 1, type: 'post_category', inputType: 'multiselect' }, viaInputType), viaInputType);
+  });
+
+  await t.test('a change to a type other than multiselect is left alone', () => {
+    const out = applyStorageTypeOnConversion({ id: 1, type: 'select' }, { id: 1, type: 'radio' });
+    assert.strictEqual(out.storageType, undefined);
   });
 });

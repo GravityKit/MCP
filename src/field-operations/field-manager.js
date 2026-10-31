@@ -5,7 +5,7 @@
 
 import { createHash } from 'crypto';
 import { resourceMutex } from '../utils/mutex.js';
-import { assignFieldIds, applyNewFieldDefaults, generateCheckboxInputs, reconcileCheckboxInputs } from '../field-definitions/field-registry.js';
+import { assignFieldIds, applyNewFieldDefaults, applyStorageTypeOnConversion, generateCheckboxInputs, reconcileCheckboxInputs } from '../field-definitions/field-registry.js';
 
 /**
  * Field properties that dependents actually consume. Conditional-logic rules
@@ -230,7 +230,10 @@ export class FieldManager {
       ...(updates || {}),
       id: originalField.id // Preserve ID
     });
-    form.fields[fieldIndex] = reconciled;
+    // A field the update turns into a multiselect gets the json storage a new one
+    // gets, or a pick containing a comma is saved as two. One that was already a
+    // multiselect keeps its storage mode: its saved entries are in that format.
+    form.fields[fieldIndex] = applyStorageTypeOnConversion(originalField, reconciled);
     this.normalizeLayoutProperties(form.fields[fieldIndex], formId);
 
     // Replace form via direct PUT (no re-fetch; we already have the full state)

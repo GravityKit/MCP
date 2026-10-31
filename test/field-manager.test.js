@@ -964,6 +964,82 @@ test('addField leaves storageType off a field type that does not need it', async
   assert.strictEqual(result.field.storageType, undefined);
 });
 
+// --- multiselect storage mode on an update that changes the field type ---
+//
+// gf_update_field merges the update into the stored field, so a select turned
+// into a multiselect kept no storageType and saved its picks comma-joined:
+// "Atlanta, GA" came back as two picks. A field that BECOMES a multiselect gets
+// the same json default a new one does. A field that was already a multiselect
+// keeps its storage mode, because its saved entries are in that format.
+
+const formForConversion = () => ({
+  id: 1,
+  title: 'Conversion Form',
+  fields: [
+    { id: 1, type: 'select', label: 'City', choices: [{ text: 'Atlanta, GA', value: 'Atlanta, GA' }] },
+    { id: 2, type: 'multiselect', label: 'Cities', choices: [{ text: 'Atlanta, GA', value: 'Atlanta, GA' }] },
+    { id: 3, type: 'post_category', inputType: 'select', label: 'Category' }
+  ]
+});
+
+const conversionManager = () => {
+  const saved = {};
+  const api = {
+    getForm: async () => ({ form: formForConversion() }),
+    replaceForm: async (formId, form) => { saved.form = form; return { form }; }
+  };
+  return { manager: new FieldManager(api, createMockRegistry(), new FieldAwareValidator()), saved };
+};
+
+test('updateField gives json storage to a field whose type changes to multiselect', async () => {
+  const { manager, saved } = conversionManager();
+
+  const result = await manager.updateField(1, 1, { type: 'multiselect' });
+
+  assert.strictEqual(result.success, true);
+  assert.strictEqual(saved.form.fields[0].storageType, 'json', 'the saved form must carry json storage');
+  assert.strictEqual(result.field.storageType, 'json');
+});
+
+test('updateField gives json storage to a post field whose inputType changes to multiselect', async () => {
+  // GF_Fields::create() instantiates by inputType, so this becomes a GF_Field_MultiSelect.
+  const { manager, saved } = conversionManager();
+
+  await manager.updateField(1, 3, { inputType: 'multiselect' });
+
+  assert.strictEqual(saved.form.fields[2].storageType, 'json');
+});
+
+test('updateField keeps an explicit storageType sent with the type change', async () => {
+  // '' is how a caller matches entries that are already comma-joined.
+  const { manager, saved } = conversionManager();
+
+  await manager.updateField(1, 1, { type: 'multiselect', storageType: '' });
+
+  assert.strictEqual(saved.form.fields[0].storageType, '');
+});
+
+test('updateField leaves the storage mode of a field that was already a multiselect alone', async () => {
+  // Its saved entries are comma-joined; switching it to json changes how GF_Query
+  // matches them (class-gf-query.php:360).
+  const { manager, saved } = conversionManager();
+
+  await manager.updateField(1, 2, { label: 'Cities renamed' });
+  assert.strictEqual(saved.form.fields[1].storageType, undefined, 'a cosmetic update must not set it');
+
+  await manager.updateField(1, 2, { type: 'multiselect', label: 'Cities again' });
+  assert.strictEqual(saved.form.fields[1].storageType, undefined, 'resending the same type must not set it');
+});
+
+test('updateField leaves storageType off a type change that does not make a multiselect', async () => {
+  // The control: setting it on every type change would pass the tests above.
+  const { manager, saved } = conversionManager();
+
+  await manager.updateField(1, 1, { type: 'radio' });
+
+  assert.strictEqual(saved.form.fields[0].storageType, undefined);
+});
+
 
 // A position the server cannot honor must not be reported as a plain success.
 // Before, a reference to a missing field and an unknown mode both appended the

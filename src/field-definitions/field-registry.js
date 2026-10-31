@@ -1058,9 +1058,11 @@ export function assignFieldIds(fields) {
  * An explicit storageType is kept as given, including a legacy '': that spelling
  * is how a caller matches a field whose existing entries are comma-joined.
  *
- * Apply this to new fields only. Flipping a stored field to json changes how
- * GF_Query matches its already-saved comma-joined values
- * (class-gf-query.php:360 picks GF_Query_JSON_Literal off storageType).
+ * Apply this to new fields, and to stored fields an update turns into a
+ * multiselect (applyStorageTypeOnConversion). Never flip a field that was already
+ * a multiselect: json changes how GF_Query matches its already-saved
+ * comma-joined values (class-gf-query.php:360 picks GF_Query_JSON_Literal off
+ * storageType).
  *
  * @param {object} field A field object.
  * @returns {object} The field, with storageType filled in where it applies.
@@ -1077,6 +1079,34 @@ export function applyStorageTypeDefault(field) {
   }
 
   return { ...field, storageType: 'json' };
+}
+
+/**
+ * Give a stored field the json storage default when an update turns it into a
+ * multiselect.
+ *
+ * A select or post field changed to a multiselect is a new multiselect as far as
+ * its picks go: nothing was ever saved under it in multiselect form, and left
+ * without a storageType it saves "Atlanta, GA" as two picks, exactly as a new one
+ * would. A field that was ALREADY a multiselect keeps its storage mode, because its
+ * saved entries are in that format (see applyStorageTypeDefault). Entries the field
+ * saved before the change are single values that do not start with '[', and
+ * GF_Field_MultiSelect::to_array() reads those by splitting on commas whatever the
+ * storageType (class-gf-field-multiselect.php:417), so they read back as before.
+ *
+ * @param {object} stored The field as it is on the form now.
+ * @param {object} updated The field as the update leaves it.
+ * @returns {object} The updated field, with storageType filled in where it applies.
+ */
+export function applyStorageTypeOnConversion(stored, updated) {
+  const storedType = stored && typeof stored === 'object' ? (stored.inputType || stored.type) : undefined;
+  const wasMultiselect = storedType === 'multiselect';
+
+  if (wasMultiselect) {
+    return updated;
+  }
+
+  return applyStorageTypeDefault(updated);
 }
 
 /**
