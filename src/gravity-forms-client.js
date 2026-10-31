@@ -10,7 +10,7 @@ import { AuthManager, validateRestApiAccess, flattenParams, rfc3986Encode } from
 import { ValidationFactory, EntriesValidator } from './config/validation.js';
 import logger from './utils/logger.js';
 import { sanitizeUrl, sanitizeHeaders } from './utils/sanitize.js';
-import { generateCompoundInputs, assignFieldIds, applyNewFieldDefaults, reconcileCheckboxInputs } from './field-definitions/field-registry.js';
+import { generateCompoundInputs, assignFieldIds, applyNewFieldDefaults, applyStorageTypeOnConversion, reconcileCheckboxInputs } from './field-definitions/field-registry.js';
 import { testConfig } from './config/test-config.js';
 import { resourceMutex } from './utils/mutex.js';
 import { guardMerge } from './utils/merge-guard.js';
@@ -616,8 +616,11 @@ export class GravityFormsClient {
         // Editor defaults (storage mode, checkbox inputs) reach the fields this call
         // ADDS. A stored field round-trips byte-for-byte: its storageType and inputs
         // decide how GF reads values that are already saved under it.
-        // A stored checkbox whose choices changed is the exception: its inputs follow
-        // the choices (reconcileCheckboxInputs), or a new choice could never be stored.
+        // Two exceptions. A stored checkbox whose choices changed gets inputs that
+        // follow the choices (reconcileCheckboxInputs), or a new choice could never
+        // be stored. A stored field this call turns into a multiselect gets json
+        // storage (applyStorageTypeOnConversion), or a pick containing a comma is
+        // saved as two.
         const inputWarnings = [];
         if (Array.isArray(updates.fields)) {
           const storedFields = new Map((existingForm.fields || []).map((field) => [String(field?.id), field]));
@@ -628,7 +631,7 @@ export class GravityFormsClient {
 
             const { field: reconciled, warning } = reconcileCheckboxInputs(stored, field);
             if (warning) inputWarnings.push(warning);
-            return reconciled;
+            return applyStorageTypeOnConversion(stored, reconciled);
           });
         }
 

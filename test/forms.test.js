@@ -631,6 +631,39 @@ suite.test('Update Form: Should leave a stored multiselect\'s storage mode alone
   TestAssert.equal(putReq.config.data.fields[0].storageType, undefined, 'a stored field keeps its storage mode');
 });
 
+suite.test('Update Form: Should give json storage to a stored field the update turns into a multiselect', async () => {
+  // A stored select resent as a multiselect kept no storageType and saved its picks
+  // comma-joined, so "Atlanta, GA" came back as two picks.
+  const existingForm = {
+    id: 9,
+    title: 'Conversion',
+    fields: [
+      { id: 1, type: 'select', label: 'City', choices: [{ text: 'Atlanta, GA', value: 'Atlanta, GA' }] },
+      { id: 2, type: 'post_category', inputType: 'select', label: 'Category', choices: [{ text: 'News', value: '1' }] },
+      { id: 3, type: 'select', label: 'Legacy City', choices: [{ text: 'A', value: 'A' }] }
+    ]
+  };
+
+  mockHttpClient.setMockResponse('GET', '/forms/9', new MockResponse(existingForm));
+  mockHttpClient.setMockResponse('PUT', '/forms/9', new MockResponse(existingForm));
+  mockHttpClient.clearRequests();
+
+  await client.updateForm({
+    id: 9,
+    fields: [
+      { id: 1, type: 'multiselect', label: 'City', choices: [{ text: 'Atlanta, GA', value: 'Atlanta, GA' }] },
+      { id: 2, type: 'post_category', inputType: 'multiselect', label: 'Category', choices: [{ text: 'News', value: '1' }] },
+      { id: 3, type: 'multiselect', label: 'Legacy City', storageType: '', choices: [{ text: 'A', value: 'A' }] }
+    ]
+  });
+
+  const putReq = mockHttpClient.getRequests().find((r) => r.method === 'PUT');
+  TestAssert.exists(putReq, 'expected a PUT /forms/9 request');
+  TestAssert.equal(putReq.config.data.fields[0].storageType, 'json', 'a select turned multiselect must get json storage');
+  TestAssert.equal(putReq.config.data.fields[1].storageType, 'json', 'an inputType turned multiselect must get json storage');
+  TestAssert.equal(putReq.config.data.fields[2].storageType, '', 'an explicit storageType sent with the change must survive');
+});
+
 suite.test('Update Form: Should validate form ID is required', async () => {
   await TestAssert.throwsAsync(
     () => client.updateForm({ title: 'No ID' }),
