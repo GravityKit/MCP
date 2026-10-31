@@ -5,6 +5,12 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 🐛 Fixed
+
+- **A field changed into a Multi Select now saves choices that contain a comma correctly.** Changing a field's type to Multi Select with `gf_update_field` or `gf_update_form` (or a post field's input type to Multi Select) left it saving picks as comma-separated text, so a choice like "Atlanta, GA" was read back as two picks. These fields now save picks the way new Multi Select fields do. A field that was already a Multi Select keeps how it saves, and a `storageType` you send is kept.
+
 ## [2.6.1] - 2026-10-14
 
 ### 🔒 Security
