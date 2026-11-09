@@ -5,6 +5,14 @@ All notable changes to GravityKit MCP (formerly GravityMCP) will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2026-11-08
+
+This release updates library dependencies based on security advisories.
+
+### 🔒 Security
+
+- **Library dependencies were updated based on security advisories:** the MCP SDK to 1.32.2, `axios` to 1.21.0, `follow-redirects` to 1.16.3, `zod` to 4.6.7, `body-parser` to 2.4.0, `qs` to 6.17.1, `express-rate-limit` to 8.7.3, `fast-uri` to 4.2.3 and `ip-address` to 10.7.6.
+
 ## [2.6.1] - 2026-10-14
 
 ### 🔒 Security
@@ -333,6 +341,7 @@ A correctness pass on the Gravity Forms (`gf_*`) plane, verified against Gravity
 - Field filters (1 tool)
 - Results/Analytics (1 tool)
 
+[2.6.2]: https://github.com/GravityKit/MCP/releases/tag/v2.6.2
 [2.6.1]: https://github.com/GravityKit/MCP/releases/tag/v2.6.1
 [2.6.0]: https://github.com/GravityKit/MCP/releases/tag/v2.6.0
 [2.5.0]: https://github.com/GravityKit/MCP/releases/tag/v2.5.0
