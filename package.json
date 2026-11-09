@@ -56,7 +56,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "axios": "^1.21.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "zod": "^4.6.7"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -115,9 +116,6 @@
   },
   "overrides": {
     "fast-uri": "4.2.3",
-    "ip-address": "10.7.6",
-    "@modelcontextprotocol/sdk": {
-      "zod": "4.6.7"
-    }
+    "ip-address": "10.7.6"
   }
 }
