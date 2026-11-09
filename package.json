@@ -1,6 +1,6 @@
 {
   "name": "@gravitykit/mcp",
-  "version": "2.6.1",
+  "version": "2.6.2",
   "description": "Build and maintain the applications your team needs using this MCP server for Gravity Forms and GravityKit.",
   "main": "src/index.js",
   "type": "module",
@@ -54,9 +54,10 @@
   "author": "GravityKit",
   "license": "GPL-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "axios": "^1.20.0",
-    "dotenv": "^16.4.7"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "axios": "^1.21.0",
+    "dotenv": "^16.4.7",
+    "zod": "^4.6.7"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -114,7 +115,7 @@
     "publint": "^0.3.21"
   },
   "overrides": {
-    "fast-uri": "4.2.1",
-    "ip-address": "10.7.2"
+    "fast-uri": "4.2.3",
+    "ip-address": "10.7.6"
   }
 }
