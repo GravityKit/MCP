@@ -198,7 +198,7 @@ Mutation methods return minimal confirmation:
 ### Module System
 
 - ESM throughout (`"type": "module"` in package.json)
-- All imports use `.js` extension (required for ESM)
+- Imports in `src/` and `test/` use the `.js` extension (required for ESM). `bench/` is the exception: its files are `.mjs` on disk, so its imports use `.mjs`; changing them to `.js` fails with `ERR_MODULE_NOT_FOUND`.
 - `__dirname` shimmed via `fileURLToPath(import.meta.url)` where needed
 
 ### Error Handling Pattern
