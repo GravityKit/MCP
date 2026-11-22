@@ -46,6 +46,29 @@ No clone or `npm install` needed — `npx` runs the published package on demand.
 
    **Claude Desktop — one click.** Download **[gravitykit-mcp.mcpb](https://github.com/GravityKit/MCP/releases/latest/download/gravitykit-mcp.mcpb)** and open it. Claude Desktop installs the extension and asks for your site address, username and application password — there is no config file to edit, and no Node install to keep current. That link always points at the newest release.
 
+   **Codex CLI: one command.** Codex runs local MCP servers, so no extra setup is needed:
+   ```bash
+   codex mcp add gravitykit \
+     --env GRAVITY_FORMS_BASE_URL=https://yoursite.com \
+     --env GRAVITY_FORMS_CONSUMER_KEY=your_wp_username \
+     --env "GRAVITY_FORMS_CONSUMER_SECRET=xxxx xxxx xxxx xxxx xxxx xxxx" \
+     -- npx -y @gravitykit/mcp
+   ```
+   Codex writes this to `~/.codex/config.toml`; `codex mcp list` confirms it. To edit the file by hand instead:
+   ```toml
+   [mcp_servers.gravitykit]
+   command = "npx"
+   args = ["-y", "@gravitykit/mcp"]
+
+   [mcp_servers.gravitykit.env]
+   GRAVITY_FORMS_BASE_URL = "https://yoursite.com"
+   GRAVITY_FORMS_CONSUMER_KEY = "your_wp_username"
+   GRAVITY_FORMS_CONSUMER_SECRET = "xxxx xxxx xxxx xxxx xxxx xxxx"
+   ```
+   If the first start times out while `npx` downloads the package, add `startup_timeout_sec = 30` under `[mcp_servers.gravitykit]` (the default is 10).
+
+   **ChatGPT:** ChatGPT connects only to remote MCP servers, and this server runs locally over stdio, so ChatGPT can't use it directly. Use Codex CLI instead. Don't put the server behind a public URL: ChatGPT can't send your WordPress credentials, so the URL would have no sign-in.
+
    **Every other client — edit the config.** For Claude Desktop this is the manual equivalent of the above; edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
    ```json
    {
